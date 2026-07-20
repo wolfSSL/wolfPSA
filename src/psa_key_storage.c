@@ -1957,6 +1957,12 @@ psa_status_t psa_export_public_key(
                 status = PSA_SUCCESS;
             }
         }
+        else {
+            /* Key type admitted by the gate above but its backend is not
+             * compiled in (for example ML-DSA/ML-KEM when the corresponding
+             * WOLFSSL_HAVE_* macro is undefined). */
+            status = PSA_ERROR_NOT_SUPPORTED;
+        }
     }
 
     wolfpsa_forcezero_free_key_data(key_data, key_data_length);
