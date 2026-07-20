@@ -104,6 +104,15 @@ typedef struct wolfpsa_kdf_ctx {
 #define WOLFPSA_KDF_STEP_COST          (1u << 7)
 #define WOLFPSA_KDF_STEP_CONTEXT       (1u << 8)
 
+/* Upper bound on how much of a bounded-capacity derivation is pre-computed
+ * and cached on the first output_bytes() call.  HKDF's default capacity is at
+ * most 255 * hash_len (roughly 16 KB), which fits comfortably.  SP800-108
+ * counter mode defaults its capacity to 2^29 - 1 bytes; caching that whole
+ * keystream up front would allocate about 512 MB and compute millions of MAC
+ * blocks just to return a few bytes, so above this bound the derivation is
+ * computed lazily per call instead. */
+#define WOLFPSA_KDF_MAX_CACHE_BYTES    (64u * 1024u)
+
 static wolfpsa_kdf_ctx_t* wolfpsa_kdf_get_ctx(psa_key_derivation_operation_t *operation)
 {
     if (operation == NULL) {
@@ -1648,10 +1657,13 @@ psa_status_t psa_key_derivation_output_bytes(psa_key_derivation_operation_t *ope
     if (ctx->output_cache == NULL
         && !ctx->is_raw_kdf
         && ctx->capacity != PSA_KEY_DERIVATION_UNLIMITED_CAPACITY
-        && ctx->output_offset == 0) {
-        /* First output_bytes() call with a bounded capacity: compute the
-         * full derivation once and cache it. Subsequent calls serve slices
-         * from the cache, avoiding O(n^2) recomputation. */
+        && ctx->output_offset == 0
+        && (output_length + ctx->capacity) <= WOLFPSA_KDF_MAX_CACHE_BYTES) {
+        /* First output_bytes() call with a small bounded capacity: compute
+         * the full derivation once and cache it. Subsequent calls serve
+         * slices from the cache, avoiding O(n^2) recomputation. Capacities
+         * above the cache bound (for example the SP800-108 counter-mode
+         * default) skip this path and compute lazily per call. */
         size_t cache_length = output_length + ctx->capacity;
 
         ctx->output_cache = (uint8_t *)XMALLOC(cache_length, NULL,

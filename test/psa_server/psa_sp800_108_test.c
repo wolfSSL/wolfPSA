@@ -933,6 +933,116 @@ static int test_hmac_duplicate_step_rejected(void)
 /* -------------------------------------------------------------------------
  * main
  * -------------------------------------------------------------------------*/
+/* Setup an SP800-108 HMAC-SHA256 operation with the given capacity and the
+ * standard secret/label/context inputs. Returns 0 on success, 1 on failure
+ * (op aborted). */
+static int sp800_hmac_setup(psa_key_derivation_operation_t *op,
+                            psa_algorithm_t alg, size_t capacity)
+{
+    psa_status_t st;
+
+    st = psa_key_derivation_setup(op, alg);
+    if (expect_status("large-cap setup", st, PSA_SUCCESS) != 0)
+        return 1;
+    st = psa_key_derivation_set_capacity(op, capacity);
+    if (expect_status("large-cap set_capacity", st, PSA_SUCCESS) != 0) {
+        psa_key_derivation_abort(op);
+        return 1;
+    }
+    st = psa_key_derivation_input_bytes(op, PSA_KEY_DERIVATION_INPUT_SECRET,
+                                        g_hmac_secret, sizeof(g_hmac_secret));
+    if (expect_status("large-cap secret", st, PSA_SUCCESS) != 0) {
+        psa_key_derivation_abort(op);
+        return 1;
+    }
+    st = psa_key_derivation_input_bytes(op, PSA_KEY_DERIVATION_INPUT_LABEL,
+                                        g_label, sizeof(g_label));
+    if (expect_status("large-cap label", st, PSA_SUCCESS) != 0) {
+        psa_key_derivation_abort(op);
+        return 1;
+    }
+    st = psa_key_derivation_input_bytes(op, PSA_KEY_DERIVATION_INPUT_CONTEXT,
+                                        g_context, sizeof(g_context));
+    if (expect_status("large-cap context", st, PSA_SUCCESS) != 0) {
+        psa_key_derivation_abort(op);
+        return 1;
+    }
+    return 0;
+}
+
+/* Test case: large-capacity lazy path.
+ *
+ * A capacity above the output-cache bound forces the derivation onto the
+ * lazy, non-cached path. Verify prefix-consistency across the offset==0
+ * direct-compute branch and the offset>0 recompute-and-slice branch: two
+ * consecutive output_bytes() calls, a single output_bytes(64) call on a fresh
+ * identical derivation, and the independent K(1)||K(2) reconstruction must all
+ * agree. Existing SP800-108 tests only use small capacities that stay on the
+ * cached path, so this exercises the otherwise-untested lazy branches. */
+static int test_hmac_large_capacity_lazy(void)
+{
+    psa_algorithm_t alg = PSA_ALG_SP800_108_COUNTER_HMAC(PSA_ALG_SHA_256);
+    size_t cap = 100000u; /* above the 64 KB output-cache bound */
+    psa_key_derivation_operation_t op = psa_key_derivation_operation_init();
+    uint8_t out_a[32];
+    uint8_t out_b[32];
+    uint8_t out_single[64];
+    uint8_t ref[64];
+    psa_status_t st;
+
+    /* Two consecutive 32-byte calls: offset 0 (direct compute) then offset 32
+     * (recompute-and-slice). */
+    if (sp800_hmac_setup(&op, alg, cap) != 0)
+        return 1;
+    st = psa_key_derivation_output_bytes(&op, out_a, sizeof(out_a));
+    if (expect_status("large-cap out_a", st, PSA_SUCCESS) != 0) {
+        psa_key_derivation_abort(&op);
+        return 1;
+    }
+    st = psa_key_derivation_output_bytes(&op, out_b, sizeof(out_b));
+    if (expect_status("large-cap out_b", st, PSA_SUCCESS) != 0) {
+        psa_key_derivation_abort(&op);
+        return 1;
+    }
+    psa_key_derivation_abort(&op);
+
+    /* Single 64-byte call on a fresh identical derivation. */
+    op = psa_key_derivation_operation_init();
+    if (sp800_hmac_setup(&op, alg, cap) != 0)
+        return 1;
+    st = psa_key_derivation_output_bytes(&op, out_single, sizeof(out_single));
+    if (expect_status("large-cap single", st, PSA_SUCCESS) != 0) {
+        psa_key_derivation_abort(&op);
+        return 1;
+    }
+    psa_key_derivation_abort(&op);
+
+    /* Independent reconstruction (L = capacity in bits). */
+    if (reconstruct_hmac(g_hmac_secret, sizeof(g_hmac_secret),
+                         g_label, sizeof(g_label),
+                         g_context, sizeof(g_context),
+                         cap, ref, sizeof(ref)) != 0) {
+        printf("FAIL large-cap: reconstruction failed\n");
+        return 1;
+    }
+
+    if (memcmp(out_a, ref, 32u) != 0) {
+        printf("FAIL large-cap: K(1) mismatch (lazy direct-compute)\n");
+        return 1;
+    }
+    if (memcmp(out_b, ref + 32, 32u) != 0) {
+        printf("FAIL large-cap: K(2) mismatch (lazy recompute-and-slice)\n");
+        return 1;
+    }
+    if (memcmp(out_single, ref, 64u) != 0) {
+        printf("FAIL large-cap: single-call mismatch\n");
+        return 1;
+    }
+
+    printf("PASS large-cap: SP800-108 lazy path prefix-consistent\n");
+    return 0;
+}
+
 int main(void)
 {
     psa_status_t st;
@@ -952,6 +1062,7 @@ int main(void)
     if (test_cmac_invalid_key_len()     != 0) return 1;
     if (test_hmac_salt_rejected()       != 0) return 1;
     if (test_hmac_duplicate_step_rejected() != 0) return 1;
+    if (test_hmac_large_capacity_lazy()     != 0) return 1;
 
     printf("SP800-108 counter-mode KDF test: OK\n");
     return 0;
