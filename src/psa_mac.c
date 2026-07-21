@@ -176,7 +176,7 @@ static psa_status_t wolfpsa_mac_check_key(psa_key_id_t key,
     }
 
     key_usage = psa_get_key_usage_flags(attributes);
-    if ((key_usage & usage) == 0) {
+    if ((key_usage & usage) != usage) {
         wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
         *key_data = NULL;
         *key_data_length = 0;
