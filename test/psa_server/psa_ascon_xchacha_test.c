@@ -632,6 +632,132 @@ static int test_xchacha_key_policy(void)
 }
 
 /* =========================================================================
+ * Test 5 — Shortened / at-least-this-length tag variants must be rejected
+ *
+ * The one-shot XChaCha20-Poly1305 and Ascon-AEAD128 paths only implement the
+ * native 16-byte tag. A shortened-tag (or at-least-this-length) algorithm must
+ * be rejected with PSA_ERROR_NOT_SUPPORTED rather than silently producing or
+ * requiring a 16-byte tag while the caller expects a shorter one.
+ * ====================================================================== */
+
+static int test_aead_shortened_tag_rejected(void)
+{
+    psa_key_attributes_t attrs;
+    psa_key_id_t key_id = PSA_KEY_ID_NULL;
+    uint8_t enc_out[130];
+    uint8_t dec_out[130];
+    size_t out_len = 0;
+    psa_status_t st;
+    psa_algorithm_t xch_short =
+        PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_XCHACHA20_POLY1305, 12);
+    psa_algorithm_t xch_atleast =
+        PSA_ALG_AEAD_WITH_AT_LEAST_THIS_LENGTH_TAG(PSA_ALG_XCHACHA20_POLY1305,
+                                                   16);
+    psa_algorithm_t asc_short =
+        PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_ASCON_AEAD128, 12);
+
+    /* --- XChaCha20-Poly1305 --------------------------------------------- */
+    attrs = psa_key_attributes_init();
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_XCHACHA20);
+    psa_set_key_bits(&attrs, 256u);
+    psa_set_key_usage_flags(&attrs,
+                            PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attrs, PSA_ALG_XCHACHA20_POLY1305);
+
+    st = psa_import_key(&attrs, xchacha_key, sizeof(xchacha_key), &key_id);
+    if (st == PSA_ERROR_NOT_SUPPORTED) {
+        printf("SKIP aead_shortened_tag xchacha (not supported by this build)\n");
+    }
+    else {
+        if (expect_status("shortened xchacha import", st, PSA_SUCCESS) != 0)
+            return 1;
+
+        out_len = 0;
+        st = psa_aead_encrypt(key_id, xch_short,
+                              xchacha_nonce, sizeof(xchacha_nonce),
+                              NULL, 0, xchacha_pt, sizeof(xchacha_pt),
+                              enc_out, sizeof(enc_out), &out_len);
+        if (expect_status("xchacha shortened-tag encrypt rejected",
+                          st, PSA_ERROR_NOT_SUPPORTED) != 0) {
+            (void)psa_destroy_key(key_id);
+            return 1;
+        }
+
+        out_len = 0;
+        st = psa_aead_encrypt(key_id, xch_atleast,
+                              xchacha_nonce, sizeof(xchacha_nonce),
+                              NULL, 0, xchacha_pt, sizeof(xchacha_pt),
+                              enc_out, sizeof(enc_out), &out_len);
+        if (expect_status("xchacha at-least-tag encrypt rejected",
+                          st, PSA_ERROR_NOT_SUPPORTED) != 0) {
+            (void)psa_destroy_key(key_id);
+            return 1;
+        }
+
+        out_len = 0;
+        st = psa_aead_decrypt(key_id, xch_short,
+                              xchacha_nonce, sizeof(xchacha_nonce),
+                              NULL, 0, enc_out, sizeof(xchacha_pt) + 12u,
+                              dec_out, sizeof(dec_out), &out_len);
+        if (expect_status("xchacha shortened-tag decrypt rejected",
+                          st, PSA_ERROR_NOT_SUPPORTED) != 0) {
+            (void)psa_destroy_key(key_id);
+            return 1;
+        }
+
+        (void)psa_destroy_key(key_id);
+    }
+
+    /* --- Ascon-AEAD128 -------------------------------------------------- */
+    key_id = PSA_KEY_ID_NULL;
+    attrs = psa_key_attributes_init();
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_ASCON);
+    psa_set_key_bits(&attrs, 128u);
+    psa_set_key_usage_flags(&attrs,
+                            PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attrs, PSA_ALG_ASCON_AEAD128);
+
+    st = psa_import_key(&attrs, ascon_aead128_key, sizeof(ascon_aead128_key),
+                        &key_id);
+    if (st == PSA_ERROR_NOT_SUPPORTED) {
+        printf("SKIP aead_shortened_tag ascon (not supported by this build)\n");
+    }
+    else {
+        if (expect_status("shortened ascon import", st, PSA_SUCCESS) != 0)
+            return 1;
+
+        out_len = 0;
+        st = psa_aead_encrypt(key_id, asc_short,
+                              ascon_aead128_nonce, sizeof(ascon_aead128_nonce),
+                              NULL, 0, ascon_aead128_pt,
+                              sizeof(ascon_aead128_pt),
+                              enc_out, sizeof(enc_out), &out_len);
+        if (expect_status("ascon shortened-tag encrypt rejected",
+                          st, PSA_ERROR_NOT_SUPPORTED) != 0) {
+            (void)psa_destroy_key(key_id);
+            return 1;
+        }
+
+        out_len = 0;
+        st = psa_aead_decrypt(key_id, asc_short,
+                              ascon_aead128_nonce, sizeof(ascon_aead128_nonce),
+                              NULL, 0, ascon_aead128_ct_tag,
+                              sizeof(ascon_aead128_pt) + 12u,
+                              dec_out, sizeof(dec_out), &out_len);
+        if (expect_status("ascon shortened-tag decrypt rejected",
+                          st, PSA_ERROR_NOT_SUPPORTED) != 0) {
+            (void)psa_destroy_key(key_id);
+            return 1;
+        }
+
+        (void)psa_destroy_key(key_id);
+    }
+
+    printf("aead_shortened_tag_rejected: OK\n");
+    return 0;
+}
+
+/* =========================================================================
  * main
  * ====================================================================== */
 
@@ -655,6 +781,9 @@ int main(void)
         return 1;
 
     if (test_xchacha_key_policy() != 0)
+        return 1;
+
+    if (test_aead_shortened_tag_rejected() != 0)
         return 1;
 
     printf("psa_ascon_xchacha_test: all tests passed\n");

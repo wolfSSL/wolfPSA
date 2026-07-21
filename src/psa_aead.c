@@ -876,6 +876,12 @@ static psa_status_t wolfpsa_xchacha_oneshot_encrypt(
     /* Encrypt produces plaintext_length bytes of ciphertext plus 16-byte tag. */
     size_t out_len;
 
+    /* Only the native 16-byte tag is supported. A shortened-tag or
+     * at-least-this-length variant differs from the base algorithm and must be
+     * rejected rather than silently emitting a full-length tag. */
+    if (alg != PSA_ALG_XCHACHA20_POLY1305) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
     if (nonce_length != XCHACHA20_POLY1305_AEAD_NONCE_SIZE) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -955,6 +961,12 @@ static psa_status_t wolfpsa_xchacha_oneshot_decrypt(
     int ret;
     size_t pt_len;
 
+    /* Only the native 16-byte tag is supported. A shortened-tag or
+     * at-least-this-length variant differs from the base algorithm and must be
+     * rejected rather than mis-framing the trailing tag bytes. */
+    if (alg != PSA_ALG_XCHACHA20_POLY1305) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
     if (nonce_length != XCHACHA20_POLY1305_AEAD_NONCE_SIZE) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -1040,6 +1052,12 @@ static psa_status_t wolfpsa_ascon_oneshot_encrypt(
     int ret;
     size_t out_len;
 
+    /* Only the native 16-byte tag is supported. A shortened-tag or
+     * at-least-this-length variant differs from the base algorithm and must be
+     * rejected rather than silently emitting a full-length tag. */
+    if (alg != PSA_ALG_ASCON_AEAD128) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
     if (nonce_length != ASCON_AEAD128_NONCE_SZ) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -1140,6 +1158,12 @@ static psa_status_t wolfpsa_ascon_oneshot_decrypt(
     int ret;
     size_t ct_len; /* ciphertext body length (without tag) */
 
+    /* Only the native 16-byte tag is supported. A shortened-tag or
+     * at-least-this-length variant differs from the base algorithm and must be
+     * rejected rather than mis-framing the trailing tag bytes. */
+    if (alg != PSA_ALG_ASCON_AEAD128) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
     if (nonce_length != ASCON_AEAD128_NONCE_SZ) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
