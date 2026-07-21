@@ -3770,8 +3770,9 @@ static int test_aead_gcm_rejects_short_nonce(void)
     }
 
     st = psa_aead_set_nonce(&op, short_nonce, sizeof(short_nonce));
-    if (check_true(st == PSA_ERROR_INVALID_ARGUMENT,
-                   "psa_aead_set_nonce rejects 11-byte GCM nonce") != TEST_OK) {
+    if (check_true(st == PSA_ERROR_NOT_SUPPORTED,
+                   "psa_aead_set_nonce reports 11-byte GCM nonce unsupported")
+            != TEST_OK) {
         goto cleanup;
     }
 

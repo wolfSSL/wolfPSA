@@ -381,8 +381,15 @@ psa_status_t psa_aead_set_nonce(psa_aead_operation_t *operation,
     }
 
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
-        if (nonce_length < 12 || nonce_length > PSA_AEAD_NONCE_MAX_SIZE) {
+        /* GCM (SP 800-38D) accepts any non-empty nonce. A zero-length nonce is
+         * invalid for the algorithm; other lengths outside the supported 12 to
+         * 24 byte range are valid for GCM but not supported by this
+         * implementation. */
+        if (nonce_length == 0) {
             return PSA_ERROR_INVALID_ARGUMENT;
+        }
+        if (nonce_length < 12 || nonce_length > PSA_AEAD_NONCE_MAX_SIZE) {
+            return PSA_ERROR_NOT_SUPPORTED;
         }
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM)) {

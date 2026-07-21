@@ -721,6 +721,116 @@ static int test_rsa_sign_buffer_too_small(void)
     return 0;
 }
 
+/* Case 13: GCM nonce-length error codes. GCM (SP 800-38D) accepts any
+ * non-empty nonce; a zero-length nonce is invalid for the algorithm
+ * (INVALID_ARGUMENT), while non-empty lengths outside the supported 12-24 byte
+ * range are valid for GCM but not supported by this implementation
+ * (NOT_SUPPORTED). A 12-byte nonce is accepted. */
+static int test_gcm_nonce_lengths(void)
+{
+    static const uint8_t key_bytes[16] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+    };
+    static const uint8_t nonce[25] = { 0 };
+    static const uint8_t pt[16] = {
+        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f
+    };
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_key_id_t key = 0;
+    uint8_t ct[sizeof(pt) + 16];
+    uint8_t ptout[sizeof(pt)];
+    size_t ct_len = 0;
+    size_t pt_len = 0;
+    psa_status_t st;
+
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attrs, 128u);
+    psa_set_key_usage_flags(&attrs,
+                            PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attrs, PSA_ALG_GCM);
+
+    st = psa_import_key(&attrs, key_bytes, sizeof(key_bytes), &key);
+    if (st == PSA_ERROR_NOT_SUPPORTED) {
+        printf("SKIP gcm_nonce_lengths (GCM not supported by this build)\n");
+        return 0;
+    }
+    if (expect_status("gcm nonce import", st, PSA_SUCCESS) != 0)
+        return 1;
+
+    /* 0 bytes: invalid for GCM */
+    st = psa_aead_encrypt(key, PSA_ALG_GCM, nonce, 0, NULL, 0,
+                          pt, sizeof(pt), ct, sizeof(ct), &ct_len);
+    if (expect_status("gcm nonce 0", st, PSA_ERROR_INVALID_ARGUMENT) != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    /* 8 bytes: valid GCM nonce, unsupported here */
+    st = psa_aead_encrypt(key, PSA_ALG_GCM, nonce, 8, NULL, 0,
+                          pt, sizeof(pt), ct, sizeof(ct), &ct_len);
+    if (expect_status("gcm nonce 8", st, PSA_ERROR_NOT_SUPPORTED) != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    /* 25 bytes: valid GCM nonce, exceeds supported max */
+    st = psa_aead_encrypt(key, PSA_ALG_GCM, nonce, 25, NULL, 0,
+                          pt, sizeof(pt), ct, sizeof(ct), &ct_len);
+    if (expect_status("gcm nonce 25", st, PSA_ERROR_NOT_SUPPORTED) != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    /* 12 bytes: supported (lower boundary) */
+    st = psa_aead_encrypt(key, PSA_ALG_GCM, nonce, 12, NULL, 0,
+                          pt, sizeof(pt), ct, sizeof(ct), &ct_len);
+    if (expect_status("gcm nonce 12", st, PSA_SUCCESS) != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    /* 24 bytes: supported (upper boundary, PSA_AEAD_NONCE_MAX_SIZE) */
+    st = psa_aead_encrypt(key, PSA_ALG_GCM, nonce, 24, NULL, 0,
+                          pt, sizeof(pt), ct, sizeof(ct), &ct_len);
+    if (expect_status("gcm nonce 24", st, PSA_SUCCESS) != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    /* The decrypt direction reaches the same nonce validation. ct holds the
+     * 24-byte-nonce ciphertext from above; only the nonce length is exercised
+     * here, so the tag never verifies. */
+    st = psa_aead_decrypt(key, PSA_ALG_GCM, nonce, 0, NULL, 0,
+                          ct, ct_len, ptout, sizeof(ptout), &pt_len);
+    if (expect_status("gcm decrypt nonce 0", st, PSA_ERROR_INVALID_ARGUMENT)
+            != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    st = psa_aead_decrypt(key, PSA_ALG_GCM, nonce, 8, NULL, 0,
+                          ct, ct_len, ptout, sizeof(ptout), &pt_len);
+    if (expect_status("gcm decrypt nonce 8", st, PSA_ERROR_NOT_SUPPORTED)
+            != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    st = psa_aead_decrypt(key, PSA_ALG_GCM, nonce, 25, NULL, 0,
+                          ct, ct_len, ptout, sizeof(ptout), &pt_len);
+    if (expect_status("gcm decrypt nonce 25", st, PSA_ERROR_NOT_SUPPORTED)
+            != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    (void)psa_destroy_key(key);
+    printf("PASS: GCM nonce length handling\n");
+    return 0;
+}
+
 int main(void)
 {
     psa_status_t st;
@@ -777,6 +887,10 @@ int main(void)
 
     /* Case 12: undersized RSA signature buffer -> BUFFER_TOO_SMALL */
     if (test_rsa_sign_buffer_too_small() != 0)
+        return 1;
+
+    /* Case 13: GCM nonce-length error codes */
+    if (test_gcm_nonce_lengths() != 0)
         return 1;
 
     printf("PSA 1.4 misc test: OK\n");
