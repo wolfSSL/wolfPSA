@@ -535,6 +535,77 @@ static int test_unsupported_lifetime_location(void)
     return 0;
 }
 
+/* Case 10: deterministic ECDSA (RFC 6979) must produce identical signatures
+ * for the same key and hash, and those signatures must verify. This exercises
+ * the deterministic nonce setup on the sign path; a randomized ECDSA nonce
+ * (deterministic setup deleted or disabled) yields two different signatures
+ * and fails the identical-signature assertion. */
+static int test_deterministic_ecdsa(void)
+{
+    psa_algorithm_t alg = PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_SHA_256);
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_key_id_t key = 0;
+    static const uint8_t hash[32] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+    };
+    uint8_t sig1[PSA_SIGNATURE_MAX_SIZE];
+    uint8_t sig2[PSA_SIGNATURE_MAX_SIZE];
+    size_t sig1_len = 0;
+    size_t sig2_len = 0;
+    psa_status_t st;
+
+    psa_set_key_type(&attrs,
+                     PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+    psa_set_key_bits(&attrs, 256);
+    psa_set_key_usage_flags(&attrs,
+                            PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_VERIFY_HASH);
+    psa_set_key_algorithm(&attrs, alg);
+
+    st = psa_generate_key(&attrs, &key);
+    if (expect_status("det_ecdsa: generate", st, PSA_SUCCESS) != 0)
+        return 1;
+
+    st = psa_sign_hash(key, alg, hash, sizeof(hash), sig1, sizeof(sig1),
+                       &sig1_len);
+    if (st == PSA_ERROR_NOT_SUPPORTED) {
+        printf("SKIP test_deterministic_ecdsa (deterministic ECDSA not"
+               " supported by this build)\n");
+        (void)psa_destroy_key(key);
+        return 0;
+    }
+    if (expect_status("det_ecdsa: sign #1", st, PSA_SUCCESS) != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    st = psa_sign_hash(key, alg, hash, sizeof(hash), sig2, sizeof(sig2),
+                       &sig2_len);
+    if (expect_status("det_ecdsa: sign #2", st, PSA_SUCCESS) != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    if (sig1_len != sig2_len || memcmp(sig1, sig2, sig1_len) != 0) {
+        printf("FAIL det_ecdsa: signatures differ, deterministic nonce not"
+               " applied\n");
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    st = psa_verify_hash(key, alg, hash, sizeof(hash), sig1, sig1_len);
+    if (expect_status("det_ecdsa: verify", st, PSA_SUCCESS) != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    (void)psa_destroy_key(key);
+    printf("PASS: deterministic ECDSA identical signatures\n");
+    return 0;
+}
+
 int main(void)
 {
     psa_status_t st;
@@ -579,6 +650,10 @@ int main(void)
 
     /* Case 9: unsupported key lifetime location rejected */
     if (test_unsupported_lifetime_location() != 0)
+        return 1;
+
+    /* Case 10: deterministic ECDSA identical-signature check */
+    if (test_deterministic_ecdsa() != 0)
         return 1;
 
     printf("PSA 1.4 misc test: OK\n");
