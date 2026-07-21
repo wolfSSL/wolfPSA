@@ -33,7 +33,7 @@
 #include <wolfpsa/psa_chacha20_poly1305.h>
 #include <wolfssl/wolfcrypt/aes.h>
 #include <wolfssl/wolfcrypt/mem_track.h>
-#ifdef HAVE_XCHACHA
+#if defined(HAVE_XCHACHA) || (defined(HAVE_CHACHA) && defined(HAVE_POLY1305))
 #include <wolfssl/wolfcrypt/chacha20_poly1305.h>
 #endif
 #ifdef HAVE_ASCON
@@ -294,6 +294,17 @@ static psa_status_t wolfpsa_aead_setup(psa_aead_operation_t *operation,
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         return PSA_ERROR_INVALID_ARGUMENT;
+    }
+#endif
+#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+    /* ChaCha20-Poly1305 has no truncated-tag interface; only the native
+     * 16-byte tag is supported. Reject shortened-tag variants here rather than
+     * accepting them and failing the encrypt/decrypt roundtrip later. */
+    if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CHACHA20_POLY1305) &&
+        ctx->tag_length != CHACHA20_POLY1305_AEAD_AUTHTAG_SIZE) {
+        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
+        XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        return PSA_ERROR_NOT_SUPPORTED;
     }
 #endif
 

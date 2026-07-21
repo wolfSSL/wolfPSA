@@ -606,6 +606,74 @@ static int test_deterministic_ecdsa(void)
     return 0;
 }
 
+/* Case 11: multipart ChaCha20-Poly1305 with a shortened tag must be rejected
+ * at setup with PSA_ERROR_NOT_SUPPORTED. Truncated Poly1305 tags are not
+ * implemented, so a shortened-tag algorithm must not be accepted and then fail
+ * the encrypt/decrypt roundtrip. */
+static int test_chacha20_poly1305_shortened_tag(void)
+{
+    psa_algorithm_t alg =
+        PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CHACHA20_POLY1305, 8);
+    static const uint8_t key_bytes[32] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+    };
+    static const uint8_t nonce[12] = { 0 };
+    static const uint8_t pt[16] = {
+        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f
+    };
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_key_id_t key = 0;
+    psa_aead_operation_t op = PSA_AEAD_OPERATION_INIT;
+    uint8_t ct[sizeof(pt) + 16];
+    size_t ct_len = 0;
+    psa_status_t st;
+
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_CHACHA20);
+    psa_set_key_bits(&attrs, 256u);
+    psa_set_key_usage_flags(&attrs,
+                            PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+    /* Bind the key policy to the shortened-tag algorithm so the key-policy
+     * check passes and setup reaches the tag-length validation. */
+    psa_set_key_algorithm(&attrs, alg);
+
+    st = psa_import_key(&attrs, key_bytes, sizeof(key_bytes), &key);
+    if (st == PSA_ERROR_NOT_SUPPORTED) {
+        printf("SKIP chacha20_poly1305_shortened_tag (not supported by this"
+               " build)\n");
+        return 0;
+    }
+    if (expect_status("chacha short-tag import", st, PSA_SUCCESS) != 0)
+        return 1;
+
+    /* Multipart setup must reject the shortened tag. */
+    st = psa_aead_encrypt_setup(&op, key, alg);
+    if (expect_status("chacha short-tag encrypt_setup", st,
+                      PSA_ERROR_NOT_SUPPORTED) != 0) {
+        (void)psa_aead_abort(&op);
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+    (void)psa_aead_abort(&op);
+
+    /* One-shot path (routes through setup) must reject it too. */
+    ct_len = 0;
+    st = psa_aead_encrypt(key, alg, nonce, sizeof(nonce), NULL, 0,
+                          pt, sizeof(pt), ct, sizeof(ct), &ct_len);
+    if (expect_status("chacha short-tag encrypt", st,
+                      PSA_ERROR_NOT_SUPPORTED) != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    (void)psa_destroy_key(key);
+    printf("PASS: ChaCha20-Poly1305 shortened tag rejected\n");
+    return 0;
+}
+
 int main(void)
 {
     psa_status_t st;
@@ -654,6 +722,10 @@ int main(void)
 
     /* Case 10: deterministic ECDSA identical-signature check */
     if (test_deterministic_ecdsa() != 0)
+        return 1;
+
+    /* Case 11: ChaCha20-Poly1305 shortened tag rejected at setup */
+    if (test_chacha20_poly1305_shortened_tag() != 0)
         return 1;
 
     printf("PSA 1.4 misc test: OK\n");
