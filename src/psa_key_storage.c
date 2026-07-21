@@ -601,6 +601,10 @@ static size_t psa_der_write_len(uint8_t* out, size_t len)
     }
 }
 
+/* DER INTEGER encoders. These branch on the value being serialized (leading
+ * zero skip and high-bit pad), so they are variable-time and for public
+ * integers only, such as the RSA modulus and public exponent. Serialize a
+ * secret integer with a constant-time fixed-width encoder instead. */
 static size_t psa_der_int_size(const uint8_t* val, size_t len)
 {
     size_t offset = 0;
@@ -624,6 +628,8 @@ static size_t psa_der_int_size(const uint8_t* val, size_t len)
            value_len + (size_t)add_zero;
 }
 
+/* Public integers only; see the note on psa_der_int_size above. This encoder
+ * is variable-time with respect to the input bytes. */
 static size_t psa_der_write_int(uint8_t* out, const uint8_t* val, size_t len)
 {
     size_t offset = 0;
