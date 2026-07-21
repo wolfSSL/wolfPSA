@@ -484,6 +484,57 @@ static int test_size_macros(void)
     return fail;
 }
 
+/* Case 9: a key whose lifetime names a storage location this build does not
+ * implement (for example a secure element or vendor location) must be rejected
+ * rather than silently written to plaintext local storage. Covers both the
+ * import and generate entry points. */
+static int test_unsupported_lifetime_location(void)
+{
+    /* A non-local vendor / secure-element storage location. */
+    psa_key_location_t se_location =
+        (psa_key_location_t)(PSA_KEY_LOCATION_VENDOR_FLAG | 0x01u);
+    psa_key_lifetime_t se_lifetime =
+        PSA_KEY_LIFETIME_FROM_PERSISTENCE_AND_LOCATION(
+            PSA_KEY_PERSISTENCE_DEFAULT, se_location);
+    static const uint8_t aes_key[16] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+    };
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_key_id_t key = 0;
+    psa_status_t st;
+
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attrs, 128);
+    psa_set_key_usage_flags(&attrs,
+                            PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attrs, PSA_ALG_GCM);
+    psa_set_key_lifetime(&attrs, se_lifetime);
+
+    /* Import path */
+    st = psa_import_key(&attrs, aes_key, sizeof(aes_key), &key);
+    if (st == PSA_SUCCESS) {
+        (void)psa_destroy_key(key);
+    }
+    if (expect_status("import_key unsupported location", st,
+                      PSA_ERROR_NOT_SUPPORTED) != 0) {
+        return 1;
+    }
+
+    /* Generate path (funnels through psa_import_key) */
+    key = 0;
+    st = psa_generate_key(&attrs, &key);
+    if (st == PSA_SUCCESS) {
+        (void)psa_destroy_key(key);
+    }
+    if (expect_status("generate_key unsupported location", st,
+                      PSA_ERROR_NOT_SUPPORTED) != 0) {
+        return 1;
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     psa_status_t st;
@@ -524,6 +575,10 @@ int main(void)
 
     /* Case 8: size macro runtime checks */
     if (test_size_macros() != 0)
+        return 1;
+
+    /* Case 9: unsupported key lifetime location rejected */
+    if (test_unsupported_lifetime_location() != 0)
         return 1;
 
     printf("PSA 1.4 misc test: OK\n");

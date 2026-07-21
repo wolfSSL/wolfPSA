@@ -950,6 +950,19 @@ psa_status_t psa_import_key(
 
     attr = *attributes;
 
+    /* Local storage is the only location this build implements. A key whose
+     * lifetime names any other location (for example a secure element or
+     * vendor location) must be rejected rather than silently written to
+     * plaintext local storage. This choke point also covers psa_generate_key,
+     * psa_copy_key and psa_key_derivation_output_key, which all store through
+     * psa_import_key. */
+    if (PSA_KEY_LIFETIME_GET_LOCATION(attr.lifetime) !=
+        PSA_KEY_LOCATION_LOCAL_STORAGE) {
+        wolfpsa_debug_import_reason("unsupported key lifetime location", &attr,
+                                    data_length);
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+
     if (attr.policy.alg2 != PSA_ALG_NONE) {
         wolfpsa_debug_import_reason("unsupported secondary algorithm", &attr,
                                     data_length);
