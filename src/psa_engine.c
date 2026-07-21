@@ -73,6 +73,7 @@ psa_status_t wc_error_to_psa_status(int ret)
             status = PSA_ERROR_INVALID_ARGUMENT;
             break;
         case BUFFER_E:
+        case RSA_BUFFER_E:
             status = PSA_ERROR_BUFFER_TOO_SMALL;
             break;
         case MEMORY_E:

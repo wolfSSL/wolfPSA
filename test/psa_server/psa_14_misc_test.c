@@ -674,6 +674,53 @@ static int test_chacha20_poly1305_shortened_tag(void)
     return 0;
 }
 
+/* Case 12: an undersized RSA signature buffer must be reported as
+ * PSA_ERROR_BUFFER_TOO_SMALL, not PSA_ERROR_GENERIC_ERROR. wc_RsaSSL_Sign
+ * returns RSA_BUFFER_E when the output buffer is smaller than the modulus, and
+ * the error translator must map that to BUFFER_TOO_SMALL so callers can retry
+ * with a larger buffer. */
+static int test_rsa_sign_buffer_too_small(void)
+{
+    psa_algorithm_t alg = PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256);
+    static const uint8_t hash[32] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+    };
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_key_id_t key = 0;
+    uint8_t sig[16]; /* far smaller than a 2048-bit (256-byte) signature */
+    size_t sig_len = 0;
+    psa_status_t st;
+
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_RSA_KEY_PAIR);
+    psa_set_key_bits(&attrs, 2048u);
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_SIGN_HASH);
+    psa_set_key_algorithm(&attrs, alg);
+
+    st = psa_generate_key(&attrs, &key);
+    if (st == PSA_ERROR_NOT_SUPPORTED) {
+        printf("SKIP rsa_sign_buffer_too_small (RSA not supported by this"
+               " build)\n");
+        return 0;
+    }
+    if (expect_status("rsa buffer-too-small: generate", st, PSA_SUCCESS) != 0)
+        return 1;
+
+    st = psa_sign_hash(key, alg, hash, sizeof(hash), sig, sizeof(sig),
+                       &sig_len);
+    if (expect_status("rsa sign undersized buffer", st,
+                      PSA_ERROR_BUFFER_TOO_SMALL) != 0) {
+        (void)psa_destroy_key(key);
+        return 1;
+    }
+
+    (void)psa_destroy_key(key);
+    printf("PASS: RSA sign undersized buffer -> BUFFER_TOO_SMALL\n");
+    return 0;
+}
+
 int main(void)
 {
     psa_status_t st;
@@ -726,6 +773,10 @@ int main(void)
 
     /* Case 11: ChaCha20-Poly1305 shortened tag rejected at setup */
     if (test_chacha20_poly1305_shortened_tag() != 0)
+        return 1;
+
+    /* Case 12: undersized RSA signature buffer -> BUFFER_TOO_SMALL */
+    if (test_rsa_sign_buffer_too_small() != 0)
         return 1;
 
     printf("PSA 1.4 misc test: OK\n");
