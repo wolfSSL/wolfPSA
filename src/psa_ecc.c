@@ -120,6 +120,7 @@ psa_status_t psa_asymmetric_sign_ecc(psa_key_type_t key_type,
     }
 
     if (PSA_ALG_IS_DETERMINISTIC_ECDSA(alg)) {
+#ifdef WOLFSSL_ECDSA_DETERMINISTIC_K
         int hash_type = wc_psa_get_hash_type(alg);
         if (hash_type == WC_HASH_TYPE_NONE) {
             wc_FreeRng(&rng);
@@ -132,6 +133,12 @@ psa_status_t psa_asymmetric_sign_ecc(psa_key_type_t key_type,
             wc_ecc_free(&ecc);
             return wc_error_to_psa_status(ret);
         }
+#else
+        /* Deterministic ECDSA needs WOLFSSL_ECDSA_DETERMINISTIC_K. */
+        wc_FreeRng(&rng);
+        wc_ecc_free(&ecc);
+        return PSA_ERROR_NOT_SUPPORTED;
+#endif
     }
 
     sig_len = wc_ecc_sig_size(&ecc);

@@ -32,6 +32,7 @@
 #include <psa_key_storage.h>
 #include <psa_store.h>
 #include "psa_trace.h"
+#include "psa_lock.h"
 #include "psa_size.h"
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/types.h>
@@ -64,6 +65,31 @@ typedef struct wolfpsa_volatile_key_node {
 } wolfpsa_volatile_key_node;
 
 static wolfpsa_volatile_key_node* g_volatile_keys = NULL;
+
+/* Global lock guarding all shared key-store state above (g_volatile_keys,
+ * g_next_key_id, g_key_storage_initialized). No-op unless WOLFPSA_THREAD_SAFE.
+ * See psa_lock.h. */
+WOLFPSA_DEFINE_LOCK();
+
+#if defined(WOLFPSA_THREAD_SAFE)
+/* One-time creation of the global key-store mutex (WOLFPSA_LOCK_INIT). The plain
+ * flag guard is safe under the PSA contract that psa_crypto_init() runs before
+ * any concurrent PSA use, so no two threads reach wc_InitMutex() at once. */
+static int g_wolfpsa_lock_ready = 0;
+
+int wolfpsa_lock_ensure_init(void)
+{
+    int ret = 0;
+
+    if (!g_wolfpsa_lock_ready) {
+        ret = wc_InitMutex(&wolfpsa_global_mutex);
+        if (ret == 0) {
+            g_wolfpsa_lock_ready = 1;
+        }
+    }
+    return ret;
+}
+#endif /* WOLFPSA_THREAD_SAFE */
 
 /* Internal init state from psa_crypto_init() */
 extern int wolfPSA_CryptoIsInitialized(void);
@@ -288,44 +314,55 @@ static psa_status_t wolfpsa_volatile_store(psa_key_id_t key_id,
                                            size_t data_length)
 {
     wolfpsa_volatile_key_node* node;
+    psa_status_t st = PSA_SUCCESS;
+
+    WOLFPSA_LOCK();
 
     if (attributes == NULL || data == NULL || data_length == 0) {
-        return PSA_ERROR_INVALID_ARGUMENT;
+        st = PSA_ERROR_INVALID_ARGUMENT;
+    }
+    else if (wolfpsa_volatile_find(key_id) != NULL) {
+        st = PSA_ERROR_ALREADY_EXISTS;
+    }
+    else {
+        node = (wolfpsa_volatile_key_node*)XMALLOC(sizeof(*node), NULL,
+                                                   DYNAMIC_TYPE_TMP_BUFFER);
+        if (node == NULL) {
+            st = PSA_ERROR_INSUFFICIENT_MEMORY;
+        }
+        else {
+            XMEMSET(node, 0, sizeof(*node));
+            node->data = (uint8_t*)XMALLOC(data_length, NULL,
+                                           DYNAMIC_TYPE_TMP_BUFFER);
+            if (node->data == NULL) {
+                XFREE(node, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                st = PSA_ERROR_INSUFFICIENT_MEMORY;
+            }
+            else {
+                XMEMCPY(node->data, data, data_length);
+                node->data_length = data_length;
+                node->attributes = *attributes;
+                node->id = key_id;
+
+                node->next = g_volatile_keys;
+                g_volatile_keys = node;
+            }
+        }
     }
 
-    if (wolfpsa_volatile_find(key_id) != NULL) {
-        return PSA_ERROR_ALREADY_EXISTS;
-    }
-
-    node = (wolfpsa_volatile_key_node*)XMALLOC(sizeof(*node), NULL,
-                                               DYNAMIC_TYPE_TMP_BUFFER);
-    if (node == NULL) {
-        return PSA_ERROR_INSUFFICIENT_MEMORY;
-    }
-    XMEMSET(node, 0, sizeof(*node));
-
-    node->data = (uint8_t*)XMALLOC(data_length, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    if (node->data == NULL) {
-        XFREE(node, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        return PSA_ERROR_INSUFFICIENT_MEMORY;
-    }
-
-    XMEMCPY(node->data, data, data_length);
-    node->data_length = data_length;
-    node->attributes = *attributes;
-    node->id = key_id;
-
-    node->next = g_volatile_keys;
-    g_volatile_keys = node;
-
-    return PSA_SUCCESS;
+    WOLFPSA_UNLOCK();
+    return st;
 }
 
 static psa_status_t wolfpsa_volatile_remove(psa_key_id_t key_id)
 {
-    wolfpsa_volatile_key_node* cur = g_volatile_keys;
+    wolfpsa_volatile_key_node* cur;
     wolfpsa_volatile_key_node* prev = NULL;
+    psa_status_t st = PSA_ERROR_INVALID_HANDLE;
 
+    WOLFPSA_LOCK();
+
+    cur = g_volatile_keys;
     while (cur != NULL) {
         if (cur->id == key_id) {
             if (prev != NULL) {
@@ -340,21 +377,24 @@ static psa_status_t wolfpsa_volatile_remove(psa_key_id_t key_id)
             }
             XMEMSET(cur, 0, sizeof(*cur));
             XFREE(cur, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            return PSA_SUCCESS;
+            st = PSA_SUCCESS;
+            break;
         }
         prev = cur;
         cur = cur->next;
     }
 
-    return PSA_ERROR_INVALID_HANDLE;
+    WOLFPSA_UNLOCK();
+    return st;
 }
 
 static psa_status_t wolfpsa_volatile_get(psa_key_id_t key_id,
-                                        psa_key_attributes_t* attributes,
-                                        uint8_t** key_data,
-                                        size_t* key_data_length)
+                                         psa_key_attributes_t* attributes,
+                                         uint8_t** key_data,
+                                         size_t* key_data_length)
 {
     wolfpsa_volatile_key_node* node;
+    psa_status_t st = PSA_SUCCESS;
 
     if (key_data == NULL || key_data_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
@@ -363,47 +403,59 @@ static psa_status_t wolfpsa_volatile_get(psa_key_id_t key_id,
     *key_data = NULL;
     *key_data_length = 0;
 
+    WOLFPSA_LOCK();
+
     node = wolfpsa_volatile_find(key_id);
     if (node == NULL) {
-        return PSA_ERROR_INVALID_HANDLE;
+        st = PSA_ERROR_INVALID_HANDLE;
+    }
+    else {
+        if (attributes != NULL) {
+            *attributes = node->attributes;
+        }
+
+        if (node->data_length == 0 || node->data == NULL) {
+            st = PSA_ERROR_DATA_INVALID;
+        }
+        else {
+            *key_data = (uint8_t*)XMALLOC(node->data_length, NULL,
+                                          DYNAMIC_TYPE_TMP_BUFFER);
+            if (*key_data == NULL) {
+                st = PSA_ERROR_INSUFFICIENT_MEMORY;
+            }
+            else {
+                XMEMCPY(*key_data, node->data, node->data_length);
+                *key_data_length = node->data_length;
+            }
+        }
     }
 
-    if (attributes != NULL) {
-        *attributes = node->attributes;
-    }
-
-    if (node->data_length == 0 || node->data == NULL) {
-        return PSA_ERROR_DATA_INVALID;
-    }
-
-    *key_data = (uint8_t*)XMALLOC(node->data_length, NULL,
-                                  DYNAMIC_TYPE_TMP_BUFFER);
-    if (*key_data == NULL) {
-        return PSA_ERROR_INSUFFICIENT_MEMORY;
-    }
-
-    XMEMCPY(*key_data, node->data, node->data_length);
-    *key_data_length = node->data_length;
-
-    return PSA_SUCCESS;
+    WOLFPSA_UNLOCK();
+    return st;
 }
 
 static psa_status_t wolfpsa_volatile_get_attributes(psa_key_id_t key_id,
                                                     psa_key_attributes_t* attributes)
 {
     wolfpsa_volatile_key_node* node;
+    psa_status_t st = PSA_SUCCESS;
 
     if (attributes == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
+    WOLFPSA_LOCK();
+
     node = wolfpsa_volatile_find(key_id);
     if (node == NULL) {
-        return PSA_ERROR_INVALID_HANDLE;
+        st = PSA_ERROR_INVALID_HANDLE;
+    }
+    else {
+        *attributes = node->attributes;
     }
 
-    *attributes = node->attributes;
-    return PSA_SUCCESS;
+    WOLFPSA_UNLOCK();
+    return st;
 }
 
 static psa_status_t wolfpsa_infer_key_bits(psa_key_attributes_t* attr,
@@ -669,14 +721,27 @@ static size_t psa_der_write_int(uint8_t* out, const uint8_t* val, size_t len)
 psa_status_t psa_key_storage_init(const wc_KeyVault_Callbacks* callbacks)
 {
     (void)callbacks;
+    /* Publicly reachable before psa_crypto_init(); create the mutex first so
+     * WOLFPSA_LOCK() never runs on an uninitialized lock. */
+    if (WOLFPSA_LOCK_INIT() != 0) {
+        return PSA_ERROR_GENERIC_ERROR;
+    }
+    WOLFPSA_LOCK();
     g_key_storage_initialized = 1;
+    WOLFPSA_UNLOCK();
     return PSA_SUCCESS;
 }
 
 /* Cleanup the PSA key storage subsystem */
 void psa_key_storage_cleanup(void)
 {
-    wolfpsa_volatile_key_node* cur = g_volatile_keys;
+    wolfpsa_volatile_key_node* cur;
+
+    if (WOLFPSA_LOCK_INIT() != 0) {
+        return;
+    }
+    WOLFPSA_LOCK();
+    cur = g_volatile_keys;
     while (cur != NULL) {
         wolfpsa_volatile_key_node* next = cur->next;
         if (cur->data != NULL) {
@@ -689,16 +754,29 @@ void psa_key_storage_cleanup(void)
     }
     g_volatile_keys = NULL;
     g_key_storage_initialized = 0;
+    WOLFPSA_UNLOCK();
 }
 
 psa_key_id_t wolfpsa_test_get_next_key_id(void)
 {
-    return g_next_key_id;
+    psa_key_id_t id;
+    if (WOLFPSA_LOCK_INIT() != 0) {
+        return 0;
+    }
+    WOLFPSA_LOCK();
+    id = g_next_key_id;
+    WOLFPSA_UNLOCK();
+    return id;
 }
 
 void wolfpsa_test_set_next_key_id(psa_key_id_t key_id)
 {
+    if (WOLFPSA_LOCK_INIT() != 0) {
+        return;
+    }
+    WOLFPSA_LOCK();
     g_next_key_id = key_id;
+    WOLFPSA_UNLOCK();
 }
 
 /* Check if the key storage is initialized */
@@ -708,11 +786,12 @@ static psa_status_t psa_key_storage_check_init(void)
         return PSA_ERROR_BAD_STATE;
     }
 
-    if (!g_key_storage_initialized) {
-        (void)psa_key_storage_init(NULL);
-    }
-    
-    return PSA_SUCCESS;
+    /* psa_key_storage_init() is idempotent and takes the lock itself; call it
+     * directly rather than nesting a second acquisition inside our own lock.
+     * Avoiding the nested lock keeps the global mutex non-recursive, so
+     * WOLFPSA_THREAD_SAFE works with a plain mutex off Zephyr too (see
+     * psa_lock.h). */
+    return psa_key_storage_init(NULL);
 }
 
 #ifdef WOLFPSA_DEBUG_IMPORT
@@ -861,7 +940,7 @@ psa_status_t wolfpsa_get_key_data(psa_key_id_t key_id,
                   sizeof(psa_key_lifetime_t);
 
     ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0, 1, &store);
-    if (ret == -4) {
+    if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
         return PSA_ERROR_INVALID_HANDLE;
     }
     if (ret != 0) {
@@ -1155,7 +1234,14 @@ psa_status_t psa_import_key(
     }
     
     {
-        psa_key_id_t attr_id = (psa_key_id_t)psa_get_key_id(&attr);
+        /* The PSA API ignores the key id in the attributes for a volatile
+         * lifetime: the implementation always assigns a fresh one. Honouring it
+         * would reject the output of psa_get_key_attributes(), which reports
+         * the id of volatile keys too, with PSA_ERROR_ALREADY_EXISTS. Only a
+         * persistent key takes its id from the caller. */
+        psa_key_id_t attr_id = PSA_KEY_LIFETIME_IS_VOLATILE(attr.lifetime) ?
+                               PSA_KEY_ID_NULL :
+                               (psa_key_id_t)psa_get_key_id(&attr);
         if (attr_id != PSA_KEY_ID_NULL) {
             *key_id = attr_id;
         }
@@ -1164,12 +1250,16 @@ psa_status_t psa_import_key(
              * they cannot collide with caller-specified persistent ids, which
              * the PSA API reserves to the user range. A collision would let an
              * auto-assigned volatile key shadow a persistent record on read and
-             * survive psa_destroy_key() on disk. */
+             * survive psa_destroy_key() on disk. Guard the counter so concurrent
+             * callers each get a distinct id. */
+            WOLFPSA_LOCK();
             if (g_next_key_id < PSA_KEY_ID_VENDOR_MIN ||
                 g_next_key_id > PSA_KEY_ID_VENDOR_MAX) {
+                WOLFPSA_UNLOCK();
                 return PSA_ERROR_INSUFFICIENT_STORAGE;
             }
             *key_id = g_next_key_id++;
+            WOLFPSA_UNLOCK();
         }
     }
 
@@ -1205,15 +1295,21 @@ psa_status_t psa_import_key(
     else {
         /* The PSA Crypto API requires psa_import_key() to fail with
          * PSA_ERROR_ALREADY_EXISTS when a persistent key already exists with
-         * the requested id; the volatile path enforces the same above. Probe
-         * for an existing record before opening a write handle, otherwise the
-         * atomic rename in wolfPSA_Store_Close() would silently destroy the
-         * previously stored key. */
+         * the requested id. Hold the key-store lock across the existence probe
+         * and the write so two concurrent imports of the same id serialize: the
+         * loser observes the winner's record and returns ALREADY_EXISTS instead
+         * of both probing absent and both writing. Each store call is atomic on
+         * its own; the lock adds the cross-thread atomicity the check-then-write
+         * needs. Probing before the write handle also stops the atomic rename in
+         * wolfPSA_Store_Close() from silently destroying the previous record. */
+        WOLFPSA_LOCK();
+
         ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)*key_id, 0,
                                  1, &store);
         if (ret == 0) {
             wolfPSA_Store_Close(store);
             store = NULL;
+            WOLFPSA_UNLOCK();
             wc_ForceZero(buffer, buffer_size);
             XFREE(buffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             *key_id = PSA_KEY_ID_NULL;
@@ -1229,6 +1325,8 @@ psa_status_t psa_import_key(
             wolfPSA_Store_Close(store);
             store = NULL;
         }
+
+        WOLFPSA_UNLOCK();
     }
     
     wc_ForceZero(buffer, buffer_size);
@@ -1529,7 +1627,7 @@ psa_status_t psa_destroy_key(psa_key_id_t key_id)
 
     /* Remove key from persistent storage */
     ret = wolfPSA_Store_Remove(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0);
-    if (ret == -4) {
+    if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
         return PSA_ERROR_INVALID_HANDLE;
     }
     if (ret != 0) {
@@ -1608,7 +1706,7 @@ psa_status_t psa_export_key(
                  sizeof(psa_key_lifetime_t);
     
     ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0, 1, &store);
-    if (ret == -4) {
+    if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
         return PSA_ERROR_INVALID_HANDLE;
     }
     if (ret != 0) {
@@ -1719,7 +1817,7 @@ psa_status_t psa_export_public_key(
 
         ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0, 1,
                                  &store);
-        if (ret == -4) {
+        if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
             return PSA_ERROR_INVALID_HANDLE;
         }
         if (ret != 0) {
@@ -2000,7 +2098,7 @@ psa_status_t psa_get_key_attributes(
     size_t attr_length;
     int ret;
     void* store = NULL;
-    
+
     /* Check parameters */
     if (attributes == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
@@ -2013,31 +2111,58 @@ psa_status_t psa_get_key_attributes(
     }
 
     status = wolfpsa_volatile_get_attributes(key_id, attributes);
-    if (status == PSA_SUCCESS) {
-        return PSA_SUCCESS;
-    }
-    
-    attr_length = sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                  sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                  sizeof(psa_key_lifetime_t);
+    if (status != PSA_SUCCESS) {
+        /* Not a volatile key: load the attributes from the persistent store. */
+        attr_length = sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
+                      sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
+                      sizeof(psa_key_lifetime_t);
 
-    ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0, 1, &store);
-    if (ret == -4) {
-        return PSA_ERROR_INVALID_HANDLE;
-    }
-    if (ret != 0) {
-        return PSA_ERROR_STORAGE_FAILURE;
+        ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0, 1,
+                                 &store);
+        if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
+            return PSA_ERROR_INVALID_HANDLE;
+        }
+        if (ret != 0) {
+            return PSA_ERROR_STORAGE_FAILURE;
+        }
+
+        ret = wolfPSA_Store_Read(store, buffer,
+                                 (int)(attr_length + sizeof(size_t)));
+        wolfPSA_Store_Close(store);
+        store = NULL;
+        if (ret != (int)(attr_length + sizeof(size_t))) {
+            return PSA_ERROR_STORAGE_FAILURE;
+        }
+
+        status = psa_key_attributes_deserialize(buffer, attr_length, attributes);
+        if (status != PSA_SUCCESS) {
+            return status;
+        }
     }
 
-    ret = wolfPSA_Store_Read(store, buffer, (int)(attr_length + sizeof(size_t)));
-    wolfPSA_Store_Close(store);
-    store = NULL;
-    if (ret != (int)(attr_length + sizeof(size_t))) {
-        return PSA_ERROR_STORAGE_FAILURE;
-    }
+    /* The key id is the storage locator (persistent) or the volatile handle,
+     * not part of the serialized attributes, so restore it for both paths. Set
+     * the field directly: both source paths already carry the correct lifetime,
+     * and the accessor pair cannot express a volatile key's id (psa_set_key_id()
+     * flips a volatile lifetime to persistent, and psa_set_key_lifetime() clears
+     * the id when the lifetime is volatile). */
+    attributes->id = key_id;
+    return PSA_SUCCESS;
+}
 
-    /* Deserialize key attributes */
-    status = psa_key_attributes_deserialize(buffer, attr_length, attributes);
+psa_status_t psa_purge_key(psa_key_id_t key)
+{
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_status_t status;
+
+    /* wolfPSA keeps no in-RAM cache of persistent key material: persistent keys
+     * are reloaded from the store on every use (see wolfpsa_get_key_data()),
+     * and volatile keys must stay resident. There is therefore nothing to
+     * purge. Confirm the key exists and report success, which matches the PSA
+     * semantics for a key that has no purgeable cached copies. */
+    status = psa_get_key_attributes(key, &attributes);
+    psa_reset_key_attributes(&attributes);
+
     return status;
 }
 
@@ -2124,7 +2249,7 @@ psa_status_t psa_copy_key(
                  sizeof(psa_key_lifetime_t);
     
     ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)source_key, 0, 1, &store);
-    if (ret == -4) {
+    if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
         return PSA_ERROR_INVALID_HANDLE;
     }
     if (ret != 0) {

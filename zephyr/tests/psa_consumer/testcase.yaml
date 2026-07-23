@@ -1,0 +1,22 @@
+# Copyright (C) 2026 wolfSSL Inc.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Runs Zephyr's provider-agnostic PSA crypto ztest against the wolfPSA custom
+# provider (instead of Mbed TLS), proving wolfPSA is a drop-in PSA provider.
+common:
+  filter: not CONFIG_BUILD_WITH_TFM
+  harness: ztest
+  tags:
+    - wolfpsa
+    - psa
+tests:
+  crypto.wolfpsa.psa_consumer:
+    integration_platforms:
+      - native_sim/native/64
+  # Single-threaded variant: exercises the CONFIG_WOLFPSA_THREAD_SAFE=n baseline
+  # path (SINGLE_THREADED, no-op lock macros) so it is not left untested.
+  crypto.wolfpsa.psa_consumer.single_threaded:
+    extra_configs:
+      - CONFIG_WOLFPSA_THREAD_SAFE=n
+    integration_platforms:
+      - native_sim/native/64

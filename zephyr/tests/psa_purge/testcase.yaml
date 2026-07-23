@@ -1,0 +1,16 @@
+# Copyright (C) 2026 wolfSSL Inc.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Direct coverage for psa_purge_key(): a live key purges to PSA_SUCCESS, and an
+# absent key is rejected with PSA_ERROR_INVALID_HANDLE -- the latter path is not
+# driven by any other wolfPSA test (all existing callers purge a key that
+# exists).
+common:
+  filter: not CONFIG_BUILD_WITH_TFM
+  tags:
+    - wolfpsa
+    - psa
+tests:
+  crypto.wolfpsa.psa_purge:
+    integration_platforms:
+      - native_sim/native/64

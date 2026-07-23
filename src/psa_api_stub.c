@@ -126,11 +126,6 @@ psa_status_t psa_pake_setup(psa_pake_operation_t *operation, psa_key_id_t passwo
     return wolfPSA_StubNotSupported();
 }
 
-psa_status_t psa_purge_key(psa_key_id_t key) {
-    (void)key;
-    return wolfPSA_StubNotSupported();
-}
-
 /* --- Key attachment (hardware-bound keys) --- */
 
 psa_status_t psa_attach_key(const psa_key_attributes_t *attributes,

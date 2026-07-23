@@ -1,0 +1,12 @@
+# Copyright (C) 2026 wolfSSL Inc.
+# SPDX-License-Identifier: GPL-3.0-or-later
+common:
+  tags:
+    - wolfpsa
+    - psa
+    - tls
+  harness: ztest
+tests:
+  crypto.wolfpsa.tls_coexist:
+    integration_platforms:
+      - native_sim/native/64

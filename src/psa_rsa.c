@@ -47,6 +47,10 @@
 int wc_psa_get_rsa_padding(psa_algorithm_t alg);
 int wc_psa_get_hash_type(psa_algorithm_t alg);
 
+/* Only the PSS and OAEP paths use MGF1; guard the helper with the same
+ * condition as its callers so a config with neither (e.g. RSA sign/verify with
+ * PKCS#1 v1.5 only) does not trip -Werror=unused-function. */
+#if defined(WC_RSA_PSS) || defined(WOLFSSL_RSA_OAEP)
 static int wc_psa_get_mgf(int hash_type)
 {
     switch (hash_type) {
@@ -68,6 +72,7 @@ static int wc_psa_get_mgf(int hash_type)
             return WC_MGF1NONE;
     }
 }
+#endif /* WC_RSA_PSS || WOLFSSL_RSA_OAEP */
 
 #ifdef WC_RSA_PSS
 static int wc_psa_rsa_pss_check_padding(const byte* hash, word32 hash_length,

@@ -26,6 +26,13 @@
 
 #define WOLFPSA_STORE_KEY            0x00
 
+/* Shared return codes for the wolfPSA_Store_* backend interface below.
+ * Backends (psa_store_posix.c, psa_store_zephyr.c, custom vaults) must use
+ * these so callers in psa_key_storage.c interpret results consistently. */
+#define WOLFPSA_STORE_OK             0
+#define WOLFPSA_STORE_NOT_AVAILABLE  (-4)
+#define WOLFPSA_STORE_IO_ERROR       (-5)
+
 /*
  * Opens access to location to read/write PSA data.
  *

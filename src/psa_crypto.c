@@ -29,33 +29,59 @@
 
 #include <psa/crypto.h>
 #include "psa_trace.h"
+#include "psa_lock.h"
 #include <wolfpsa/psa_engine.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
 
+/* Init latch. The check-and-set in psa_crypto_init() is serialized so
+ * wolfCrypt_Init() runs exactly once even if several threads race at boot, and
+ * the read below takes the same lock so it is not a data race with that write. */
 static int g_psa_crypto_initialized = 0;
 
 int wolfPSA_CryptoIsInitialized(void)
 {
-    return g_psa_crypto_initialized;
+    int initialized;
+
+    if (WOLFPSA_LOCK_INIT() != 0) {
+        return 0;
+    }
+
+    WOLFPSA_LOCK();
+    initialized = g_psa_crypto_initialized;
+    WOLFPSA_UNLOCK();
+
+    return initialized;
 }
 
 psa_status_t psa_crypto_init(void)
 {
-    int ret;
+    int ret = 0;
+    psa_status_t status = PSA_SUCCESS;
 
     wolfpsa_trace("psa_crypto_init()");
 
-    if (g_psa_crypto_initialized) {
-        return PSA_SUCCESS;
+    /* Create the key-store mutex before any WOLFPSA_LOCK() runs. This is the
+     * platform-neutral init point: the PSA contract requires psa_crypto_init()
+     * before any other PSA call, so a bare (non-Zephyr) build lands here just as
+     * Zephyr's boot glue does. The init is idempotent, so repeated calls (or an
+     * additional platform bootstrap) are harmless. */
+    if (WOLFPSA_LOCK_INIT() != 0) {
+        return PSA_ERROR_GENERIC_ERROR;
     }
 
-    ret = wolfCrypt_Init();
-    if (ret != 0) {
-        return wc_error_to_psa_status(ret);
+    WOLFPSA_LOCK();
+    if (!g_psa_crypto_initialized) {
+        ret = wolfCrypt_Init();
+        if (ret != 0) {
+            status = wc_error_to_psa_status(ret);
+        }
+        else {
+            g_psa_crypto_initialized = 1;
+        }
     }
+    WOLFPSA_UNLOCK();
 
-    g_psa_crypto_initialized = 1;
-    return PSA_SUCCESS;
+    return status;
 }
 
 #endif /* WOLFSSL_PSA_ENGINE */

@@ -53,6 +53,31 @@ wolfSSL master.
   SLH-DSA key types are recognized but report NOT_SUPPORTED.
 - New coverage tests: ML-DSA, ML-KEM/KEM API, XOF, AES-KW, signature
   contexts, LMS/XMSS verify, Ascon/XChaCha, SP800-108 and 1.4 misc.
+- `psa_purge_key()`: confirms a key exists and reports its status (wolfPSA
+  keeps no in-RAM cache of persistent key material, so there is nothing to
+  evict).
+- Optional thread-safe key store: with `WOLFPSA_THREAD_SAFE` a single mutex
+  built on wolfCrypt's portable `wc_*Mutex` API (created in `psa_crypto_init()`)
+  guards the volatile-key list and id counter for concurrent PSA callers; a
+  no-op in single-threaded builds.
+
+### Zephyr module
+
+- Added wolfPSA as a Zephyr **PSA Crypto provider**: selected via
+  `CONFIG_PSA_CRYPTO_PROVIDER_CUSTOM` (Zephyr >= 4.3), it supplies the PSA Crypto
+  API in place of Mbed TLS while reusing the wolfCrypt core built by the wolfSSL
+  Zephyr module. Volatile and persistent keys, RNG, and the standard PSA surface
+  work with no Mbed TLS symbol in the image.
+- wolfCrypt AES-256-GCM custom ITS transform
+  (`CONFIG_SECURE_STORAGE_ITS_TRANSFORM_IMPLEMENTATION_CUSTOM`) provides
+  encryption-at-rest for persistent keys, replacing Zephyr's Mbed-TLS-coupled
+  AEAD transform. `psa_get_key_attributes()` restores the key id, for volatile
+  keys too; key creation ignores that id when the lifetime is volatile, so the
+  returned attributes stay usable as a key-creation template. Persistent keys
+  use the crypto-provider ITS namespace (isolated from application
+  `psa_its_*`/`psa_ps_*`).
+- wolfPSA follows the user's wolfCrypt configuration and exposes exactly the
+  enabled, wolfPSA-implemented algorithms as the PSA API.
 
 
 ## v5.9.1

@@ -1269,11 +1269,13 @@ psa_status_t wolfpsa_key_agreement_secret(psa_algorithm_t alg,
     uint8_t *key_data = NULL;
     size_t key_data_length = 0;
     psa_status_t status;
+#ifdef HAVE_ECC
     int ret;
     ecc_key priv;
     ecc_key pub;
     int curve_id;
     word32 out_len;
+#endif
 
     if (PSA_ALG_KEY_AGREEMENT_GET_BASE(alg) != PSA_ALG_ECDH) {
         return PSA_ERROR_NOT_SUPPORTED;
@@ -1325,6 +1327,7 @@ psa_status_t wolfpsa_key_agreement_secret(psa_algorithm_t alg,
         return status;
     }
 
+#ifdef HAVE_ECC
     curve_id = wc_psa_get_ecc_curve_id(attributes.type, attributes.bits);
     if (curve_id == ECC_CURVE_INVALID) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
@@ -1399,6 +1402,12 @@ psa_status_t wolfpsa_key_agreement_secret(psa_algorithm_t alg,
 
     *output_length = (size_t)out_len;
     return PSA_SUCCESS;
+#else
+    /* Generic (Weierstrass) ECDH needs wolfCrypt ECC (HAVE_ECC), which this
+     * build does not enable. Montgomery X25519/X448 is handled above. */
+    wolfpsa_forcezero_free_key_data(key_data, key_data_length);
+    return PSA_ERROR_NOT_SUPPORTED;
+#endif /* HAVE_ECC */
 }
 
 psa_status_t psa_raw_key_agreement(psa_algorithm_t alg,

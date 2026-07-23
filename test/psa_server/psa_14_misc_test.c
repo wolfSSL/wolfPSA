@@ -828,7 +828,165 @@ static int test_gcm_nonce_lengths(void)
 
     (void)psa_destroy_key(key);
     printf("PASS: GCM nonce length handling\n");
+
     return 0;
+}
+
+/* psa_purge_key(): a live key purges to PSA_SUCCESS, an absent one to
+ * PSA_ERROR_INVALID_HANDLE (wolfPSA keeps no purgeable persistent-key cache). */
+static int test_purge_key(void)
+{
+    psa_key_attributes_t a = PSA_KEY_ATTRIBUTES_INIT;
+    psa_key_id_t k = PSA_KEY_ID_NULL;
+    const uint8_t key[16] = { 0 };
+    psa_status_t st;
+
+    psa_set_key_usage_flags(&a, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&a, PSA_ALG_GCM);
+    psa_set_key_type(&a, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&a, 128);
+
+    if (psa_import_key(&a, key, sizeof(key), &k) != PSA_SUCCESS) {
+        printf("FAIL psa_purge_key import\n");
+        return 1;
+    }
+    st = psa_purge_key(k);
+    if (st != PSA_SUCCESS) {
+        printf("FAIL psa_purge_key(live) status=%d\n", (int)st);
+        return 1;
+    }
+    if (psa_destroy_key(k) != PSA_SUCCESS) {
+        printf("FAIL psa_purge_key destroy\n");
+        return 1;
+    }
+    st = psa_purge_key(k);
+    if (st != PSA_ERROR_INVALID_HANDLE) {
+        printf("FAIL psa_purge_key(absent) status=%d expected=%d\n",
+               (int)st, (int)PSA_ERROR_INVALID_HANDLE);
+        return 1;
+    }
+    return 0;
+}
+
+/* psa_get_key_attributes() must return the key id for a volatile key too, not
+ * only for persistent keys: the auto-assigned volatile id has to round-trip,
+ * and stamping it must not flip the reported lifetime to persistent. */
+static int test_volatile_key_id_roundtrip(void)
+{
+    psa_key_attributes_t a = PSA_KEY_ATTRIBUTES_INIT;
+    psa_key_attributes_t got = PSA_KEY_ATTRIBUTES_INIT;
+    psa_key_id_t k = PSA_KEY_ID_NULL;
+    const uint8_t key[16] = { 0 };
+    psa_status_t st;
+
+    psa_set_key_usage_flags(&a, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&a, PSA_ALG_GCM);
+    psa_set_key_type(&a, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&a, 128);
+    /* Volatile: the caller sets no id, so the implementation assigns one. */
+
+    if (psa_import_key(&a, key, sizeof(key), &k) != PSA_SUCCESS) {
+        printf("FAIL volatile id import\n");
+        return 1;
+    }
+    st = psa_get_key_attributes(k, &got);
+    if (st != PSA_SUCCESS) {
+        (void)psa_destroy_key(k);
+        printf("FAIL volatile id get_attributes status=%d\n", (int)st);
+        return 1;
+    }
+    if (psa_get_key_id(&got) != k) {
+        (void)psa_destroy_key(k);
+        printf("FAIL volatile id mismatch got=%u expected=%u\n",
+               (unsigned)psa_get_key_id(&got), (unsigned)k);
+        return 1;
+    }
+    if (!PSA_KEY_LIFETIME_IS_VOLATILE(psa_get_key_lifetime(&got))) {
+        (void)psa_destroy_key(k);
+        printf("FAIL volatile id lifetime no longer volatile\n");
+        return 1;
+    }
+    (void)psa_destroy_key(k);
+    return 0;
+}
+
+/* psa_get_key_attributes() output must stay usable as a key-creation template.
+ * The reported id is meaningless for a volatile key, so the creation calls have
+ * to ignore it instead of treating it as a caller-requested id. */
+static int test_volatile_attributes_reuse(void)
+{
+    psa_key_attributes_t a = PSA_KEY_ATTRIBUTES_INIT;
+    psa_key_attributes_t got = PSA_KEY_ATTRIBUTES_INIT;
+    psa_key_id_t src = PSA_KEY_ID_NULL;
+    psa_key_id_t imported = PSA_KEY_ID_NULL;
+    psa_key_id_t copied = PSA_KEY_ID_NULL;
+    psa_key_id_t generated = PSA_KEY_ID_NULL;
+    const uint8_t key[16] = { 0 };
+    psa_status_t st;
+    int ret = 0;
+
+    psa_set_key_usage_flags(&a, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT |
+                                PSA_KEY_USAGE_COPY);
+    psa_set_key_algorithm(&a, PSA_ALG_GCM);
+    psa_set_key_type(&a, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&a, 128);
+
+    st = psa_import_key(&a, key, sizeof(key), &src);
+    if (st != PSA_SUCCESS) {
+        printf("FAIL attributes reuse source import status=%d\n", (int)st);
+        return 1;
+    }
+
+    st = psa_get_key_attributes(src, &got);
+    if (st != PSA_SUCCESS) {
+        printf("FAIL attributes reuse get_attributes status=%d\n", (int)st);
+        ret = 1;
+    }
+
+    if (ret == 0) {
+        st = psa_import_key(&got, key, sizeof(key), &imported);
+        if (st != PSA_SUCCESS) {
+            printf("FAIL attributes reuse import status=%d\n", (int)st);
+            ret = 1;
+        }
+        else if (imported == src) {
+            printf("FAIL attributes reuse import reused source id\n");
+            ret = 1;
+        }
+    }
+
+    if (ret == 0) {
+        st = psa_copy_key(src, &got, &copied);
+        if (st != PSA_SUCCESS) {
+            printf("FAIL attributes reuse copy status=%d\n", (int)st);
+            ret = 1;
+        }
+        else if (copied == src) {
+            printf("FAIL attributes reuse copy reused source id\n");
+            ret = 1;
+        }
+    }
+
+    if (ret == 0) {
+        st = psa_generate_key(&got, &generated);
+        if (st != PSA_SUCCESS) {
+            printf("FAIL attributes reuse generate status=%d\n", (int)st);
+            ret = 1;
+        }
+        else if (generated == src) {
+            printf("FAIL attributes reuse generate reused source id\n");
+            ret = 1;
+        }
+    }
+
+    if (generated != PSA_KEY_ID_NULL)
+        (void)psa_destroy_key(generated);
+    if (copied != PSA_KEY_ID_NULL)
+        (void)psa_destroy_key(copied);
+    if (imported != PSA_KEY_ID_NULL)
+        (void)psa_destroy_key(imported);
+    (void)psa_destroy_key(src);
+    return ret;
 }
 
 int main(void)
@@ -891,6 +1049,18 @@ int main(void)
 
     /* Case 13: GCM nonce-length error codes */
     if (test_gcm_nonce_lengths() != 0)
+        return 1;
+
+    /* Case 14: psa_purge_key live + absent */
+    if (test_purge_key() != 0)
+        return 1;
+
+    /* Case 15: volatile key id round-trips through psa_get_key_attributes */
+    if (test_volatile_key_id_roundtrip() != 0)
+        return 1;
+
+    /* Case 16: those attributes still work as a key-creation template */
+    if (test_volatile_attributes_reuse() != 0)
         return 1;
 
     printf("PSA 1.4 misc test: OK\n");

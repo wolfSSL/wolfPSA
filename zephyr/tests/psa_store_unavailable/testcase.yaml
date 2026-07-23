@@ -1,0 +1,18 @@
+# Copyright (C) 2026 wolfSSL Inc.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Pins the documented degradation contract of wolfPSA's Zephyr store backend
+# when CONFIG_SECURE_STORAGE is unset: volatile keys keep working, and a
+# persistent-key operation fails cleanly (a storage error, no crash) instead of
+# silently succeeding. Complements psa_its / psa_persistent_key / psa_secure_storage,
+# which all build the CONFIG_SECURE_STORAGE branch.
+common:
+  filter: not CONFIG_BUILD_WITH_TFM
+  tags:
+    - wolfpsa
+    - psa
+    - secure_storage
+tests:
+  crypto.wolfpsa.psa_store_unavailable:
+    integration_platforms:
+      - native_sim/native/64

@@ -1,0 +1,12 @@
+# Copyright (C) 2026 wolfSSL Inc.
+# SPDX-License-Identifier: GPL-3.0-or-later
+common:
+  filter: not CONFIG_BUILD_WITH_TFM
+  tags:
+    - wolfpsa
+    - psa
+    - secure_storage
+tests:
+  crypto.wolfpsa.psa_secure_storage:
+    integration_platforms:
+      - native_sim/native/64

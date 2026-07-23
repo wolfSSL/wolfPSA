@@ -28,3 +28,10 @@ test/psa_lms_xmss_verify_test
 test/psa_ascon_xchacha_test
 test/psa_sp800_108_test
 test/psa_14_misc_test
+
+# Local-only editor/agent context (not part of the module)
+CLAUDE.md
+
+# Real-hardware board configs are kept local, not in-tree (CI is native_sim only)
+zephyr/**/boards/nucleo_*.conf
+zephyr/**/boards/nucleo_*.overlay

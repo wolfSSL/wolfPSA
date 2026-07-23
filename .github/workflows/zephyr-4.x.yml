@@ -1,0 +1,67 @@
+name: Zephyr 4.x tests
+
+# Builds and runs the wolfPSA Zephyr samples/tests across the supported Zephyr
+# range. Mirrors the wolfSSL module's zephyr-4.x workflow: a matrix over Zephyr
+# versions driving a Docker-based test script (.github/scripts/zephyr-4.x/
+# zephyr-test.sh), which sets up the wolfSSL + wolfPSA modules and runs the
+# shared test runner (.github/scripts/run-tests.sh). wolfPSA requires Zephyr
+# >= 4.3 (the PSA_CRYPTO_PROVIDER_CUSTOM hook), so the floor of the matrix is 4.3.
+
+on:
+  push:
+    branches: [ 'release/**' ]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.zephyr-ref }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # 4.3 = the wolfPSA floor (upstream), 4.4 = current target.
+        zephyr-ref: [ v4.3.0, v4.4.0 ]
+    steps:
+      - name: Checkout wolfPSA CI driver
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL "$AGENT_TOOLSDIRECTORY" || true
+          docker system prune -af || true
+          df -h /
+
+      - name: Resolve wolfPSA repo and ref
+        id: src
+        run: |
+          # Test the PR merged into its base (matches the wolfSSL workflow), so
+          # fixes already on the target branch are included.
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "repo=https://github.com/${{ github.repository }}" >> "$GITHUB_OUTPUT"
+            echo "ref=refs/pull/${{ github.event.pull_request.number }}/merge" >> "$GITHUB_OUTPUT"
+          else
+            echo "repo=https://github.com/${{ github.repository }}" >> "$GITHUB_OUTPUT"
+            echo "ref=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and run wolfPSA samples/tests
+        working-directory: .github/scripts/zephyr-4.x
+        run: |
+          # wolfSSL repo/ref default to upstream wolfSSL/wolfssl master in the
+          # script.
+          bash ./zephyr-test.sh \
+            -r "${{ steps.src.outputs.repo }}" \
+            -b "${{ steps.src.outputs.ref }}" \
+            -z "${{ matrix.zephyr-ref }}"

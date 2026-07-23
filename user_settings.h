@@ -22,6 +22,18 @@
 #ifndef WOLFSSL_USER_SETTINGS_H
 #define WOLFSSL_USER_SETTINGS_H
 
+#if defined(__ZEPHYR__)
+/* Zephyr build: the wolfSSL module's user_settings.h is authoritative -- it
+ * honors CONFIG_WOLFSSL_SETTINGS_FILE (the user's own config) and applies the
+ * wolfPSA structural baseline, and the module's wolfCrypt objects compile
+ * against it too, so wolfPSA's own sources must share it (identical struct ABI).
+ * Because the wolfpsa/ include dir sits ahead of the module's on the include
+ * path, wolfcrypt/settings.h's `#include "user_settings.h"` resolves HERE first;
+ * defer to the next user_settings.h on the path (the module's) rather than apply
+ * this standalone-Makefile configuration. */
+#include_next "user_settings.h"
+#else
+
 #define WOLFCRYPT_ONLY
 #define SINGLE_THREADED
 #define WOLFSSL_PSA_ENGINE
@@ -92,5 +104,7 @@
 #define HAVE_AES_KEYWRAP
 #define HAVE_XCHACHA
 #define HAVE_CMAC_KDF
+
+#endif /* __ZEPHYR__ */
 
 #endif /* WOLFSSL_USER_SETTINGS_H */

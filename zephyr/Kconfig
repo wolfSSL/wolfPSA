@@ -1,0 +1,85 @@
+# wolfPSA - PSA Crypto API provider on top of wolfCrypt
+#
+# Copyright (C) 2026 wolfSSL Inc.
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+config ZEPHYR_WOLFPSA_MODULE
+	bool
+
+# wolfPSA is the out-of-tree ("custom") PSA Crypto provider. It plugs into the
+# PSA_CRYPTO_PROVIDER choice defined by the in-tree mbedtls module
+# (zephyr/modules/mbedtls/Kconfig.psa.logic), which was ADDED IN ZEPHYR 4.3 --
+# so wolfPSA requires Zephyr >= 4.3 (below that PSA_CRYPTO_PROVIDER_CUSTOM does
+# not exist and CONFIG_WOLFPSA can never be selected). Selecting the CUSTOM
+# option keeps
+# Mbed TLS / TF-M from being pulled in and leaves the PSA surface to us:
+#   - we supply <psa/crypto.h> (from wolfpsa/psa/, put on the global include
+#     path by our CMakeLists),
+#   - we select PSA_CRYPTO_CLIENT to unlock the whole CONFIG_PSA_WANT_* tree
+#     (that symbol gates it in zephyr/modules/mbedtls/Kconfig.psa.auto), and
+#   - we register our own SYS_INIT that calls psa_crypto_init().
+#
+# The wolfCrypt core is reused from the sibling wolfSSL module rather than
+# rebuilt, so we select WOLFSSL (WOLFSSL_BUILTIN is its choice default).
+config WOLFPSA
+	bool "wolfPSA PSA Crypto provider"
+	depends on PSA_CRYPTO_PROVIDER_CUSTOM
+	depends on WOLFSSL
+	default y if PSA_CRYPTO_PROVIDER_CUSTOM
+	select PSA_CRYPTO_CLIENT
+	# wolfPSA does not provide its own wolfCrypt configuration; it derives the
+	# PSA surface from whatever config the wolfSSL module was built with. The
+	# structural profile its RNG needs -- a Hash-DRBG (seeded by the wolfSSL
+	# module's wc_GenerateSeed() from the HW entropy driver when present) and
+	# single-threaded wolfCrypt on a no-threads kernel -- comes from the wolfSSL
+	# module's own Kconfig/user_settings.h defaults, so wolfPSA selects nothing
+	# here.
+	# It deliberately does NOT touch WOLFCRYPT_ONLY: whether the wolfSSL TLS layer
+	# is in the build is a wolfCrypt-config decision (WOLFSSL_CRYPTO_ONLY / your
+	# settings file), and wolfPSA works either way -- crypto-only, or alongside
+	# TLS in one image (wolfCrypt is shared; TLS still uses wc_* directly, not
+	# the PSA interface).
+	help
+	  Use wolfPSA (PSA Crypto API implemented on wolfCrypt) as the system's
+	  PSA Crypto provider. Requires PSA_CRYPTO_PROVIDER_CUSTOM to be chosen so
+	  that the Mbed TLS provider is not built, and CONFIG_WOLFSSL=y so the
+	  wolfCrypt core it reuses is compiled.
+
+	  Note: wolfPSA deliberately does NOT "select WOLFSSL". Zephyr's socket
+	  Kconfig makes PSA_CRYPTO's availability depend on "!WOLFSSL", so any
+	  select of WOLFSSL from inside the PSA_CRYPTO_PROVIDER choice forms a
+	  Kconfig dependency loop. Enable CONFIG_WOLFSSL=y explicitly instead.
+
+	  Whether the wolfSSL TLS layer is in the build is a wolfCrypt-config choice,
+	  not a wolfPSA one: set CONFIG_WOLFSSL_CRYPTO_ONLY=y (or use a WOLFCRYPT_ONLY
+	  settings file) for a crypto-only image, or leave TLS in to run the wolfSSL
+	  TLS stack and the wolfPSA provider together in one image. wolfPSA works
+	  either way, and TLS keeps using wolfCrypt directly (not the PSA interface).
+
+if WOLFPSA
+
+config WOLFPSA_THREAD_SAFE
+	bool "Serialize wolfPSA shared state with a global mutex"
+	default y
+	depends on MULTITHREADING
+	help
+	  wolfPSA keeps its volatile key list and auto-id counter in process-global
+	  state with no internal locking. Enable this to guard that shared state
+	  with a single global, non-recursive mutex so multiple threads can call the
+	  PSA API concurrently. Disable only if all PSA use is confined to a single thread
+	  (saves a mutex and the lock/unlock overhead).
+
+# Ergonomics: wolfPSA's wolfCrypt AES-GCM custom ITS transform
+# (zephyr/src/psa_its_transform_wolfcrypt.c) adds a 12-byte nonce plus a 16-byte
+# GCM tag, so default the secure_storage transform overhead to 28 when the
+# custom transform is selected. Consumers enabling persistent keys via
+# secure_storage then need not set this by hand (a BUILD_ASSERT in the transform
+# still guards against a mismatch).
+config SECURE_STORAGE_ITS_TRANSFORM_OUTPUT_OVERHEAD
+	default 28 if SECURE_STORAGE_ITS_TRANSFORM_IMPLEMENTATION_CUSTOM
+
+module = WOLFPSA
+module-str = wolfPSA
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # WOLFPSA

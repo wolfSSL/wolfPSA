@@ -42,8 +42,7 @@
     #include <time.h>
 #endif
 
-#define WOLFPSA_STORE_NOT_AVAILABLE   (-4)
-#define WOLFPSA_STORE_IO_ERROR        (-5)
+/* WOLFPSA_STORE_NOT_AVAILABLE / WOLFPSA_STORE_IO_ERROR come from psa_store.h. */
 #define WOLFPSA_STORE_MAX_PATH        256
 
 #if defined(_WIN32) || defined(_MSC_VER)
