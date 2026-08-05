@@ -47,7 +47,16 @@ function(_create_psa_stdc_exe _exe_name _api_dir)
 	list(APPEND EXE_LIBS
 		${PROJECT_BINARY_DIR}/val/val_nspe.a
 		${PROJECT_BINARY_DIR}/platform/pal_nspe.a
-            ${COMMON_VAL_PATH}/common_val_lib.a
+	)
+
+	# Older psa-arch-tests built the shared VAL logging support as a separate
+	# common_val_lib.a from the val_common submodule. Newer versions inline it
+	# into val_nspe.a and no longer define COMMON_VAL_PATH.
+	if(COMMON_VAL_PATH)
+		list(APPEND EXE_LIBS ${COMMON_VAL_PATH}/common_val_lib.a)
+	endif()
+
+	list(APPEND EXE_LIBS
 		${PROJECT_BINARY_DIR}/dev_apis/${_api_dir}/test_combine.a
 	)
 
