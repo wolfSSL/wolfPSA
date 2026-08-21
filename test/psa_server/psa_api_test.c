@@ -7835,7 +7835,7 @@ static int test_kdf_tls12_psk_to_ms_rfc4279_order(void)
                      premaster, (word32)sizeof(premaster),
                      (const byte*)"master secret", 13u,
                      seed, (word32)seed_len,
-                     1, WC_HASH_TYPE_SHA256, NULL, INVALID_DEVID);
+                     1, sha256_mac, NULL, INVALID_DEVID);
     if (ret != 0) {
         printf("FAIL: wc_PRF_TLS(TLS12_PSK_TO_MS reference) (%d)\n", ret);
         return TEST_FAIL;
@@ -7905,7 +7905,7 @@ static int test_kdf_tls12_psk_to_ms_plain_psk_optional_other_secret(void)
                      premaster, (word32)sizeof(premaster),
                      (const byte*)"master secret", 13u,
                      seed, (word32)seed_len,
-                     1, WC_HASH_TYPE_SHA256, NULL, INVALID_DEVID);
+                     1, sha256_mac, NULL, INVALID_DEVID);
     if (ret != 0) {
         printf("FAIL: wc_PRF_TLS(TLS12_PSK_TO_MS plain PSK reference) (%d)\n", ret);
         return TEST_FAIL;
@@ -8671,6 +8671,72 @@ static int test_hkdf_extract_truncated_output(void)
     return TEST_OK;
 }
 
+static int test_tls12_prf(void)
+{
+    /* PSA_ALG_TLS12_PRF output must match a direct wc_PRF_TLS reference using
+     * the correct MAC-algorithm id (sha256_mac). Regression for passing a
+     * WC_HASH_TYPE_* value to wc_PRF_TLS: WC_HASH_TYPE_SHA256 aliases
+     * sha512_mac, so the PRF returned HASH_TYPE_E on SHA-512-less builds and
+     * the wrong digest otherwise. */
+#if !defined(WOLFSSL_HAVE_PRF) || defined(NO_HMAC) || defined(NO_SHA256)
+    return TEST_SKIPPED;
+#else
+    static const uint8_t secret[] = "tls12 prf secret material";
+    static const uint8_t label[]  = "test label";
+    static const uint8_t seed[]   = "prf test seed bytes";
+    uint8_t ref[40];
+    uint8_t out[40];
+    psa_key_derivation_operation_t op;
+    psa_status_t st;
+    int ret;
+
+    ret = wc_PRF_TLS(ref, (word32)sizeof(ref),
+                     secret, (word32)(sizeof(secret) - 1u),
+                     label,  (word32)(sizeof(label) - 1u),
+                     seed,   (word32)(sizeof(seed) - 1u),
+                     1, sha256_mac, NULL, INVALID_DEVID);
+    if (ret != 0) {
+        printf("FAIL: wc_PRF_TLS(sha256_mac) reference (%d)\n", ret);
+        return TEST_FAIL;
+    }
+
+    memset(&op, 0, sizeof(op));
+    st = psa_key_derivation_setup(&op, PSA_ALG_TLS12_PRF(PSA_ALG_SHA_256));
+    if (check_status(st, "setup(TLS12_PRF)") != TEST_OK)
+        return TEST_FAIL;
+    st = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SECRET,
+                                        secret, sizeof(secret) - 1u);
+    if (check_status(st, "input secret(TLS12_PRF)") != TEST_OK) {
+        psa_key_derivation_abort(&op);
+        return TEST_FAIL;
+    }
+    st = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_LABEL,
+                                        label, sizeof(label) - 1u);
+    if (check_status(st, "input label(TLS12_PRF)") != TEST_OK) {
+        psa_key_derivation_abort(&op);
+        return TEST_FAIL;
+    }
+    st = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SEED,
+                                        seed, sizeof(seed) - 1u);
+    if (check_status(st, "input seed(TLS12_PRF)") != TEST_OK) {
+        psa_key_derivation_abort(&op);
+        return TEST_FAIL;
+    }
+    st = psa_key_derivation_output_bytes(&op, out, sizeof(out));
+    if (check_status(st, "output(TLS12_PRF)") != TEST_OK) {
+        psa_key_derivation_abort(&op);
+        return TEST_FAIL;
+    }
+    (void)psa_key_derivation_abort(&op);
+
+    if (check_buf_eq("TLS12_PRF matches wc_PRF_TLS(sha256_mac)",
+                     out, ref, sizeof(out)) != TEST_OK)
+        return TEST_FAIL;
+
+    return TEST_OK;
+#endif
+}
+
 int main(int argc, char** argv)
 {
     psa_status_t st;
@@ -9300,6 +9366,11 @@ int main(int argc, char** argv)
     if (only == NULL || strcmp(only, "cipher_setup_cleanup") == 0) {
         if (run_named_test("cipher_setup_cleanup",
                            test_cipher_setup_cleanup) == TEST_FAIL) {
+            return TEST_FAIL;
+        }
+    }
+    if (only == NULL || strcmp(only, "tls12_prf") == 0) {
+        if (run_named_test("tls12_prf", test_tls12_prf) == TEST_FAIL) {
             return TEST_FAIL;
         }
     }

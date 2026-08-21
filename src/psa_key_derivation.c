@@ -222,6 +222,24 @@ static int wolfpsa_hash_type_from_alg(psa_algorithm_t alg)
     }
 }
 
+#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_HMAC)
+/* wc_PRF_TLS wants a wc_MACAlgorithm id and promotes ids below sha256_mac to
+ * SHA-256, so only map SHA-256/384/512; others return no_mac (caller rejects). */
+static int wolfpsa_prf_mac_from_alg(psa_algorithm_t alg)
+{
+    switch (wolfpsa_hash_type_from_alg(alg)) {
+        case WC_HASH_TYPE_SHA256:
+            return sha256_mac;
+        case WC_HASH_TYPE_SHA384:
+            return sha384_mac;
+        case WC_HASH_TYPE_SHA512:
+            return sha512_mac;
+        default:
+            return no_mac;
+    }
+}
+#endif
+
 static psa_status_t wolfpsa_kdf_require_output(wolfpsa_kdf_ctx_t *ctx,
                                                size_t output_length)
 {
@@ -962,9 +980,10 @@ static psa_status_t wolfpsa_kdf_tls12_prf(wolfpsa_kdf_ctx_t *ctx,
     return PSA_ERROR_NOT_SUPPORTED;
 #else
     int hash_type = wolfpsa_hash_type_from_alg(ctx->alg);
+    int prf_mac = wolfpsa_prf_mac_from_alg(ctx->alg);
     int ret;
 
-    if (hash_type == WC_HASH_TYPE_NONE) {
+    if (hash_type == WC_HASH_TYPE_NONE || prf_mac == no_mac) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
     if ((wolfpsa_check_word32_length(output_length) != PSA_SUCCESS) ||
@@ -977,7 +996,8 @@ static psa_status_t wolfpsa_kdf_tls12_prf(wolfpsa_kdf_ctx_t *ctx,
                      ctx->secret, (word32)ctx->secret_length,
                      ctx->label, (word32)ctx->label_length,
                      ctx->seed, (word32)ctx->seed_length,
-                     1, hash_type, NULL, wolfPSA_GetDefaultDevID());
+                     1, prf_mac, NULL,
+                     wolfPSA_GetDefaultDevID());
     if (ret != 0) {
         return wc_error_to_psa_status(ret);
     }
@@ -996,6 +1016,7 @@ static psa_status_t wolfpsa_kdf_tls12_psk_to_ms(wolfpsa_kdf_ctx_t *ctx,
     return PSA_ERROR_NOT_SUPPORTED;
 #else
     int hash_type = wolfpsa_hash_type_from_alg(ctx->alg);
+    int prf_mac = wolfpsa_prf_mac_from_alg(ctx->alg);
     size_t other_secret_length;
     const uint8_t *other_secret;
     uint8_t *premaster = NULL;
@@ -1003,7 +1024,7 @@ static psa_status_t wolfpsa_kdf_tls12_psk_to_ms(wolfpsa_kdf_ctx_t *ctx,
     psa_status_t status;
     int ret;
 
-    if (hash_type == WC_HASH_TYPE_NONE) {
+    if (hash_type == WC_HASH_TYPE_NONE || prf_mac == no_mac) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
     if ((ctx->steps_set & WOLFPSA_KDF_STEP_OTHER_SECRET) == 0) {
@@ -1043,7 +1064,8 @@ static psa_status_t wolfpsa_kdf_tls12_psk_to_ms(wolfpsa_kdf_ctx_t *ctx,
                      premaster, (word32)premaster_len,
                      (const byte *)"master secret", 13u,
                      ctx->seed, (word32)ctx->seed_length,
-                     1, hash_type, NULL, wolfPSA_GetDefaultDevID());
+                     1, prf_mac, NULL,
+                     wolfPSA_GetDefaultDevID());
     if (ret != 0) {
         status = wc_error_to_psa_status(ret);
     }
