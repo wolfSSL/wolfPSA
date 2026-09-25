@@ -393,7 +393,10 @@ psa_status_t psa_asymmetric_encrypt(psa_key_id_t key,
     }
 
     if (PSA_KEY_TYPE_IS_RSA(attributes.type)) {
-        if (output == NULL) {
+        /* A NULL output pointer is only an error when the caller declared a
+         * nonzero capacity; (NULL, 0) must reach the required-size check in
+         * the backend worker. */
+        if (output == NULL && output_size != 0) {
             wolfpsa_forcezero_free_key_data(key_data, key_data_length);
             return PSA_ERROR_INVALID_ARGUMENT;
         }
@@ -438,7 +441,10 @@ psa_status_t psa_asymmetric_decrypt(psa_key_id_t key,
     }
 
     if (PSA_KEY_TYPE_IS_RSA(attributes.type)) {
-        if (output == NULL) {
+        /* A NULL output pointer is only an error when the caller declared a
+         * nonzero capacity; (NULL, 0) must reach the required-size check in
+         * the backend worker. */
+        if (output == NULL && output_size != 0) {
             wolfpsa_forcezero_free_key_data(key_data, key_data_length);
             return PSA_ERROR_INVALID_ARGUMENT;
         }
@@ -471,9 +477,18 @@ static psa_status_t wolfpsa_sign_hash_worker(psa_key_id_t key,
     psa_key_attributes_t attributes;
     uint8_t *key_data = NULL;
     size_t key_data_length = 0;
+    size_t sig_size;
     psa_status_t status;
 
-    if (hash == NULL || signature == NULL || signature_length == NULL) {
+    if (signature_length == NULL) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    /* The CTF suite (test_c041) requires a NULL hash pointer to be
+     * rejected even when hash_length is zero. */
+    if (hash == NULL) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (signature == NULL && signature_size != 0) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
@@ -518,7 +533,7 @@ static psa_status_t wolfpsa_sign_hash_worker(psa_key_id_t key,
     }
 #endif /* WOLFSSL_HAVE_MLDSA */
 
-    /* The hash workers only accept SIGN_HASH algorithms (HMAC, ECDSA, RSA,
+    /* The hash workers only accept SIGN_HASH algorithms (ECDSA, RSA,
      * Ed25519ph, Ed448ph). Message-only EdDSA (PSA_ALG_PURE_EDDSA /
      * PSA_ALG_EDDSA_CTX) is not a hash algorithm; the Ed25519/Ed448
      * helpers would interpret the hash buffer as a raw message. MLDSA is
@@ -542,6 +557,16 @@ static psa_status_t wolfpsa_sign_hash_worker(psa_key_id_t key,
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 #endif
+
+    /* Required signature capacity, so a zero-capacity buffer gets the
+     * contract status for every signature family. Checked after the
+     * algorithm and key-type rejections above: a call that can never succeed
+     * must report why, not a buffer problem. */
+    sig_size = PSA_SIGN_OUTPUT_SIZE(attributes.type, attributes.bits, alg);
+    if (sig_size != 0 && signature_size < sig_size) {
+        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
+        return PSA_ERROR_BUFFER_TOO_SMALL;
+    }
 
     if (PSA_KEY_TYPE_IS_RSA(attributes.type)) {
         status = psa_asymmetric_sign_rsa(attributes.type, attributes.bits,
@@ -610,7 +635,10 @@ static psa_status_t wolfpsa_verify_hash_worker(psa_key_id_t key,
     size_t key_data_length = 0;
     psa_status_t status;
 
-    if (hash == NULL || signature == NULL) {
+    if (hash == NULL && hash_length != 0) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (signature == NULL && signature_length != 0) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
@@ -618,6 +646,14 @@ static psa_status_t wolfpsa_verify_hash_worker(psa_key_id_t key,
                                           &attributes, &key_data, &key_data_length);
     if (status != PSA_SUCCESS) {
         return status;
+    }
+
+    /* After the key check, so a bad handle or a missing usage flag still
+     * outranks the signature verdict. */
+    if (signature_length == 0) {
+        /* An empty signature cannot verify. */
+        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
+        return PSA_ERROR_INVALID_SIGNATURE;
     }
 
     status = wolfpsa_check_context(alg, attributes.type, attributes.bits,
@@ -650,7 +686,7 @@ static psa_status_t wolfpsa_verify_hash_worker(psa_key_id_t key,
     }
 #endif /* WOLFSSL_HAVE_MLDSA */
 
-    /* The hash workers only accept SIGN_HASH algorithms (HMAC, ECDSA, RSA,
+    /* The hash workers only accept SIGN_HASH algorithms (ECDSA, RSA,
      * Ed25519ph, Ed448ph). Message-only EdDSA (PSA_ALG_PURE_EDDSA /
      * PSA_ALG_EDDSA_CTX) is not a hash algorithm; the Ed25519/Ed448
      * helpers would interpret the hash buffer as a raw message. MLDSA is
@@ -803,11 +839,20 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
     uint8_t *key_data = NULL;
     size_t key_data_length = 0;
     psa_algorithm_t hash_alg;
-    uint8_t hash[PSA_HASH_MAX_SIZE];
+    uint8_t hash[WOLFPSA_HASH_MAX_SIZE];
     size_t hash_length = 0;
+    size_t sig_size;
     psa_status_t status;
 
-    if (input == NULL || signature == NULL || signature_length == NULL) {
+    if (signature_length == NULL) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    /* The CTF suite (test_c052) requires a NULL input pointer to be
+     * rejected even when input_length is zero. */
+    if (input == NULL) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (signature == NULL && signature_size != 0) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
@@ -822,6 +867,14 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
     if (status != PSA_SUCCESS) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return status;
+    }
+
+    /* Required signature capacity, so a zero-capacity buffer gets the
+     * contract status for every signature family. */
+    sig_size = PSA_SIGN_OUTPUT_SIZE(attributes.type, attributes.bits, alg);
+    if (sig_size != 0 && signature_size < sig_size) {
+        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
+        return PSA_ERROR_BUFFER_TOO_SMALL;
     }
 
 #if defined(WOLFSSL_HAVE_MLDSA)
@@ -847,7 +900,7 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
         }
         else {
             /* HashML-DSA: pre-hash the message then pass digest */
-            uint8_t mldsa_hash[PSA_HASH_MAX_SIZE];
+            uint8_t mldsa_hash[WOLFPSA_HASH_MAX_SIZE];
             size_t mldsa_hash_length = 0;
 
             hash_alg = PSA_ALG_GET_HASH(alg);
@@ -927,7 +980,11 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
             status = PSA_ERROR_INVALID_ARGUMENT;
             goto cleanup;
         }
-        XMEMCPY(hash, input, hash_length);
+        if (hash_length > 0) {
+            /* memcpy's pointers are declared nonnull, so a (NULL, 0) input
+             * must not reach it. */
+            XMEMCPY(hash, input, hash_length);
+        }
     }
     else {
         hash_alg = PSA_ALG_SIGN_GET_HASH(alg);
@@ -1010,11 +1067,14 @@ static psa_status_t wolfpsa_verify_message_worker(psa_key_id_t key,
     uint8_t *key_data = NULL;
     size_t key_data_length = 0;
     psa_algorithm_t hash_alg;
-    uint8_t hash[PSA_HASH_MAX_SIZE];
+    uint8_t hash[WOLFPSA_HASH_MAX_SIZE];
     size_t hash_length = 0;
     psa_status_t status;
 
-    if (input == NULL || signature == NULL) {
+    if (input == NULL && input_length != 0) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (signature == NULL && signature_length != 0) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
@@ -1022,6 +1082,14 @@ static psa_status_t wolfpsa_verify_message_worker(psa_key_id_t key,
                                           &attributes, &key_data, &key_data_length);
     if (status != PSA_SUCCESS) {
         return status;
+    }
+
+    /* After the key check, so a bad handle or a missing usage flag still
+     * outranks the signature verdict. */
+    if (signature_length == 0) {
+        /* An empty signature cannot verify. */
+        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
+        return PSA_ERROR_INVALID_SIGNATURE;
     }
 
     status = wolfpsa_check_context(alg, attributes.type, attributes.bits,
@@ -1049,7 +1117,7 @@ static psa_status_t wolfpsa_verify_message_worker(psa_key_id_t key,
         }
         else {
             /* HashML-DSA: pre-hash the message then pass digest */
-            uint8_t mldsa_hash[PSA_HASH_MAX_SIZE];
+            uint8_t mldsa_hash[WOLFPSA_HASH_MAX_SIZE];
             size_t mldsa_hash_length = 0;
 
             hash_alg = PSA_ALG_GET_HASH(alg);
@@ -1162,7 +1230,11 @@ static psa_status_t wolfpsa_verify_message_worker(psa_key_id_t key,
             status = PSA_ERROR_INVALID_ARGUMENT;
             goto cleanup;
         }
-        XMEMCPY(hash, input, hash_length);
+        if (hash_length > 0) {
+            /* memcpy's pointers are declared nonnull, so a (NULL, 0) input
+             * must not reach it. */
+            XMEMCPY(hash, input, hash_length);
+        }
     }
     else {
         hash_alg = PSA_ALG_SIGN_GET_HASH(alg);
@@ -1504,7 +1576,7 @@ psa_status_t psa_raw_key_agreement(psa_algorithm_t alg,
     wolfpsa_trace("psa_raw_key_agreement(alg=0x%08x key=%u peer_len=%zu)",
                   (unsigned)alg, (unsigned)private_key, peer_key_length);
 
-    if (output == NULL || output_length == NULL) {
+    if (output_length == NULL || (output == NULL && output_size != 0)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
     if (!PSA_ALG_IS_RAW_KEY_AGREEMENT(alg)) {

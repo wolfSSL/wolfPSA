@@ -122,7 +122,8 @@ PSA_REGRESSION_TESTS = psa_aead_multipart_test \
 	psa_store_read_open_test \
 	psa_store_dir_validation_test \
 	psa_import_zero_length_test \
-	psa_copy_key_cross_lifetime_test
+	psa_copy_key_cross_lifetime_test \
+	psa_zero_capacity_buffer_test
 BINARIES += $(PSA_REGRESSION_TESTS)
 
 # Regression test with a custom link: it replaces the store backend, so it

@@ -4830,6 +4830,9 @@ static int test_asym_rsa_oaep_usage_policy(void)
     static const uint8_t plaintext[] = "psa rsa oaep";
     uint8_t exported_pub[256];
     uint8_t ciphertext[256];
+    /* Only the actual plaintext has to fit: PSA_ASYMMETRIC_DECRYPT_OUTPUT_SIZE
+     * is an upper bound, and demanding it would be a BUFFER_TOO_SMALL the spec
+     * does not call for. */
     uint8_t decrypted[sizeof(plaintext)];
     size_t exported_pub_len = 0;
     size_t ciphertext_len = 0;
@@ -4916,6 +4919,18 @@ static int test_asym_rsa_oaep_usage_policy(void)
     }
     if (check_buf_eq("psa_asymmetric_encrypt/decrypt(RSA OAEP)",
                      decrypted, plaintext, sizeof(plaintext) - 1) != TEST_OK) {
+        goto cleanup;
+    }
+
+    /* A buffer shorter than the actual plaintext is still BUFFER_TOO_SMALL:
+     * the length is only known once the padding has been removed. */
+    decrypted_len = 0;
+    st = psa_asymmetric_decrypt(decrypt_key, PSA_ALG_RSA_OAEP(PSA_ALG_SHA_256),
+                                ciphertext, ciphertext_len,
+                                NULL, 0, decrypted, sizeof(plaintext) - 2,
+                                &decrypted_len);
+    if (check_true(st == PSA_ERROR_BUFFER_TOO_SMALL,
+                   "psa_asymmetric_decrypt short buffer") != TEST_OK) {
         goto cleanup;
     }
 

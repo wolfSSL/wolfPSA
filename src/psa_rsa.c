@@ -450,15 +450,21 @@ psa_status_t psa_asymmetric_verify_rsa(psa_key_type_t key_type,
     }
     
     wc_FreeRsaKey(&rsa_key);
-    
+
     if (ret < 0) {
+        /* The shared mapper sends RSA_PAD_E to PSA_ERROR_INVALID_PADDING for
+         * the decrypt path. On a verification a failed unpad is a signature
+         * mismatch, and psa_verify_hash does not define INVALID_PADDING. */
+        if (ret == RSA_PAD_E) {
+            return PSA_ERROR_INVALID_SIGNATURE;
+        }
         return wc_error_to_psa_status(ret);
     }
-    
+
     if ((size_t)ret != hash_length) {
         return PSA_ERROR_INVALID_SIGNATURE;
     }
-    
+
     return PSA_SUCCESS;
 }
 
@@ -482,8 +488,7 @@ psa_status_t psa_asymmetric_encrypt_rsa(psa_key_type_t key_type,
     WC_RNG rng;
     int padding;
     int hash_type;
-    
-    (void)key_bits;
+
     (void)salt;
     (void)salt_length;
 
@@ -497,6 +502,13 @@ psa_status_t psa_asymmetric_encrypt_rsa(psa_key_type_t key_type,
         (wolfpsa_check_word32_length(output_size) != PSA_SUCCESS) ||
         (wolfpsa_check_word32_length(salt_length) != PSA_SUCCESS)) {
         return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    /* RSA encryption output is always modulus-sized; check capacity before
+     * the backend call so a NULL zero-capacity buffer gets the contract
+     * status instead of a backend argument error. */
+    if (output_size < PSA_ASYMMETRIC_ENCRYPT_OUTPUT_SIZE(key_type, key_bits,
+                                                         alg)) {
+        return PSA_ERROR_BUFFER_TOO_SMALL;
     }
     
     /* Initialize RSA key */
@@ -590,13 +602,18 @@ psa_status_t psa_asymmetric_decrypt_rsa(psa_key_type_t key_type,
     word32 idx = 0;
     int padding;
     int hash_type;
+    uint8_t *plain;
+    int plain_len;
+    psa_status_t status;
 #ifdef WC_RSA_BLINDING
     WC_RNG rng;
 #endif
 
-    (void)key_bits;
     (void)salt;
     (void)salt_length;
+    /* The modulus size comes from the decoded key, not from the declared
+     * bit count. */
+    (void)key_bits;
 
     /* Check if key type is RSA key pair */
     if (key_type != PSA_KEY_TYPE_RSA_KEY_PAIR) {
@@ -604,7 +621,6 @@ psa_status_t psa_asymmetric_decrypt_rsa(psa_key_type_t key_type,
     }
     if ((wolfpsa_check_word32_length(key_buffer_size) != PSA_SUCCESS) ||
         (wolfpsa_check_word32_length(input_length) != PSA_SUCCESS) ||
-        (wolfpsa_check_word32_length(output_size) != PSA_SUCCESS) ||
         (wolfpsa_check_word32_length(salt_length) != PSA_SUCCESS)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -644,11 +660,35 @@ psa_status_t psa_asymmetric_decrypt_rsa(psa_key_type_t key_type,
 #ifndef WOLFSSL_RSA_OAEP
     (void)hash_type;
 #endif
-    
+
+    /* Decrypt into a modulus-sized buffer rather than the caller's.
+     * PSA_ASYMMETRIC_DECRYPT_OUTPUT_SIZE() bounds the plaintext, it does not
+     * give its length, so the caller only has to provide room for what the
+     * unpadding actually yields -- which is not known until the backend has
+     * run, and the backend writes to whatever buffer it is given before it
+     * can detect that the buffer is short. */
+    plain_len = wc_RsaEncryptSize(&rsa_key);
+    if (plain_len <= 0) {
+#ifdef WC_RSA_BLINDING
+        wc_FreeRng(&rng);
+#endif
+        wc_FreeRsaKey(&rsa_key);
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    plain = (uint8_t *)XMALLOC((size_t)plain_len, NULL,
+                               DYNAMIC_TYPE_TMP_BUFFER);
+    if (plain == NULL) {
+#ifdef WC_RSA_BLINDING
+        wc_FreeRng(&rng);
+#endif
+        wc_FreeRsaKey(&rsa_key);
+        return PSA_ERROR_INSUFFICIENT_MEMORY;
+    }
+
     /* Decrypt message */
     if (padding == WC_RSA_PKCSV15_PAD) {
-        ret = wc_RsaPrivateDecrypt(input, (word32)input_length, output, 
-                                 (word32)output_size, &rsa_key);
+        ret = wc_RsaPrivateDecrypt(input, (word32)input_length, plain,
+                                   (word32)plain_len, &rsa_key);
     }
     else if (padding == WC_RSA_OAEP_PAD) {
         #ifdef WOLFSSL_RSA_OAEP
@@ -657,8 +697,9 @@ psa_status_t psa_asymmetric_decrypt_rsa(psa_key_type_t key_type,
                 ret = BAD_FUNC_ARG;
             }
             else {
-                ret = wc_RsaPrivateDecrypt_ex(input, (word32)input_length, output,
-                                              (word32)output_size, &rsa_key,
+                ret = wc_RsaPrivateDecrypt_ex(input, (word32)input_length,
+                                              plain, (word32)plain_len,
+                                              &rsa_key,
                                               WC_RSA_OAEP_PAD, hash_type,
                                               mgf, (byte*)salt,
                                               (word32)salt_length);
@@ -676,13 +717,24 @@ psa_status_t psa_asymmetric_decrypt_rsa(psa_key_type_t key_type,
 #endif
     wc_FreeRsaKey(&rsa_key);
 
-    if (ret < 0) {
-        return wc_error_to_psa_status(ret);
+    if (ret >= 0 && (size_t)ret > output_size) {
+        status = PSA_ERROR_BUFFER_TOO_SMALL;
+    }
+    else if (ret < 0) {
+        status = wc_error_to_psa_status(ret);
+    }
+    else {
+        if (ret > 0) {
+            XMEMCPY(output, plain, (size_t)ret);
+        }
+        *output_length = (size_t)ret;
+        status = PSA_SUCCESS;
     }
 
-    *output_length = (size_t)ret;
+    wc_ForceZero(plain, (size_t)plain_len);
+    XFREE(plain, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 
-    return PSA_SUCCESS;
+    return status;
 }
 
 /* Generate an RSA key pair */

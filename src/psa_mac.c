@@ -460,7 +460,9 @@ static psa_status_t wolfpsa_mac_final(wolfpsa_mac_ctx_t *ctx,
     int ret;
     psa_status_t status;
 
-    if (mac == NULL || mac_length == NULL) {
+    /* A NULL mac pointer is only an error when the caller declared a
+     * nonzero capacity; (NULL, 0) must reach the size check below. */
+    if (mac_length == NULL || (mac == NULL && mac_size != 0)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 

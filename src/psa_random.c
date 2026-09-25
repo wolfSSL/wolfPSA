@@ -58,6 +58,12 @@ psa_status_t psa_generate_random(uint8_t *output, size_t output_size)
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
+    /* A zero-length request succeeds without touching the RNG backend,
+     * which rejects the NULL pointer of a zero-capacity buffer. */
+    if (output_size == 0) {
+        return PSA_SUCCESS;
+    }
+
     wolfpsa_trace("psa_generate_random(%zu)", output_size);
     
     /* Initialize the RNG */

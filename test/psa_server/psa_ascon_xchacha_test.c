@@ -632,6 +632,152 @@ static int test_xchacha_key_policy(void)
 }
 
 /* =========================================================================
+ * Test 4b - One-sided usage flags must be rejected by the one-shot native
+ * XChaCha20-Poly1305 and Ascon-AEAD128 paths
+ *
+ * The one-shot encrypt/decrypt helpers each enforce their own usage flag
+ * (PSA_KEY_USAGE_ENCRYPT / PSA_KEY_USAGE_DECRYPT). A key imported with only
+ * the opposite flag must be rejected with PSA_ERROR_NOT_PERMITTED before
+ * any crypto runs; these negative tests pin that gate in place.
+ * ====================================================================== */
+
+static int test_aead_usage_policy_negative(void)
+{
+    psa_key_attributes_t attrs;
+    psa_key_id_t key_id = PSA_KEY_ID_NULL;
+    uint8_t out[130];
+    size_t out_len = 0;
+    psa_status_t st;
+    int rc = 0;
+
+    /* --- XChaCha20-Poly1305 --------------------------------------------- */
+
+    /* ENCRYPT-only key: decrypt must be rejected. */
+    attrs = psa_key_attributes_init();
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_XCHACHA20);
+    psa_set_key_bits(&attrs, 256u);
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT);
+    psa_set_key_algorithm(&attrs, PSA_ALG_XCHACHA20_POLY1305);
+
+    st = psa_import_key(&attrs, xchacha_key, sizeof(xchacha_key), &key_id);
+    if (st == PSA_ERROR_NOT_SUPPORTED) {
+        printf("SKIP aead_usage_policy xchacha (not supported by this build)\n");
+    }
+    else {
+        if (expect_status("usage xchacha enc-only import", st, PSA_SUCCESS) != 0)
+            return 1;
+
+        out_len = 0;
+        st = psa_aead_decrypt(key_id, PSA_ALG_XCHACHA20_POLY1305,
+                              xchacha_nonce, sizeof(xchacha_nonce),
+                              NULL, 0,
+                              xchacha_ct, sizeof(xchacha_ct),
+                              out, sizeof(out), &out_len);
+        if (expect_status("usage xchacha enc-only decrypt rejected", st,
+                          PSA_ERROR_NOT_PERMITTED) != 0) {
+            rc = 1;
+        }
+        (void)psa_destroy_key(key_id);
+    }
+
+    /* DECRYPT-only key: encrypt must be rejected. */
+    key_id = PSA_KEY_ID_NULL;
+    attrs = psa_key_attributes_init();
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_XCHACHA20);
+    psa_set_key_bits(&attrs, 256u);
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attrs, PSA_ALG_XCHACHA20_POLY1305);
+
+    st = psa_import_key(&attrs, xchacha_key, sizeof(xchacha_key), &key_id);
+    if (st == PSA_ERROR_NOT_SUPPORTED) {
+        printf("SKIP aead_usage_policy xchacha (not supported by this build)\n");
+    }
+    else {
+        if (expect_status("usage xchacha dec-only import", st, PSA_SUCCESS) != 0)
+            return 1;
+
+        out_len = 0;
+        st = psa_aead_encrypt(key_id, PSA_ALG_XCHACHA20_POLY1305,
+                              xchacha_nonce, sizeof(xchacha_nonce),
+                              NULL, 0,
+                              xchacha_pt, sizeof(xchacha_pt),
+                              out, sizeof(out), &out_len);
+        if (expect_status("usage xchacha dec-only encrypt rejected", st,
+                          PSA_ERROR_NOT_PERMITTED) != 0) {
+            rc = 1;
+        }
+        (void)psa_destroy_key(key_id);
+    }
+
+    /* --- Ascon-AEAD128 -------------------------------------------------- */
+
+    /* ENCRYPT-only key: decrypt must be rejected. */
+    attrs = psa_key_attributes_init();
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_ASCON);
+    psa_set_key_bits(&attrs, 128u);
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT);
+    psa_set_key_algorithm(&attrs, PSA_ALG_ASCON_AEAD128);
+
+    st = psa_import_key(&attrs, ascon_aead128_key, sizeof(ascon_aead128_key),
+                        &key_id);
+    if (st == PSA_ERROR_NOT_SUPPORTED) {
+        printf("SKIP aead_usage_policy ascon (not supported by this build)\n");
+    }
+    else {
+        if (expect_status("usage ascon enc-only import", st, PSA_SUCCESS) != 0)
+            return 1;
+
+        out_len = 0;
+        st = psa_aead_decrypt(key_id, PSA_ALG_ASCON_AEAD128,
+                              ascon_aead128_nonce, sizeof(ascon_aead128_nonce),
+                              NULL, 0,
+                              ascon_aead128_ct_tag,
+                              sizeof(ascon_aead128_ct_tag),
+                              out, sizeof(out), &out_len);
+        if (expect_status("usage ascon enc-only decrypt rejected", st,
+                          PSA_ERROR_NOT_PERMITTED) != 0) {
+            rc = 1;
+        }
+        (void)psa_destroy_key(key_id);
+    }
+
+    /* DECRYPT-only key: encrypt must be rejected. */
+    key_id = PSA_KEY_ID_NULL;
+    attrs = psa_key_attributes_init();
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_ASCON);
+    psa_set_key_bits(&attrs, 128u);
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attrs, PSA_ALG_ASCON_AEAD128);
+
+    st = psa_import_key(&attrs, ascon_aead128_key, sizeof(ascon_aead128_key),
+                        &key_id);
+    if (st == PSA_ERROR_NOT_SUPPORTED) {
+        printf("SKIP aead_usage_policy ascon (not supported by this build)\n");
+    }
+    else {
+        if (expect_status("usage ascon dec-only import", st, PSA_SUCCESS) != 0)
+            return 1;
+
+        out_len = 0;
+        st = psa_aead_encrypt(key_id, PSA_ALG_ASCON_AEAD128,
+                              ascon_aead128_nonce, sizeof(ascon_aead128_nonce),
+                              NULL, 0,
+                              ascon_aead128_pt, sizeof(ascon_aead128_pt),
+                              out, sizeof(out), &out_len);
+        if (expect_status("usage ascon dec-only encrypt rejected", st,
+                          PSA_ERROR_NOT_PERMITTED) != 0) {
+            rc = 1;
+        }
+        (void)psa_destroy_key(key_id);
+    }
+
+    if (rc == 0) {
+        printf("aead_usage_policy_negative: OK\n");
+    }
+    return rc;
+}
+
+/* =========================================================================
  * Test 5 — Shortened / at-least-this-length tag variants must be rejected
  *
  * The one-shot XChaCha20-Poly1305 and Ascon-AEAD128 paths only implement the
@@ -781,6 +927,9 @@ int main(void)
         return 1;
 
     if (test_xchacha_key_policy() != 0)
+        return 1;
+
+    if (test_aead_usage_policy_negative() != 0)
         return 1;
 
     if (test_aead_shortened_tag_rejected() != 0)

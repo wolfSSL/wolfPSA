@@ -640,6 +640,16 @@ int main(void)
                  PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT) == TEST_FAIL)
         ret = TEST_FAIL;
 
+    /* Second CCM lane with a 12-byte nonce (lenSz = 3): the counter
+     * increment must agree with the one-shot reference for nonce lengths
+     * other than 13, where the CTR bytes above the length field are zero. */
+    g_failures = 0;
+    if (run_algo("CCM-12", PSA_ALG_CCM, 1, PSA_KEY_TYPE_AES, 16,
+                 sizeof(nonce12), sizeof(aad),
+                 nonce12, aad, pt, sizeof(pt),
+                 PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT) == TEST_FAIL)
+        ret = TEST_FAIL;
+
     g_failures = 0;
     if (run_algo("ChaCha20-Poly1305", PSA_ALG_CHACHA20_POLY1305, 0,
                  PSA_KEY_TYPE_CHACHA20, 32,

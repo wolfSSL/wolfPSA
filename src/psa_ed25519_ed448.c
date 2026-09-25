@@ -366,6 +366,16 @@ psa_status_t psa_asymmetric_export_public_key_ed25519(psa_key_type_t key_type,
         (wolfpsa_check_word32_length(output_size) != PSA_SUCCESS)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
+    /* Same contract as the SECP and Montgomery exporters: a too-small buffer
+     * is BUFFER_TOO_SMALL, including the (NULL, 0) probe. Passing NULL on to
+     * the backend would surface as INVALID_ARGUMENT instead. */
+    if (key_buffer == NULL || output_length == NULL ||
+        (output == NULL && output_size != 0)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (output_size < ED25519_PUB_KEY_SIZE) {
+        return PSA_ERROR_BUFFER_TOO_SMALL;
+    }
 
     /* Initialize ED25519 key */
     ret = wc_ed25519_init_ex(&ed_key, NULL, wolfPSA_GetDefaultDevID());
@@ -728,6 +738,16 @@ psa_status_t psa_asymmetric_export_public_key_ed448(psa_key_type_t key_type,
     if ((wolfpsa_check_word32_length(key_buffer_size) != PSA_SUCCESS) ||
         (wolfpsa_check_word32_length(output_size) != PSA_SUCCESS)) {
         return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    /* Same contract as the SECP and Montgomery exporters: a too-small buffer
+     * is BUFFER_TOO_SMALL, including the (NULL, 0) probe. Passing NULL on to
+     * the backend would surface as INVALID_ARGUMENT instead. */
+    if (key_buffer == NULL || output_length == NULL ||
+        (output == NULL && output_size != 0)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (output_size < ED448_PUB_KEY_SIZE) {
+        return PSA_ERROR_BUFFER_TOO_SMALL;
     }
 
     /* Initialize ED448 key */

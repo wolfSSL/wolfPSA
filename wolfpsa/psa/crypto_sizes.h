@@ -640,7 +640,8 @@
      (alg) == PSA_ALG_SHA_512_224 || (alg) == PSA_ALG_SHA_512_256 ? 64u :      \
      0u)
 
-/** Sufficient hash suspend state buffer size for psa_hash_suspend().
+/** PSA specification sizing formula for psa_hash_suspend(); this build
+ *  returns PSA_ERROR_NOT_SUPPORTED for that API.
  *
  * Formula (spec-defined):
  *   PSA_HASH_SUSPEND_ALGORITHM_FIELD_LENGTH

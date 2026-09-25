@@ -689,7 +689,9 @@ psa_status_t psa_cipher_generate_iv(psa_cipher_operation_t *operation,
     if (ctx->direction != AES_ENCRYPTION) {
         return PSA_ERROR_BAD_STATE;
     }
-    if (iv == NULL || iv_length == NULL) {
+    /* A NULL iv pointer is only an error when the caller declared a
+     * nonzero capacity; (NULL, 0) must reach the size check below. */
+    if (iv_length == NULL || (iv == NULL && iv_size != 0)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
@@ -1367,6 +1369,9 @@ psa_status_t psa_cipher_finish(psa_cipher_operation_t *operation,
     if (ctx == NULL) {
         return wolfpsa_cipher_fail(operation, PSA_ERROR_BAD_STATE);
     }
+    if (output == NULL && output_size > 0) {
+        return wolfpsa_cipher_fail(operation, PSA_ERROR_INVALID_ARGUMENT);
+    }
 
     if (ctx->alg == PSA_ALG_CBC_PKCS7) {
         size_t block_size = ctx->block_size;
@@ -1586,14 +1591,23 @@ psa_status_t psa_cipher_encrypt(psa_key_id_t key,
         offset = iv_len;
     }
 
-    status = psa_cipher_update(&operation, input, input_length, output + offset,
+    /* A NULL output with output_size 0 is a legal zero-length buffer;
+     * pointer arithmetic on it is undefined, so advance the pointer only
+     * when it is non-NULL and pass NULL through. */
+    if (output != NULL) {
+        output += offset;
+    }
+    status = psa_cipher_update(&operation, input, input_length, output,
                                output_size - offset, &out_len);
     if (status != PSA_SUCCESS) {
         psa_cipher_abort(&operation);
         return status;
     }
 
-    status = psa_cipher_finish(&operation, output + offset + out_len,
+    if (output != NULL) {
+        output += out_len;
+    }
+    status = psa_cipher_finish(&operation, output,
                                output_size - offset - out_len, &finish_len);
     if (status != PSA_SUCCESS) {
         psa_cipher_abort(&operation);
@@ -1678,14 +1692,22 @@ psa_status_t psa_cipher_decrypt(psa_key_id_t key,
         offset = iv_len;
     }
 
-    status = psa_cipher_update(&operation, input + offset, input_length - offset,
+    /* NULL + 0 is undefined even though the length is zero, and a (NULL, 0)
+     * input reaches here for ECB, where offset stays 0. */
+    if (input != NULL) {
+        input += offset;
+    }
+    status = psa_cipher_update(&operation, input, input_length - offset,
                                output, output_size, &out_len);
     if (status != PSA_SUCCESS) {
         psa_cipher_abort(&operation);
         return status;
     }
 
-    status = psa_cipher_finish(&operation, output + out_len,
+    if (output != NULL) {
+        output += out_len;
+    }
+    status = psa_cipher_finish(&operation, output,
                                output_size - out_len, &finish_len);
     if (status != PSA_SUCCESS) {
         psa_cipher_abort(&operation);

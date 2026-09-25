@@ -482,7 +482,9 @@ psa_status_t psa_asymmetric_export_public_key_ecc(psa_key_type_t key_type,
         return wc_error_to_psa_status(ret);
     }
     
-    if (output == NULL || output_length == NULL) {
+    /* A NULL output pointer is only an error when the caller declared a
+     * nonzero capacity; (NULL, 0) must reach the backend size check. */
+    if (output_length == NULL || (output == NULL && output_size != 0)) {
         wc_ecc_free(&ecc);
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -490,9 +492,13 @@ psa_status_t psa_asymmetric_export_public_key_ecc(psa_key_type_t key_type,
     /* Export public key */
     out_len = (word32)output_size;
     ret = wc_ecc_export_x963(&ecc, output, &out_len);
-    
+
     wc_ecc_free(&ecc);
-    
+
+    if (ret == LENGTH_ONLY_E) {
+        /* A NULL output probe: the buffer is too small for the point. */
+        ret = BUFFER_E;
+    }
     if (ret != 0) {
         return wc_error_to_psa_status(ret);
     }

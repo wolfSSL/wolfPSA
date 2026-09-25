@@ -206,7 +206,8 @@ UNIT_TESTS := psa_api_test \
 	psa_devid_cryptocb_test \
 	psa_kdf_zeroize_output_test \
 	psa_import_zero_length_test \
-	psa_copy_key_cross_lifetime_test
+	psa_copy_key_cross_lifetime_test \
+	psa_zero_capacity_buffer_test
 
 # Run the unit test loop from the repo root (psa_rsa_pss_interop_test reads
 # its certificate relative to the root). Assumes the tests are already built.

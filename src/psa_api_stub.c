@@ -20,6 +20,7 @@
  */
 
 #include "psa_config.h"
+#include <wolfssl/wolfcrypt/wc_port.h>
 
 #include <psa/crypto.h>
 
@@ -165,14 +166,20 @@ psa_status_t psa_hash_resume(psa_hash_operation_t *operation,
 
 /* --- Interruptible max-ops configuration --- */
 
-static uint32_t wolfPSA_interruptible_max_ops = PSA_INTERRUPTIBLE_MAX_OPS_UNLIMITED;
+/* Atomic: the setter may run on a control thread while the getter is
+ * called from crypto threads. wolfSSL_Atomic_Uint rather than <stdatomic.h>
+ * so the toolchains without C11 atomics still build, as psa_engine.c does
+ * for the default devId. */
+static wolfSSL_Atomic_Uint wolfPSA_interruptible_max_ops =
+    WOLFSSL_ATOMIC_INITIALIZER(PSA_INTERRUPTIBLE_MAX_OPS_UNLIMITED);
 
 void psa_interruptible_set_max_ops(uint32_t max_ops) {
-    wolfPSA_interruptible_max_ops = max_ops;
+    WOLFSSL_ATOMIC_STORE(wolfPSA_interruptible_max_ops,
+                         (unsigned int)max_ops);
 }
 
 uint32_t psa_interruptible_get_max_ops(void) {
-    return wolfPSA_interruptible_max_ops;
+    return (uint32_t)WOLFSSL_ATOMIC_LOAD(wolfPSA_interruptible_max_ops);
 }
 
 /* --- Interruptible sign/verify hash --- */

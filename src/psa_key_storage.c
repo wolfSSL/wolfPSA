@@ -1887,8 +1887,10 @@ psa_status_t psa_export_key(
     int ret;
     void* store = NULL;
 
-    /* Check parameters */
-    if (data == NULL || data_length == NULL) {
+    /* Check parameters: a NULL data pointer is only an error when the
+     * caller declared a nonzero capacity; (NULL, 0) is a valid
+     * zero-capacity output buffer that must reach the size checks below. */
+    if (data_length == NULL || (data == NULL && data_size != 0)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
@@ -2005,7 +2007,9 @@ psa_status_t psa_export_public_key(
     void* store = NULL;
     int use_volatile = 0;
 
-    if (data == NULL || data_length == NULL) {
+    /* A NULL data pointer is only an error when the caller declared a
+     * nonzero capacity; (NULL, 0) must reach the size checks below. */
+    if (data_length == NULL || (data == NULL && data_size != 0)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
@@ -2584,6 +2588,10 @@ psa_status_t psa_copy_key(
     if (attributes == NULL || target_key == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
+
+    /* The API guarantees PSA_KEY_ID_NULL on failure, so clear the output
+     * before any fallible operation below. */
+    *target_key = PSA_KEY_ID_NULL;
 
     /* Check if the key storage is initialized */
     status = psa_key_storage_check_init();
