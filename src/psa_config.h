@@ -28,6 +28,7 @@
 #define WOLFPSA_CONFIG_H
 
 #include <wolfssl/wolfcrypt/settings.h>
+#include <wolfssl/wolfcrypt/types.h>
 
 #if defined(WOLFSSL_PSA_ENGINE) && !defined(NO_AES)
 
@@ -50,7 +51,9 @@
  * outside would otherwise satisfy the policy check below on any build. */
 #undef WOLFPSA_AES_HW_BACKEND
 
-#if defined(WOLFSSL_ARMASM) || defined(WOLFSSL_RISCV_ASM) || \
+#if (defined(WOLFSSL_RISCV_ASM) && \
+     (defined(WOLFSSL_RISCV_SCALAR_CRYPTO_ASM) || \
+      defined(WOLFSSL_RISCV_VECTOR_CRYPTO_ASM))) || \
     defined(FREESCALE_LTC) || defined(FREESCALE_MMCAU) || \
     defined(WOLFSSL_SILABS_SE_ACCEL) || defined(WOLFSSL_PSOC6_CRYPTO) || \
     defined(WOLFSSL_AFALG) || defined(WOLFSSL_DEVCRYPTO_AES) || \
@@ -60,10 +63,45 @@
     #define WOLFPSA_AES_HW_BACKEND
 #endif
 
-#if !defined(WOLFPSA_AES_FAST) && !defined(WC_AES_BITSLICED) && \
-    !defined(WOLFSSL_AES_TOUCH_LINES) && !defined(WOLFPSA_AES_HW_BACKEND)
+/* The RISC-V crypto extensions run all of GCM in assembly, never the C GHASH. */
+#undef WOLFPSA_GHASH_HW_BACKEND
+#if defined(WOLFSSL_RISCV_ASM) && \
+    (defined(WOLFSSL_RISCV_SCALAR_CRYPTO_ASM) || \
+     defined(WOLFSSL_RISCV_VECTOR_CRYPTO_ASM))
+    #define WOLFPSA_GHASH_HW_BACKEND
+#endif
+
+#ifndef WOLFPSA_AES_FAST
+#if defined(WOLFSSL_ARMASM)
+#error "wolfPSA: the Arm AES assembly falls back to a T-table core and ignores WOLFSSL_AES_TOUCH_LINES. Define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED, to accept it."
+#elif defined(WOLFSSL_PPC64_ASM) || defined(WOLFSSL_PPC32_ASM)
+#error "wolfPSA: the PowerPC AES assembly falls back to a T-table core and ignores WOLFSSL_AES_TOUCH_LINES. Define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED, to accept it."
+#elif defined(WOLFSSL_RISCV_ASM) && !defined(WOLFPSA_AES_HW_BACKEND)
+#error "wolfPSA: the RISC-V assembly without the scalar or vector crypto extension uses a T-table AES and a branching GHASH. Define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED, to accept it."
+#elif defined(HAVE_FIPS) && FIPS_VERSION3_LT(6,0,0) && \
+    !defined(WOLFPSA_AES_HW_BACKEND)
+#error "wolfPSA: FIPS modules before v6 have neither WC_AES_BITSLICED nor WOLFSSL_AES_TOUCH_LINES. Define WOLFPSA_AES_FAST, without either of them, to accept the T-table core."
+#elif !defined(WC_AES_BITSLICED) && !defined(WOLFSSL_AES_TOUCH_LINES) && \
+    !defined(WOLFPSA_AES_HW_BACKEND)
 #error "wolfPSA: AES backend is not constant time. Select WC_AES_BITSLICED or WOLFSSL_AES_TOUCH_LINES, or define WOLFPSA_AES_FAST to accept the T-table core."
 #endif
+
+/* Only the 64-bit GHASH built with no GCM method set is masked; FIPS v5 masks
+ * it only under AES_GCM_GMULT_CT, and FIPS v2 never does. */
+#if defined(HAVE_AESGCM) && !defined(WOLFPSA_GHASH_HW_BACKEND)
+#if defined(GCM_SMALL) || defined(GCM_WORD32) || defined(GCM_TABLE) || \
+    defined(GCM_TABLE_4BIT) || defined(AES_GCM_GMULT_NCT)
+#error "wolfPSA: GHASH is not constant time. Leave the GCM method unset and AES_GCM_GMULT_NCT undefined for the masked multiply (an LTC part without its GCM engine sets GCM_TABLE itself), or define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED."
+#elif !defined(WORD64_AVAILABLE)
+#error "wolfPSA: the masked GHASH needs a 64-bit type, and WORD64_AVAILABLE is off (NO_64BIT, or a 16-bit CPU). Remove NO_64BIT, or define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED, to accept the branching one."
+#elif defined(HAVE_FIPS) && FIPS_VERSION3_LT(5,0,0)
+#error "wolfPSA: FIPS v2 has no constant-time GHASH. Define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED, to accept it."
+#elif defined(HAVE_FIPS) && FIPS_VERSION3_LT(6,0,0) && \
+    !defined(AES_GCM_GMULT_CT)
+#error "wolfPSA: FIPS v5 masks GHASH only under AES_GCM_GMULT_CT. Define it, or define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED."
+#endif
+#endif /* HAVE_AESGCM && !WOLFPSA_GHASH_HW_BACKEND */
+#endif /* !WOLFPSA_AES_FAST */
 
 #if defined(WOLFPSA_AES_FAST) && \
     (defined(WC_AES_BITSLICED) || defined(WOLFSSL_AES_TOUCH_LINES))

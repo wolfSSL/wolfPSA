@@ -40,6 +40,8 @@ jobs:
             modifiers: "-HAVE_AES_ECB +WOLFPSA_NO_AES_BITSLICED +WOLFSSL_AES_TOUCH_LINES"
           - name: aes-fast
             modifiers: "+WOLFPSA_NO_AES_BITSLICED +WOLFPSA_AES_FAST"
+          - name: aes-fast-gcm-table
+            modifiers: "+WOLFPSA_NO_AES_BITSLICED +WOLFPSA_AES_FAST +GCM_TABLE_4BIT"
           - name: aes-ctr
             modifiers: "-WOLFSSL_AES_COUNTER"
           - name: aes-cfb
@@ -109,3 +111,20 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.config.target || 'libwolfpsa.a' }}
         run: ./build-test/build-variant.sh "${{ matrix.config.name }}" ${{ matrix.config.modifiers }}
+
+  psa-config-policy:
+    name: psa_config.h policy / wolfSSL ${{ matrix.wolfssl-ref }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        wolfssl-ref: [ master, v5.9.4-stable ]
+    steps:
+      - name: Check out wolfPSA
+        uses: actions/checkout@v4
+
+      - name: Clone sibling wolfSSL
+        run: git clone --depth 1 --branch ${{ matrix.wolfssl-ref }} https://github.com/wolfSSL/wolfssl ../wolfssl
+
+      - name: Check accepted and refused configurations
+        run: ./build-test/psa-config-policy.sh ../wolfssl
