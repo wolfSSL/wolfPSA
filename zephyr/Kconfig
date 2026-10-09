@@ -68,8 +68,9 @@ config WOLFPSA_AES_FAST
 	bool "Accept wolfCrypt's T-table AES core (not constant time)"
 	help
 	  Define WOLFPSA_AES_FAST, which waives src/psa_config.h's requirement for
-	  an AES backend with no secret-indexed table load, and leaves
-	  WOLFSSL_AES_CONSTANT_TIME off by default.
+	  an AES backend and a GHASH with no secret-indexed table load, and leaves
+	  WOLFSSL_AES_CONSTANT_TIME off by default. Builds with the Arm assembly
+	  need it, since that assembly falls back to a T-table core.
 
 	  The T-table core is wolfCrypt's fastest software AES, and its access
 	  pattern is key- and state-dependent. Enable this only where that timing
