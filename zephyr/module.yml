@@ -4,3 +4,6 @@ build:
   kconfig: zephyr/Kconfig
   depends:
     - wolfssl
+security:
+  external-references:
+    - pkg:github/wolfssl/wolfpsa@v5.9.4
