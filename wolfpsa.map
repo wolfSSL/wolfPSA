@@ -1,5 +1,7 @@
 WOLFPSA_1.0 {
     global:
+        mbedtls_platform_zeroize;
+        mbedtls_psa_crypto_free;
         psa_aead_abort;
         psa_attach_key;
         psa_check_key_usage;

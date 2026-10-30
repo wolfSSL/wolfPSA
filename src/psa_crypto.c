@@ -31,6 +31,7 @@
 #include "psa_trace.h"
 #include "psa_lock.h"
 #include <wolfpsa/psa_engine.h>
+#include <wolfpsa/psa_key_storage.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
 
 /* Init latch. psa_crypto_init() must complete single-threaded (per the PSA
@@ -85,6 +86,29 @@ psa_status_t psa_crypto_init(void)
     WOLFPSA_UNLOCK();
 
     return status;
+}
+
+void wolfPSA_CryptoCleanup(void)
+{
+    int initialized;
+
+    wolfpsa_trace("wolfPSA_CryptoCleanup()");
+
+    if (WOLFPSA_LOCK_INIT() != 0) {
+        return;
+    }
+
+    WOLFPSA_LOCK();
+    initialized = g_psa_crypto_initialized;
+    g_psa_crypto_initialized = 0;
+    WOLFPSA_UNLOCK();
+
+    /* Takes the lock itself, so it runs after the unlock above. */
+    psa_key_storage_cleanup();
+
+    if (initialized) {
+        (void)wolfCrypt_Cleanup();
+    }
 }
 
 #endif /* WOLFSSL_PSA_ENGINE */

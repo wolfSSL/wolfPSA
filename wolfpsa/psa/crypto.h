@@ -33,6 +33,7 @@
 #include "crypto_sizes.h"
 #include "crypto_struct.h"
 #include "crypto-pqc.h"
+#include "crypto_extra.h"
 
 
 /* Types */
