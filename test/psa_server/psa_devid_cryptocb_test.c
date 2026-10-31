@@ -941,6 +941,46 @@ int main(void)
         ret = check_families();
     }
 
+    /* Phase 6: mbedtls_psa_crypto_free() drops the last wolfCrypt reference,
+     * which unregisters every device. Nothing may dispatch after re-init
+     * until the probe is registered again. */
+    if (ret == 0) {
+        mbedtls_psa_crypto_free();
+        st = psa_crypto_init();
+        if (st != PSA_SUCCESS)
+            ret = fail("psa_crypto_init after free", st);
+    }
+
+    if (ret == 0) {
+        reset_counts(PROBE_DEVID);
+        ret = exercise_all();
+    }
+
+    if (ret == 0 && seen_total != 0) {
+        printf("FAIL %d operation(s) dispatched after free and re-init\n",
+               seen_total);
+        ret = 1;
+    }
+    else if (ret == 0) {
+        printf("free and re-init: no dispatches\n");
+    }
+
+    if (ret == 0 && wolfPSA_RegisterCryptoCb(PROBE_DEVID, count_cb,
+                                             NULL) != 0) {
+        printf("FAIL wolfPSA_RegisterCryptoCb(probe) after re-init\n");
+        ret = 1;
+    }
+
+    if (ret == 0) {
+        printf("registered again after re-init (devId %d):\n", PROBE_DEVID);
+        reset_counts(PROBE_DEVID);
+        ret = exercise_all();
+    }
+
+    if (ret == 0) {
+        ret = check_families();
+    }
+
     wolfPSA_UnRegisterCryptoCb(PROBE_DEVID);
 
     if (ret != 0)

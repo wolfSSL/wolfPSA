@@ -123,8 +123,13 @@ PSA_REGRESSION_TESTS = psa_aead_multipart_test \
 	psa_store_dir_validation_test \
 	psa_import_zero_length_test \
 	psa_copy_key_cross_lifetime_test \
-	psa_zero_capacity_buffer_test
+	psa_zero_capacity_buffer_test \
+	psa_want_surface_test
 BINARIES += $(PSA_REGRESSION_TESTS)
+
+# TF-PSA-Crypto extension tests, built with the default link recipe.
+PSA_TF_PSA_TESTS = psa_tf_psa_extra_test
+BINARIES += $(PSA_TF_PSA_TESTS)
 
 # Regression test with a custom link: it replaces the store backend, so it
 # cannot use the recipe above (see PROBE_LIB below).
@@ -186,7 +191,8 @@ $(PSA_14_TESTS): %: require-wolfssl-lib psa_server/%.o
 psa_ecc_verify_curve_test psa_ecc_ecdh_curve_test psa_ecc_curve_caps_test: \
 	CPPFLAGS += $(WOLFSSL_CPPFLAGS) -I$(USER_SETTINGS_PATH)
 
-$(PSA_REGRESSION_TESTS): %: require-wolfssl-lib psa_server/%.o
+$(PSA_REGRESSION_TESTS) $(PSA_TF_PSA_TESTS): %: require-wolfssl-lib \
+		psa_server/%.o
 	$(CC) $(CFLAGS) -o $@ psa_server/$@.o $(LDFLAGS) $(LDLIBS) $(RPATH_WOLFPSA) $(RPATH_WOLFSSL)
 
 ifdef WOLFSSL_HAS_PSA_TLS

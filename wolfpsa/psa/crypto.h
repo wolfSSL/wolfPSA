@@ -30,9 +30,12 @@
 #include "crypto_types.h"
 #include "crypto_values.h"
 #include "crypto_config.h"
+/* MBEDTLS_*_C feature macros, which TF-PSA-Crypto's psa/crypto.h includes */
+#include "tf-psa-crypto/build_info.h"
 #include "crypto_sizes.h"
 #include "crypto_struct.h"
 #include "crypto-pqc.h"
+#include "crypto_extra.h"
 
 
 /* Types */

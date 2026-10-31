@@ -135,6 +135,18 @@ $(LIBNAME): $(OBJ) $(WOLFCRYPT_OBJ)
 $(SHLIBNAME): $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) $(EXPORT_MAP)
 	$(CC) -shared -Wl,--version-script,$(EXPORT_MAP) -Wl,-Bsymbolic-functions -o $@ $(filter-out $(EXPORT_MAP),$^) $(LDFLAGS)
 
+# Build the PSA_WANT_* macros based on what the wolfCrypt build supports.
+PSA_CONFIG := wolfpsa/psa/crypto_config_generated.h
+PYTHON ?= python3
+
+$(PSA_CONFIG): FORCE
+	$(PYTHON) tools/gen-crypto-config.py $@ "$(CC)" \
+		tools/psa_want_probe.c $(CPPFLAGS) $(CFLAGS)
+
+$(OBJ) $(OBJ_PIC): $(PSA_CONFIG)
+
+FORCE:
+
 $(OBJDIR)/%.o: src/%.c
 	@mkdir -p $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
@@ -207,7 +219,9 @@ UNIT_TESTS := psa_api_test \
 	psa_kdf_zeroize_output_test \
 	psa_import_zero_length_test \
 	psa_copy_key_cross_lifetime_test \
-	psa_zero_capacity_buffer_test
+	psa_zero_capacity_buffer_test \
+	psa_want_surface_test \
+	psa_tf_psa_extra_test
 
 # Run the unit test loop from the repo root (psa_rsa_pss_interop_test reads
 # its certificate relative to the root). Assumes the tests are already built.
@@ -270,7 +284,7 @@ covclean:
 	rm -rf $(COV_DIR)
 
 clean:
-	rm -rf $(BUILD_DIR) $(LIBNAME) $(SHLIBNAME)
+	rm -rf $(BUILD_DIR) $(LIBNAME) $(SHLIBNAME) $(PSA_CONFIG)
 
 -include $(OBJ:.o=.d) $(WOLFCRYPT_OBJ:.o=.d)
 -include $(OBJ_PIC:.o=.d) $(WOLFCRYPT_OBJ_PIC:.o=.d)

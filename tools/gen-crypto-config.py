@@ -3,46 +3,52 @@
 # Copyright (C) 2026 wolfSSL Inc.
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Generate wolfpsa/psa/crypto_config_zephyr.h from the ACTUAL compiled wolfCrypt
+# Generate the PSA_WANT_ header (crypto_config_zephyr.h for Zephyr,
+# crypto_config_generated.h for the Makefile) from the ACTUAL compiled wolfCrypt
 # configuration, by preprocessing psa_want_probe.c with the same flags as the
 # rest of the build. The result is the consumer-visible PSA_WANT_ surface:
 # exactly the algorithm families wolfCrypt has enabled AND wolfPSA implements.
 #
 # Python (not shell) to fit the Zephyr build ecosystem, invoked via CMake's
-# PYTHON_EXECUTABLE from wolfPSA's zephyr/CMakeLists.txt.
+# PYTHON_EXECUTABLE from wolfPSA's zephyr/CMakeLists.txt, and by the Makefile.
 #
 # Usage:
 #   gen-crypto-config.py <out-header> <cc> <probe.c> [preprocessor flags...]
 #
-# The preprocessor flags must reproduce the build's wolfCrypt config -- at
-# minimum -DWOLFSSL_USER_SETTINGS -DWOLFSSL_ZEPHYR, the wolfssl/wolfpsa include
-# dirs, any -DWOLFSSL_SETTINGS_FILE, and -imacros <autoconf.h>.
+# <cc> is a path, or a command with arguments such as "ccache gcc". The
+# preprocessor flags must reproduce the build's wolfCrypt config -- for
+# Zephyr at minimum -DWOLFSSL_USER_SETTINGS -DWOLFSSL_ZEPHYR, the
+# wolfssl/wolfpsa include dirs, any -DWOLFSSL_SETTINGS_FILE, and -imacros
+# <autoconf.h>; for the Makefile build, its CPPFLAGS and CFLAGS. The header is
+# written only when its content changes.
 
+import os
 import re
+import shlex
 import subprocess
 import sys
 
 HEADER = """\
-/* crypto_config_zephyr.h
+/* {name}
  *
  * Copyright (C) 2026 wolfSSL Inc.
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * GENERATED at build time by zephyr/gen/gen-crypto-config.py from the compiled
+ * GENERATED at build time by tools/gen-crypto-config.py from the compiled
  * wolfCrypt configuration -- DO NOT EDIT and do not check in. It defines the
  * consumer-visible PSA_WANT_ surface (what wolfPSA exposes as the PSA API),
  * derived from the wolfCrypt features actually enabled in this build intersected
  * with what wolfPSA implements. wolfpsa/psa/crypto.h -> crypto_config.h includes
- * it under CONFIG_WOLFPSA, so PSA sizing macros (crypto_sizes.h) and consumer
- * PSA_WANT_-gated code track the real build.
+ * it, so PSA sizing macros (crypto_sizes.h) and consumer PSA_WANT_-gated code
+ * track the real build.
  */
 
-#ifndef WOLFPSA_CRYPTO_CONFIG_ZEPHYR_H
-#define WOLFPSA_CRYPTO_CONFIG_ZEPHYR_H
+#ifndef {guard}
+#define {guard}
 
 """
 
-FOOTER = "\n#endif /* WOLFPSA_CRYPTO_CONFIG_ZEPHYR_H */\n"
+FOOTER = "\n#endif /* {guard} */\n"
 
 EMIT_TAG = "__WPSA_EMIT__"
 WANT_RE = re.compile(r"PSA_WANT_[A-Z0-9_]+")
@@ -54,12 +60,13 @@ def main(argv):
             "usage: gen-crypto-config.py <out> <cc> <probe.c> [flags...]\n")
         return 2
 
-    out_path, cc, probe = argv[1], argv[2], argv[3]
+    out_path, probe = argv[1], argv[3]
+    cc = [argv[2]] if os.path.isfile(argv[2]) else shlex.split(argv[2])
     flags = argv[4:]
 
     try:
         preprocessed = subprocess.run(
-            [cc, "-E", "-P", *flags, probe],
+            [*cc, "-E", "-P", *flags, probe],
             check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             universal_newlines=True).stdout
     except subprocess.CalledProcessError as exc:
@@ -79,11 +86,21 @@ def main(argv):
             "gen-crypto-config.py: probe produced no PSA_WANT symbols\n")
         return 1
 
+    name = os.path.basename(out_path)
+    guard = "WOLFPSA_" + re.sub(r"[^A-Z0-9]", "_", name.upper())
+    text = (HEADER.format(name=name, guard=guard) +
+            "".join("#define {} 1\n".format(want) for want in wants) +
+            FOOTER.format(guard=guard))
+
+    # Unchanged content keeps its timestamp, so nothing rebuilds
+    try:
+        with open(out_path) as out_file:
+            if out_file.read() == text:
+                return 0
+    except OSError:
+        pass
     with open(out_path, "w") as out_file:
-        out_file.write(HEADER)
-        for want in wants:
-            out_file.write("#define {} 1\n".format(want))
-        out_file.write(FOOTER)
+        out_file.write(text)
 
     return 0
 
