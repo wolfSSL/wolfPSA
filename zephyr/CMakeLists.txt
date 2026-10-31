@@ -35,7 +35,7 @@ if(CONFIG_WOLFPSA)
   # wolfPSA exposes as the PSA API exactly the crypto that the user's wolfCrypt
   # configuration enabled (and that wolfPSA implements). We derive the
   # consumer-visible PSA_WANT_ surface from the ACTUAL compiled config by
-  # preprocessing zephyr/gen/psa_want_probe.c and generating
+  # preprocessing tools/psa_want_probe.c and generating
   # crypto_config_zephyr.h, which <psa/crypto.h> -> crypto_config.h includes.
   # Generated at CONFIGURE time (autoconf.h already exists) so it is present
   # before any TU that includes <psa/crypto.h> compiles.
@@ -53,8 +53,8 @@ if(CONFIG_WOLFPSA)
 
   set(WOLFPSA_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/wolfpsa_gen)
   set(WOLFPSA_GEN_HDR ${WOLFPSA_GEN_DIR}/crypto_config_zephyr.h)
-  set(WOLFPSA_PROBE   ${WOLFPSA_DIR}/zephyr/gen/psa_want_probe.c)
-  set(WOLFPSA_GEN_PY  ${WOLFPSA_DIR}/zephyr/gen/gen-crypto-config.py)
+  set(WOLFPSA_PROBE   ${WOLFPSA_DIR}/tools/psa_want_probe.c)
+  set(WOLFPSA_GEN_PY  ${WOLFPSA_DIR}/tools/gen-crypto-config.py)
   file(MAKE_DIRECTORY ${WOLFPSA_GEN_DIR})
 
   set(_wolfpsa_probe_flags
