@@ -105,6 +105,7 @@ psa_status_t psa_asymmetric_decrypt_rsa(psa_key_type_t key_type,
                                        uint8_t *output,
                                        size_t output_size,
                                        size_t *output_length);
+#ifdef HAVE_ECC
 psa_status_t psa_asymmetric_sign_ecc(psa_key_type_t key_type,
                                     size_t key_bits,
                                     const uint8_t *key_buffer,
@@ -124,6 +125,7 @@ psa_status_t psa_asymmetric_verify_ecc(psa_key_type_t key_type,
                                       size_t hash_length,
                                       const uint8_t *signature,
                                       size_t signature_length);
+#endif /* HAVE_ECC */
 #ifdef HAVE_ED25519
 psa_status_t psa_asymmetric_sign_ed25519(psa_key_type_t key_type,
                                         size_t key_bits,
@@ -604,6 +606,7 @@ static psa_status_t wolfpsa_sign_hash_worker(psa_key_id_t key,
         }
     }
 #endif
+#ifdef HAVE_ECC
     else if (PSA_KEY_TYPE_IS_ECC(attributes.type)) {
         status = psa_asymmetric_sign_ecc(attributes.type, attributes.bits,
                                          key_data, key_data_length,
@@ -611,6 +614,7 @@ static psa_status_t wolfpsa_sign_hash_worker(psa_key_id_t key,
                                          signature, signature_size,
                                          signature_length);
     }
+#endif /* HAVE_ECC */
     else {
         status = PSA_ERROR_NOT_SUPPORTED;
     }
@@ -745,12 +749,14 @@ static psa_status_t wolfpsa_verify_hash_worker(psa_key_id_t key,
         }
     }
 #endif
+#ifdef HAVE_ECC
     else if (PSA_KEY_TYPE_IS_ECC(attributes.type)) {
         status = psa_asymmetric_verify_ecc(attributes.type, attributes.bits,
                                            key_data, key_data_length,
                                            alg, hash, hash_length,
                                            signature, signature_length);
     }
+#endif /* HAVE_ECC */
     else {
         status = PSA_ERROR_NOT_SUPPORTED;
     }
@@ -1036,6 +1042,7 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
         }
     }
 #endif
+#ifdef HAVE_ECC
     else if (PSA_KEY_TYPE_IS_ECC(attributes.type)) {
         status = psa_asymmetric_sign_ecc(attributes.type, attributes.bits,
                                          key_data, key_data_length,
@@ -1043,6 +1050,7 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
                                          signature, signature_size,
                                          signature_length);
     }
+#endif /* HAVE_ECC */
     else {
         status = PSA_ERROR_NOT_SUPPORTED;
     }
@@ -1284,12 +1292,14 @@ static psa_status_t wolfpsa_verify_message_worker(psa_key_id_t key,
         }
     }
 #endif
+#ifdef HAVE_ECC
     else if (PSA_KEY_TYPE_IS_ECC(attributes.type)) {
         status = psa_asymmetric_verify_ecc(attributes.type, attributes.bits,
                                            key_data, key_data_length,
                                            alg, hash, hash_length,
                                            signature, signature_length);
     }
+#endif /* HAVE_ECC */
     else {
         status = PSA_ERROR_NOT_SUPPORTED;
     }
