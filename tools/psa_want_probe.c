@@ -39,11 +39,14 @@
  * rather than <wolfssl/wolfcrypt/settings.h> so this probe preprocesses without
  * dragging in the Zephyr kernel headers settings.h pulls under WOLFSSL_ZEPHYR;
  * every feature macro this probe tests is materialized by user_settings.h.
- * The Makefile build includes settings.h, which adds macros such as
- * HAVE_ALL_CURVES. */
+ * The Makefile build includes config.h and settings.h as src/ does; settings.h
+ * adds macros such as HAVE_ALL_CURVES. */
 #if defined(__ZEPHYR__)
 #include "user_settings.h"
 #else
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif /* HAVE_CONFIG_H */
 #include <wolfssl/wolfcrypt/settings.h>
 #endif /* __ZEPHYR__ */
 
@@ -146,16 +149,23 @@ __WPSA_EMIT__PSA_WANT_ALG_RSA_OAEP
 #endif
 #endif /* !NO_RSA */
 
-/* ----- ECC (secp r1) ----- */
-#if defined(HAVE_ECC)
+/* ----- ECC key types, for every curve family ----- */
+#if defined(HAVE_ECC) || defined(HAVE_CURVE25519) || defined(HAVE_CURVE448) || \
+    defined(HAVE_ED25519) || defined(HAVE_ED448)
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_PUBLIC_KEY
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_BASIC
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_IMPORT
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_EXPORT
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE
+#endif
+#if defined(HAVE_ECC) || defined(HAVE_CURVE25519) || defined(HAVE_CURVE448)
+__WPSA_EMIT__PSA_WANT_ALG_ECDH
+#endif
+
+/* ----- ECC (secp r1) ----- */
+#if defined(HAVE_ECC)
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_DERIVE
 __WPSA_EMIT__PSA_WANT_ALG_ECDSA
-__WPSA_EMIT__PSA_WANT_ALG_ECDH
 #if defined(WOLFSSL_ECDSA_DETERMINISTIC_K)
 __WPSA_EMIT__PSA_WANT_ALG_DETERMINISTIC_ECDSA
 #endif
@@ -177,6 +187,19 @@ __WPSA_EMIT__PSA_WANT_ECC_MONTGOMERY_255
 #endif
 #if defined(HAVE_CURVE448)
 __WPSA_EMIT__PSA_WANT_ECC_MONTGOMERY_448
+#endif
+
+/* ----- Edwards curves ----- */
+#if defined(HAVE_ED25519)
+__WPSA_EMIT__PSA_WANT_ECC_TWISTED_EDWARDS_255
+__WPSA_EMIT__PSA_WANT_ALG_ED25519PH
+#endif
+#if defined(HAVE_ED448)
+__WPSA_EMIT__PSA_WANT_ECC_TWISTED_EDWARDS_448
+__WPSA_EMIT__PSA_WANT_ALG_ED448PH
+#endif
+#if defined(HAVE_ED25519) || defined(HAVE_ED448)
+__WPSA_EMIT__PSA_WANT_ALG_PURE_EDDSA
 #endif
 
 /* ----- KDFs ----- */
