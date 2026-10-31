@@ -47,6 +47,8 @@ static int test_export_pair_public(psa_ecc_family_t family,
     psa_key_type_t key_type;
     uint8_t pub[PSA_KEY_EXPORT_ECC_PUBLIC_KEY_MAX_SIZE(448)];
     size_t pub_size = sizeof(pub);
+    uint8_t pair[PSA_KEY_EXPORT_ECC_KEY_PAIR_MAX_SIZE(448)];
+    size_t pair_len = 0;
     psa_status_t st;
     int ok = 0;
 
@@ -73,6 +75,15 @@ static int test_export_pair_public(psa_ecc_family_t family,
     if (pub_size != pub_len) {
         printf("FAIL %s export len=%u expected=%u\n", label,
                (unsigned)pub_size, (unsigned)pub_len);
+        goto destroy;
+    }
+
+    st = psa_export_key(key_id, pair,
+                        PSA_EXPORT_KEY_OUTPUT_SIZE(key_type, bits),
+                        &pair_len);
+    if (st != PSA_SUCCESS) {
+        printf("FAIL %s key pair export into PSA_EXPORT_KEY_OUTPUT_SIZE "
+               "status=%d\n", label, (int)st);
         goto destroy;
     }
 

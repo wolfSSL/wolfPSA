@@ -84,6 +84,9 @@ jobs:
             modifiers: "-HAVE_PBKDF2 +NO_PBKDF2"
           - name: ecc384
             modifiers: "-WOLFSSL_SP_384 -HAVE_ECC384"
+          - name: no-ecc
+            modifiers: "-HAVE_ECC -HAVE_ECC_ENCRYPT"
+            target: libwolfpsa.so
           - name: rsa-1024
             modifiers: "-WOLFSSL_SP_1024 -RSA_MIN_SIZE +RSA_MIN_SIZE=2048"
           # wolfPSA's own sources only: the bundled wolfCrypt sources do not
@@ -108,4 +111,6 @@ jobs:
       - name: Build ${{ matrix.config.name }}
         env:
           BUILD_TARGET: ${{ matrix.config.target || 'libwolfpsa.a' }}
+          # Fail on undefined symbols
+          LDFLAGS: -Wl,-z,defs
         run: ./build-test/build-variant.sh "${{ matrix.config.name }}" ${{ matrix.config.modifiers }}

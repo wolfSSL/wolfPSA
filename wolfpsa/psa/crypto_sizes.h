@@ -272,7 +272,8 @@
 
 #define PSA_SIGN_OUTPUT_SIZE(key_type, key_bits, alg)        \
     (PSA_KEY_TYPE_IS_RSA(key_type) ? ((void) alg, PSA_BITS_TO_BYTES(key_bits)) : \
-     PSA_KEY_TYPE_IS_ECC(key_type) ? PSA_ECDSA_SIGNATURE_SIZE(key_bits) : \
+     PSA_KEY_TYPE_IS_ECC(key_type) ? \
+         2u * PSA_KEY_EXPORT_ECC_KEY_PAIR_MAX_SIZE(key_bits) : \
      PSA_KEY_TYPE_IS_ML_DSA(key_type) ? \
          ((void) alg, \
           (key_bits) == 128u ? 2420u : \
@@ -348,7 +349,7 @@
 
 
 #define PSA_KEY_EXPORT_ECC_KEY_PAIR_MAX_SIZE(key_bits)   \
-    (PSA_BITS_TO_BYTES(key_bits))
+    ((key_bits) == 448u ? 57u : PSA_BITS_TO_BYTES(key_bits))
 
 
 #define PSA_KEY_EXPORT_FFDH_KEY_PAIR_MAX_SIZE(key_bits)   \

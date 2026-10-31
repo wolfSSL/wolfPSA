@@ -135,6 +135,42 @@ static int test_pure_eddsa_rejects_context(void)
     return rc;
 }
 
+static int test_pure_eddsa_sign_output_size(psa_key_bits_t bits)
+{
+    const psa_key_type_t type =
+        PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_TWISTED_EDWARDS);
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_key_id_t key_id = PSA_KEY_ID_NULL;
+    psa_status_t st;
+    uint8_t message[32];
+    uint8_t signature[128];
+    size_t signature_length = 0;
+
+    memset(message, 0xab, sizeof(message));
+    psa_set_key_type(&attrs, type);
+    psa_set_key_bits(&attrs, bits);
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_SIGN_MESSAGE);
+    psa_set_key_algorithm(&attrs, PSA_ALG_PURE_EDDSA);
+
+    st = psa_generate_key(&attrs, &key_id);
+    if (st == PSA_SUCCESS) {
+        st = psa_sign_message(key_id, PSA_ALG_PURE_EDDSA,
+                              message, sizeof(message), signature,
+                              PSA_SIGN_OUTPUT_SIZE(type, bits,
+                                                   PSA_ALG_PURE_EDDSA),
+                              &signature_length);
+        psa_destroy_key(key_id);
+    }
+    if (st != PSA_SUCCESS) {
+        printf("FAIL pure_eddsa %u-bit sign into PSA_SIGN_OUTPUT_SIZE: %d\n",
+               (unsigned)bits, (int)st);
+        return 1;
+    }
+    printf("PASS pure_eddsa %u-bit sign into PSA_SIGN_OUTPUT_SIZE\n",
+           (unsigned)bits);
+    return 0;
+}
+
 int main(void)
 {
     int rc;
@@ -144,6 +180,8 @@ int main(void)
         return 1;
     }
     rc = test_pure_eddsa_rejects_context();
+    rc |= test_pure_eddsa_sign_output_size(255);
+    rc |= test_pure_eddsa_sign_output_size(448);
     if (rc == 0) {
         printf("psa_pure_eddsa_context_test: all tests passed\n");
     }
