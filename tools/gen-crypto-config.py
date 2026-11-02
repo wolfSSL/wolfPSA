@@ -8,6 +8,7 @@
 # configuration, by preprocessing psa_want_probe.c with the same flags as the
 # rest of the build. The result is the consumer-visible PSA_WANT_ surface:
 # exactly the algorithm families wolfCrypt has enabled AND wolfPSA implements.
+# It also has MBEDTLS_FS_IO unless the build defines NO_FILESYSTEM.
 #
 # Python (not shell) to fit the Zephyr build ecosystem, invoked via CMake's
 # PYTHON_EXECUTABLE from wolfPSA's zephyr/CMakeLists.txt, and by the Makefile.
@@ -40,7 +41,7 @@ HEADER = """\
  * derived from the wolfCrypt features actually enabled in this build intersected
  * with what wolfPSA implements. wolfpsa/psa/crypto.h -> crypto_config.h includes
  * it, so PSA sizing macros (crypto_sizes.h) and consumer PSA_WANT_-gated code
- * track the real build.
+ * track the real build. MBEDTLS_FS_IO is defined unless NO_FILESYSTEM is.
  */
 
 #ifndef {guard}
@@ -52,6 +53,8 @@ FOOTER = "\n#endif /* {guard} */\n"
 
 EMIT_TAG = "__WPSA_EMIT__"
 WANT_RE = re.compile(r"PSA_WANT_[A-Z0-9_]+")
+# TF-PSA-Crypto platform options, defined without a value as in TF-PSA
+OPTION_RE = re.compile(r"MBEDTLS_FS_IO")
 
 
 def main(argv):
@@ -74,11 +77,17 @@ def main(argv):
         sys.stderr.write("gen-crypto-config.py: preprocessing the probe failed\n")
         return 1
 
-    # Collect PSA_WANT_ symbols from the surviving __WPSA_EMIT__ lines only.
+    # Collect symbols from the surviving __WPSA_EMIT__ lines only.
+    emitted = [line for line in preprocessed.splitlines() if EMIT_TAG in line]
     wants = sorted({
         match.group(0)
-        for line in preprocessed.splitlines() if EMIT_TAG in line
+        for line in emitted
         for match in WANT_RE.finditer(line)
+    })
+    options = sorted({
+        match.group(0)
+        for line in emitted
+        for match in OPTION_RE.finditer(line)
     })
 
     if not wants:
@@ -90,6 +99,7 @@ def main(argv):
     guard = "WOLFPSA_" + re.sub(r"[^A-Z0-9]", "_", name.upper())
     text = (HEADER.format(name=name, guard=guard) +
             "".join("#define {} 1\n".format(want) for want in wants) +
+            "".join("#define {}\n".format(option) for option in options) +
             FOOTER.format(guard=guard))
 
     # Unchanged content keeps its timestamp, so nothing rebuilds

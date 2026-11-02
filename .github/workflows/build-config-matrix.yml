@@ -98,6 +98,8 @@ jobs:
           - name: no-rng
             modifiers: "+WC_NO_RNG +WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS"
             target: psa-objects
+          - name: no-filesystem
+            modifiers: "+NO_FILESYSTEM +WOLFPSA_CUSTOM_STORE"
 
     steps:
       - name: Check out wolfPSA

@@ -234,3 +234,8 @@ __WPSA_EMIT__PSA_WANT_KEY_TYPE_ML_KEM
 #if defined(WOLFSSL_HAVE_MLDSA)
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ML_DSA
 #endif
+
+/* ----- TF-PSA-Crypto platform options ----- */
+#if !defined(NO_FILESYSTEM)
+__WPSA_EMIT__MBEDTLS_FS_IO
+#endif
