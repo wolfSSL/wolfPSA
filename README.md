@@ -88,6 +88,94 @@ default), using python3. Set `PYTHON` to use another interpreter. Code that
 includes `<psa/crypto.h>` needs that directory on its include path next to
 `wolfpsa/`, and builds only after `make` has generated the header.
 
+## Mbed TLS compatibility
+
+`MBEDTLS_COMPAT=1` adds the Mbed TLS 4.x TLS, X.509 and network API on top of
+wolfSSL, so that applications written for Mbed TLS 4.x build against wolfPSA
+without source changes. wolfPSA already provides the TF-PSA-Crypto side
+(`psa_*`, `mbedtls_psa_crypto_free`, `mbedtls/platform.h`).
+
+```
+make MBEDTLS_COMPAT=1
+```
+
+- wolfSSL's TLS sources are compiled from `WOLFSSL_PATH` into
+  `libwolfpsa.a`, like wolfCrypt, with the TLS settings in
+  `user_settings.h`. Changing the option rebuilds everything.
+- Applications use `-I<wolfPSA>/wolfpsa` and link `libwolfpsa.a`, in place
+  of Mbed TLS's libraries. The headers include no wolfSSL header.
+- The functions have the Mbed TLS names, so code that finds them by symbol
+  name (`dlsym`, language bindings) works too.
+- With `MBEDTLS_THREADING_C=1`, TLS is thread safe too.
+- TLS uses wolfPSA's constant-time AES. `AES_FAST=1` applies to TLS too.
+- As in Mbed TLS, certificates may have NULL parameters after an ECDSA
+  signature OID (`WOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED`).
+
+Mapped so far:
+
+- net: init, connect, bind, accept, close, free, recv, send, usleep
+- x509_crt: init, free, parse, parse_der, parse_file
+- ssl_config: init, free, defaults; ssl_conf: authmode, ca_chain, own_cert,
+  dbg
+- ssl: init, free, setup, session_reset, set_bio, set_hostname, handshake,
+  get_verify_result, get_ciphersuite, read, write, close_notify
+- pk, with or without the option: init, free, parse_key, parse_keyfile
+- threading, with `MBEDTLS_THREADING_C=1`, with or without the option: mutex
+  init, free, lock, unlock; condition_variable init, free, signal, broadcast,
+  wait
+
+Known differences from Mbed TLS:
+
+- wolfSSL error codes pass through, apart from the mapped ones. Some Mbed TLS
+  4.x codes are PSA values (-128 to -160), which overlap wolfCrypt codes.
+- `conf_*` calls after `mbedtls_ssl_setup` take effect at the next
+  `mbedtls_ssl_session_reset`.
+- A second `mbedtls_ssl_conf_own_cert` replaces the first. Mbed TLS keeps
+  both and picks one for each handshake.
+- `mbedtls_ssl_get_ciphersuite` returns IANA names, such as
+  `TLS_AES_128_GCM_SHA256`, where Mbed TLS has `TLS1-3-AES-128-GCM-SHA256`.
+- `mbedtls_net_accept` is TCP only.
+- `mbedtls_pk_context` has the key's DER and nothing else. Encrypted keys
+  and EC keys with a compressed public key are not supported.
+- `mbedtls_x509_crt` has one node per certificate, with no parsed fields
+  apart from `raw`. Parse errors are `MBEDTLS_ERR_X509_INVALID_FORMAT` or
+  `MBEDTLS_ERR_X509_ALLOC_FAILED`.
+- wolfSSL parses some certificates differently. For example, it rejects
+  serial number 0 and a pathlen above `WOLFSSL_MAX_PATH_LEN`, and accepts
+  spaces in PEM.
+- `mbedtls_ssl_conf_ca_chain` leaves out a CA that wolfSSL does not load,
+  such as an expired one. A peer certificate from that CA then fails as
+  `NOT_TRUSTED`, where Mbed TLS reports `EXPIRED`.
+- IP address host names fail in `mbedtls_ssl_set_hostname`.
+- With `VERIFY_REQUIRED`, wolfSSL stops at the first failed check, so
+  `mbedtls_ssl_get_verify_result` can report fewer flags than Mbed TLS.
+- `mbedtls_ssl_conf_dbg` is accepted and ignored.
+- No global mutexes such as `mbedtls_threading_gmtime_mutex`.
+
+Tests build the Mbed TLS migration guide client
+(`test/mbedtls_compat/client-tls-mbedtls.c`) and Mbed TLS's sample
+programs, unchanged, against `libwolfpsa.a`, and run them against the
+wolfSSL example server. Mbed TLS's server programs run against the wolfSSL
+example client and `ssl_client1`. `test/mbedtls_compat/x509_crt_test.c` and
+`pk_test.c` parse Mbed TLS's test certificates and keys. With
+`MBEDTLS_THREADING_C=1`, `ssl_pthread_server` serves clients at the same
+time. To run them:
+
+```
+make MBEDTLS_COMPAT=1 mbedtls-compat-test
+```
+
+- `MBEDTLS_PATH` (default `../mbedtls`) is an Mbed TLS 4.x checkout with
+  its submodules. Nothing from Mbed TLS is copied or linked, apart from its
+  test certificate data.
+- The example server and client come from a wolfSSL configured out of tree
+  from `WOLFSSL_PATH`, which must not be configured in place. The tests use
+  the certificates in its `certs/`.
+- Also needs python3 with jinja2. Without faketime, the case that needs it
+  is skipped.
+- `WRAP` prefixes each test program, for example `WRAP=valgrind`. Server
+  programs are stopped by the script, so their exit codes are not checked.
+
 ## Testing (PSA Architecture Test Suite)
 
 See `test-psa-api/README.md` for instructions on how to run the tests.
