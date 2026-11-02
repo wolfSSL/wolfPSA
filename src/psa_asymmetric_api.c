@@ -369,6 +369,20 @@ static psa_status_t wolfpsa_check_context(psa_algorithm_t alg,
     return PSA_ERROR_INVALID_ARGUMENT;
 }
 
+/* Required signature size, or 0 when this build cannot sign with key_type */
+static size_t wolfpsa_sign_output_size(psa_key_type_t key_type,
+                                       size_t key_bits,
+                                       psa_algorithm_t alg)
+{
+#ifndef HAVE_ECC
+    if (PSA_KEY_TYPE_IS_ECC(key_type) &&
+        key_type != PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_TWISTED_EDWARDS)) {
+        return 0;
+    }
+#endif /* !HAVE_ECC */
+    return PSA_SIGN_OUTPUT_SIZE(key_type, key_bits, alg);
+}
+
 psa_status_t psa_asymmetric_encrypt(psa_key_id_t key,
                                    psa_algorithm_t alg,
                                    const uint8_t *input,
@@ -564,7 +578,7 @@ static psa_status_t wolfpsa_sign_hash_worker(psa_key_id_t key,
      * contract status for every signature family. Checked after the
      * algorithm and key-type rejections above: a call that can never succeed
      * must report why, not a buffer problem. */
-    sig_size = PSA_SIGN_OUTPUT_SIZE(attributes.type, attributes.bits, alg);
+    sig_size = wolfpsa_sign_output_size(attributes.type, attributes.bits, alg);
     if (sig_size != 0 && signature_size < sig_size) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_BUFFER_TOO_SMALL;
@@ -877,7 +891,7 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
 
     /* Required signature capacity, so a zero-capacity buffer gets the
      * contract status for every signature family. */
-    sig_size = PSA_SIGN_OUTPUT_SIZE(attributes.type, attributes.bits, alg);
+    sig_size = wolfpsa_sign_output_size(attributes.type, attributes.bits, alg);
     if (sig_size != 0 && signature_size < sig_size) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_BUFFER_TOO_SMALL;

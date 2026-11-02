@@ -139,6 +139,8 @@ static int test_pure_eddsa_sign_output_size(psa_key_bits_t bits)
 {
     const psa_key_type_t type =
         PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_TWISTED_EDWARDS);
+    const size_t sig_size =
+        PSA_SIGN_OUTPUT_SIZE(type, bits, PSA_ALG_PURE_EDDSA);
     psa_key_attributes_t attrs = psa_key_attributes_init();
     psa_key_id_t key_id = PSA_KEY_ID_NULL;
     psa_status_t st;
@@ -156,14 +158,18 @@ static int test_pure_eddsa_sign_output_size(psa_key_bits_t bits)
     if (st == PSA_SUCCESS) {
         st = psa_sign_message(key_id, PSA_ALG_PURE_EDDSA,
                               message, sizeof(message), signature,
-                              PSA_SIGN_OUTPUT_SIZE(type, bits,
-                                                   PSA_ALG_PURE_EDDSA),
-                              &signature_length);
+                              sig_size, &signature_length);
         psa_destroy_key(key_id);
     }
     if (st != PSA_SUCCESS) {
         printf("FAIL pure_eddsa %u-bit sign into PSA_SIGN_OUTPUT_SIZE: %d\n",
                (unsigned)bits, (int)st);
+        return 1;
+    }
+    if (signature_length != sig_size) {
+        printf("FAIL pure_eddsa %u-bit signature len=%u expected=%u\n",
+               (unsigned)bits, (unsigned)signature_length,
+               (unsigned)sig_size);
         return 1;
     }
     printf("PASS pure_eddsa %u-bit sign into PSA_SIGN_OUTPUT_SIZE\n",

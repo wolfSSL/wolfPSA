@@ -87,6 +87,13 @@ static int test_export_pair_public(psa_ecc_family_t family,
         goto destroy;
     }
 
+    if (pair_len != PSA_EXPORT_KEY_OUTPUT_SIZE(key_type, bits)) {
+        printf("FAIL %s key pair export len=%u expected=%u\n", label,
+               (unsigned)pair_len,
+               (unsigned)PSA_EXPORT_KEY_OUTPUT_SIZE(key_type, bits));
+        goto destroy;
+    }
+
     ok = 1;
 
 destroy:

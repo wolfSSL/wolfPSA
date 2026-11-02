@@ -80,13 +80,17 @@ jobs:
             modifiers: "-HAVE_HKDF -HAVE_ECC_ENCRYPT"
           - name: tls-prf
             modifiers: "-WOLFSSL_HAVE_PRF"
+          # This config stays as a static library (not shared) because of a
+          # missing symbol in this build of wolfSSL. 'target' field and the
+          # LDFLAGS environment variable below can be removed after
+          # wolfSSL#11958 merges.
           - name: pbkdf2
             modifiers: "-HAVE_PBKDF2 +NO_PBKDF2"
+            target: libwolfpsa.a
           - name: ecc384
             modifiers: "-WOLFSSL_SP_384 -HAVE_ECC384"
           - name: no-ecc
             modifiers: "-HAVE_ECC -HAVE_ECC_ENCRYPT"
-            target: libwolfpsa.so
           - name: rsa-1024
             modifiers: "-WOLFSSL_SP_1024 -RSA_MIN_SIZE +RSA_MIN_SIZE=2048"
           # wolfPSA's own sources only: the bundled wolfCrypt sources do not
@@ -110,7 +114,7 @@ jobs:
 
       - name: Build ${{ matrix.config.name }}
         env:
-          BUILD_TARGET: ${{ matrix.config.target || 'libwolfpsa.a' }}
+          BUILD_TARGET: ${{ matrix.config.target || 'libwolfpsa.so' }}
           # Fail on undefined symbols
           LDFLAGS: -Wl,-z,defs
         run: ./build-test/build-variant.sh "${{ matrix.config.name }}" ${{ matrix.config.modifiers }}

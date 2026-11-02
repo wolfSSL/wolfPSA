@@ -270,10 +270,14 @@
     (PSA_BITS_TO_BYTES(curve_bits) * 2u)
 
 
+/* ECDSA or EdDSA: an Ed448 signature is 114 bytes, not 2 * 56 */
+#define PSA_VENDOR_ECC_SIGNATURE_SIZE(key_bits)    \
+    ((key_bits) == 448u ? 114u : PSA_ECDSA_SIGNATURE_SIZE(key_bits))
+
+
 #define PSA_SIGN_OUTPUT_SIZE(key_type, key_bits, alg)        \
     (PSA_KEY_TYPE_IS_RSA(key_type) ? ((void) alg, PSA_BITS_TO_BYTES(key_bits)) : \
-     PSA_KEY_TYPE_IS_ECC(key_type) ? \
-         2u * PSA_KEY_EXPORT_ECC_KEY_PAIR_MAX_SIZE(key_bits) : \
+     PSA_KEY_TYPE_IS_ECC(key_type) ? PSA_VENDOR_ECC_SIGNATURE_SIZE(key_bits) : \
      PSA_KEY_TYPE_IS_ML_DSA(key_type) ? \
          ((void) alg, \
           (key_bits) == 128u ? 2420u : \
@@ -291,6 +295,15 @@
     (PSA_VENDOR_ECDSA_SIGNATURE_MAX_SIZE > PSA_SIGNATURE_MAX_SIZE)
 #undef PSA_SIGNATURE_MAX_SIZE
 #define PSA_SIGNATURE_MAX_SIZE      PSA_VENDOR_ECDSA_SIGNATURE_MAX_SIZE
+#endif
+#if defined(PSA_WANT_ECC_TWISTED_EDWARDS_448) && \
+    (PSA_VENDOR_ECC_SIGNATURE_SIZE(448u) > PSA_SIGNATURE_MAX_SIZE)
+#undef PSA_SIGNATURE_MAX_SIZE
+#define PSA_SIGNATURE_MAX_SIZE      PSA_VENDOR_ECC_SIGNATURE_SIZE(448u)
+#elif defined(PSA_WANT_ECC_TWISTED_EDWARDS_255) && \
+    (PSA_VENDOR_ECC_SIGNATURE_SIZE(255u) > PSA_SIGNATURE_MAX_SIZE)
+#undef PSA_SIGNATURE_MAX_SIZE
+#define PSA_SIGNATURE_MAX_SIZE      PSA_VENDOR_ECC_SIGNATURE_SIZE(255u)
 #endif
 #if (defined(PSA_WANT_ALG_RSA_PKCS1V15_SIGN) || defined(PSA_WANT_ALG_RSA_PSS)) && \
     (PSA_BITS_TO_BYTES(PSA_VENDOR_RSA_MAX_KEY_BITS) > PSA_SIGNATURE_MAX_SIZE)
@@ -367,6 +380,8 @@
      (key_type) == PSA_KEY_TYPE_RSA_PUBLIC_KEY ? PSA_KEY_EXPORT_RSA_PUBLIC_KEY_MAX_SIZE(key_bits) : \
      (key_type) == PSA_KEY_TYPE_DSA_KEY_PAIR ? PSA_KEY_EXPORT_DSA_KEY_PAIR_MAX_SIZE(key_bits) :     \
      (key_type) == PSA_KEY_TYPE_DSA_PUBLIC_KEY ? PSA_KEY_EXPORT_DSA_PUBLIC_KEY_MAX_SIZE(key_bits) : \
+     (key_type) == PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_MONTGOMERY) ?                           \
+         PSA_BITS_TO_BYTES(key_bits) :                                                              \
      PSA_KEY_TYPE_IS_ECC_KEY_PAIR(key_type) ? PSA_KEY_EXPORT_ECC_KEY_PAIR_MAX_SIZE(key_bits) :      \
      PSA_KEY_TYPE_IS_ECC_PUBLIC_KEY(key_type) ? PSA_KEY_EXPORT_ECC_PUBLIC_KEY_MAX_SIZE(key_bits) :  \
      /* ML-DSA: key-pair export is the 32-byte seed; public key export by parameter set */          \
