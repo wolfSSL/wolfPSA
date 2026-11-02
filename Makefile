@@ -81,7 +81,7 @@ WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/
 
 # MBEDTLS_COMPAT=1 adds the Mbed TLS 4.x TLS, X.509 and network API, on
 # wolfSSL's TLS compiled from WOLFSSL_PATH like wolfCrypt.
-# See src/mbedtls_compat.c.
+# See src/mbedtls_compat.c and src/mbedtls_net.c.
 WOLFSSL_TLS_SRC :=
 ifeq ($(MBEDTLS_COMPAT),1)
 CPPFLAGS += -DWOLFPSA_MBEDTLS_COMPAT
@@ -311,7 +311,8 @@ mbedtls-compat-test: $(LIBNAME)
 	$(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
 		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
 		MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH)) \
-		BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat check
+		BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
+		WOLFPSA_LDFLAGS="$(LDFLAGS)" check
 else
 mbedtls-compat-test:
 	@echo "Run make MBEDTLS_COMPAT=1 mbedtls-compat-test"; exit 1

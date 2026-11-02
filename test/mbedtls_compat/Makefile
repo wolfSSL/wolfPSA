@@ -10,10 +10,11 @@ CFLAGS ?= -O2
 # Sources from other repositories build without -Werror
 WARNFLAGS ?= -Wall
 
-# Clients use the layer in libwolfpsa.a
+# Clients use the layer in libwolfpsa.a. WOLFPSA_LDFLAGS has what its build
+# needs at link, such as -fsanitize=address with ASAN=1.
 WOLFPSA_LIB := $(WOLFPSA_PATH)/libwolfpsa.a
 LAYER_FLAGS := -I$(WOLFPSA_PATH)/wolfpsa
-LAYER_LIBS := $(WOLFPSA_LIB) -lm
+LAYER_LIBS := $(WOLFPSA_LIB) -lm $(WOLFPSA_LDFLAGS)
 
 # The peers are the wolfSSL example server and client, from a wolfSSL
 # configured out of tree from WOLFSSL_PATH, so they do not depend on wolfPSA's
@@ -31,6 +32,8 @@ CLIENT := $(BUILD_DIR)/client-tls-mbedtls
 # Certificate and key parsing, on Mbed TLS's test data
 X509_TEST := $(BUILD_DIR)/x509_crt_test
 PK_TEST := $(BUILD_DIR)/pk_test
+# Return codes and verify results, client and server in one process
+SSL_TEST := $(BUILD_DIR)/ssl_test
 # Mbed TLS sample programs, built unchanged from MBEDTLS_PATH
 PROGRAMS := $(addprefix $(BUILD_DIR)/programs/ssl/,mini_client ssl_client1 \
 	ssl_server ssl_fork_server)
@@ -60,18 +63,19 @@ export BUILD_DIR WOLFSSL_PATH WOLFSSL_SERVER WOLFSSL_CLIENT MBEDTLS_PATH \
 
 .PHONY: check wolfssl-check FORCE
 
-check: $(CLIENT) $(X509_TEST) $(PK_TEST) $(PROGRAMS) \
+check: $(CLIENT) $(X509_TEST) $(PK_TEST) $(SSL_TEST) $(PROGRAMS) \
 		$(WOLFSSL_SERVER) $(WOLFSSL_CLIENT)
 	./programs.sh
 
 $(CLIENT): client-tls-mbedtls.c
 $(X509_TEST): x509_crt_test.c
 $(PK_TEST): pk_test.c
+$(SSL_TEST): ssl_test.c
 $(PROGRAMS): $(BUILD_DIR)/programs/%: $(MBEDTLS_PATH)/programs/%.c
 $(PROGRAMS): override CPPFLAGS += -I$(MBEDTLS_PATH)/tests/include
 $(addprefix $(BUILD_DIR)/programs/ssl/,ssl_client1 ssl_server \
 	ssl_fork_server ssl_pthread_server): $(CERTS)
-$(CLIENT) $(X509_TEST) $(PK_TEST) $(PROGRAMS): \
+$(CLIENT) $(X509_TEST) $(PK_TEST) $(SSL_TEST) $(PROGRAMS): \
 		$(WOLFPSA_LIB)
 	@mkdir -p $(@D)
 	$(call link,$(LAYER_FLAGS),$(LAYER_LIBS))
