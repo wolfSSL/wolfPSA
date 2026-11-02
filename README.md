@@ -126,8 +126,10 @@ Mapped so far:
 
 Known differences from Mbed TLS:
 
-- wolfSSL error codes pass through, apart from the mapped ones. Some Mbed TLS
-  4.x codes are PSA values (-128 to -160), which overlap wolfCrypt codes.
+- A wolfSSL error with no Mbed TLS match returns a general code for the
+  call, such as `MBEDTLS_ERR_SSL_INTERNAL_ERROR`. wolfSSL's own codes are not
+  returned: some Mbed TLS 4.x codes are PSA values (-128 to -160), which
+  overlap wolfCrypt codes.
 - `conf_*` calls after `mbedtls_ssl_setup` take effect at the next
   `mbedtls_ssl_session_reset`.
 - A second `mbedtls_ssl_conf_own_cert` replaces the first. Mbed TLS keeps
@@ -147,6 +149,11 @@ Known differences from Mbed TLS:
   such as an expired one. A peer certificate from that CA then fails as
   `NOT_TRUSTED`, where Mbed TLS reports `EXPIRED`.
 - IP address host names fail in `mbedtls_ssl_set_hostname`.
+- `mbedtls_ssl_set_hostname(ssl, NULL)` after `mbedtls_ssl_setup` starts a
+  new connection, so call it before the handshake.
+- With `VERIFY_OPTIONAL`, a resumed session reports
+  `MBEDTLS_X509_BADCERT_MISSING`, where Mbed TLS keeps the result of the
+  first handshake.
 - With `VERIFY_REQUIRED`, wolfSSL stops at the first failed check, so
   `mbedtls_ssl_get_verify_result` can report fewer flags than Mbed TLS.
 - `mbedtls_ssl_conf_dbg` is accepted and ignored.

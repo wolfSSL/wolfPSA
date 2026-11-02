@@ -21,11 +21,6 @@
 
 /* Mbed TLS 4.x TLS, X.509 and network API on wolfSSL (MBEDTLS_COMPAT=1). */
 
-/* getaddrinfo() with -std=c99 */
-#if defined(WOLFPSA_MBEDTLS_COMPAT) && !defined(_POSIX_C_SOURCE)
-    #define _POSIX_C_SOURCE 200112L
-#endif /* WOLFPSA_MBEDTLS_COMPAT && !_POSIX_C_SOURCE */
-
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif /* HAVE_CONFIG_H */
@@ -40,23 +35,18 @@
 #include <wolfssl/wolfcrypt/asn.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/net_sockets.h>
-#if defined(USE_WOLFSSL_IO) && !defined(USE_WINDOWS_API)
-    #include <netdb.h>
-    #include <signal.h>
-    #include <sys/select.h>
-#endif /* USE_WOLFSSL_IO && !USE_WINDOWS_API */
+#include "mbedtls_compat_internal.h"
 
 #if defined(WOLFCRYPT_ONLY) || !defined(HAVE_SNI)
     #error "wolfPSA: MBEDTLS_COMPAT needs wolfSSL TLS with SNI"
 #endif /* WOLFCRYPT_ONLY || !HAVE_SNI */
-
-enum {
-    MBED_IO_RECV = 0,
-    MBED_IO_SEND = 1
-};
+/* For MBEDTLS_X509_BADCERT_MISSING, see MbedVerifyCb() */
+#ifndef WOLFSSL_ALWAYS_VERIFY_CB
+    #error "wolfPSA: MBEDTLS_COMPAT needs WOLFSSL_ALWAYS_VERIFY_CB"
+#endif /* !WOLFSSL_ALWAYS_VERIFY_CB */
 
 /* Unknown codes map to the last entry */
-static int MbedIoErr(int code, int dir, int toWolf)
+int MbedIoErr(int code, int dir, int toWolf)
 {
     static const struct {
         int wolf;
@@ -105,10 +95,13 @@ static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
         int wolf;
         int mbed;
     } map[] = {
+        /* A zero-length read or write */
+        { WOLFSSL_ERROR_NONE, 0 },
         { WOLFSSL_ERROR_WANT_READ, MBEDTLS_ERR_SSL_WANT_READ },
         { WOLFSSL_ERROR_WANT_WRITE, MBEDTLS_ERR_SSL_WANT_WRITE },
         { WOLFSSL_ERROR_ZERO_RETURN, MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY },
-        { WC_NO_ERR_TRACE(SOCKET_PEER_CLOSED_E), MBEDTLS_ERR_SSL_CONN_EOF }
+        { WC_NO_ERR_TRACE(SOCKET_PEER_CLOSED_E), MBEDTLS_ERR_SSL_CONN_EOF },
+        { WC_NO_ERR_TRACE(NO_PEER_CERT), MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE }
     };
     int err = wolfSSL_get_error(ssl->ssl, ret);
     size_t i;
@@ -123,17 +116,19 @@ static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
             return map[i].mbed;
         }
     }
-    /* A positive code would read as a byte count */
-    return (err < 0) ? err : MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    /* wolfSSL codes overlap Mbed TLS and PSA codes */
+    return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
 }
 
-/* WOLFSSL_SUCCESS becomes 0, wolfSSL error codes are kept */
+/* WOLFSSL_SUCCESS becomes 0. wolfSSL codes overlap Mbed TLS and PSA codes,
+ * so other failures become fallback. */
 static int MbedRet(int ret, int fallback)
 {
     if (ret == WOLFSSL_SUCCESS) {
         return 0;
     }
-    return (ret < 0) ? ret : fallback;
+    return (ret == WC_NO_ERR_TRACE(MEMORY_E)) ? MBEDTLS_ERR_SSL_ALLOC_FAILED :
+        fallback;
 }
 
 static void MbedConfErr(mbedtls_ssl_config* conf, int err)
@@ -214,26 +209,30 @@ static uint32_t MbedVerifyFlag(int err)
     return map[i].mbed;
 }
 
-/* Records each failure; VERIFY_OPTIONAL then continues the handshake */
+/* Runs for the peer's certificate, also when it sent none, and for each
+ * failure. VERIFY_OPTIONAL continues the handshake after a failure. */
 static int MbedVerifyCb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 {
     mbedtls_ssl_context* s = (mbedtls_ssl_context*)store->userCtx;
 
+    if (store->totalCerts > 0) {
+        s->peer_cert = 1;
+    }
     if (!preverify) {
         s->verify_flags |= MbedVerifyFlag(store->error);
     }
     return preverify || s->authmode == MBEDTLS_SSL_VERIFY_OPTIONAL;
 }
 
-static int MbedCrtErr(int ret)
+static int MbedCertErr(int ret)
 {
     return (ret == WC_NO_ERR_TRACE(MEMORY_E)) ? MBEDTLS_ERR_X509_ALLOC_FAILED :
         MBEDTLS_ERR_X509_INVALID_FORMAT;
 }
 
-/* No signature or date checks. *len becomes the length without any data
- * that follows the certificate. */
-static int MbedCrtCheck(const unsigned char* buf, size_t* len)
+/* Checks buf decodes as a certificate, without verifying it. Sets *len to
+ * the certificate's length, dropping any trailing data. */
+static int MbedCertCheck(const unsigned char* buf, size_t* len)
 {
     DecodedCert* cert;
     word32 idx = 0;
@@ -255,228 +254,8 @@ static int MbedCrtCheck(const unsigned char* buf, size_t* len)
     wc_FreeDecodedCert(cert);
     XFREE(cert, NULL, DYNAMIC_TYPE_DCERT);
 
-    return (ret == 0) ? 0 : MbedCrtErr(ret);
+    return (ret == 0) ? 0 : MbedCertErr(ret);
 }
-
-void mbedtls_net_init(mbedtls_net_context* ctx)
-{
-    WOLFSSL_ENTER("mbedtls_net_init");
-
-    if (ctx != NULL) {
-        ctx->fd = -1;
-    }
-}
-
-#ifdef USE_WOLFSSL_IO
-static int MbedNetBind(int fd, const struct addrinfo* ai, int proto)
-{
-    int on = 1;
-
-    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&on,
-            (XSOCKLENT)sizeof(on)) != 0) {
-        return MBEDTLS_ERR_NET_SOCKET_FAILED;
-    }
-    if (bind(fd, ai->ai_addr, (XSOCKLENT)ai->ai_addrlen) != 0) {
-        return MBEDTLS_ERR_NET_BIND_FAILED;
-    }
-    if (proto == MBEDTLS_NET_PROTO_TCP &&
-            listen(fd, MBEDTLS_NET_LISTEN_BACKLOG) != 0) {
-        return MBEDTLS_ERR_NET_LISTEN_FAILED;
-    }
-    return 0;
-}
-
-/* Connects to host, or binds to it when server is set. A server with no
- * host binds to every address. */
-static int MbedNetOpen(mbedtls_net_context* ctx, const char* host,
-    const char* port, int proto, int server)
-{
-    struct addrinfo hints;
-    struct addrinfo* list = NULL;
-    struct addrinfo* ai;
-    int ret = MBEDTLS_ERR_NET_UNKNOWN_HOST;
-
-    if (ctx == NULL || (host == NULL && !server) || port == NULL) {
-        return MBEDTLS_ERR_NET_INVALID_CONTEXT;
-    }
-    XMEMSET(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    if (proto == MBEDTLS_NET_PROTO_UDP) {
-        hints.ai_socktype = SOCK_DGRAM;
-        hints.ai_protocol = IPPROTO_UDP;
-    }
-    else {
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_protocol = IPPROTO_TCP;
-    }
-    if (host == NULL) {
-        hints.ai_flags = AI_PASSIVE;
-    }
-
-#ifndef USE_WINDOWS_API
-    /* As in Mbed TLS: a send to a closed peer fails instead of ending the
-     * process */
-    (void)signal(SIGPIPE, SIG_IGN);
-#endif /* !USE_WINDOWS_API */
-
-    if (getaddrinfo(host, port, &hints, &list) != 0) {
-        return MBEDTLS_ERR_NET_UNKNOWN_HOST;
-    }
-
-    for (ai = list; ai != NULL; ai = ai->ai_next) {
-        ctx->fd = (int)socket(ai->ai_family, ai->ai_socktype,
-            ai->ai_protocol);
-        if (ctx->fd < 0) {
-            ret = MBEDTLS_ERR_NET_SOCKET_FAILED;
-            continue;
-        }
-        if (server) {
-            ret = MbedNetBind(ctx->fd, ai, proto);
-        }
-        else if (connect(ctx->fd, ai->ai_addr,
-                (XSOCKLENT)ai->ai_addrlen) == 0) {
-            ret = 0;
-        }
-        else {
-            ret = MBEDTLS_ERR_NET_CONNECT_FAILED;
-        }
-        if (ret == 0) {
-            break;
-        }
-        CloseSocket(ctx->fd);
-        ctx->fd = -1;
-    }
-
-    freeaddrinfo(list);
-    return ret;
-}
-
-int mbedtls_net_connect(mbedtls_net_context* ctx, const char* host,
-    const char* port, int proto)
-{
-    WOLFSSL_ENTER("mbedtls_net_connect");
-
-    return MbedNetOpen(ctx, host, port, proto, 0);
-}
-
-int mbedtls_net_bind(mbedtls_net_context* ctx, const char* bind_ip,
-    const char* port, int proto)
-{
-    WOLFSSL_ENTER("mbedtls_net_bind");
-
-    return MbedNetOpen(ctx, bind_ip, port, proto, 1);
-}
-
-/* TCP only. client_ip gets the 4 or 16 bytes of the client's address. */
-int mbedtls_net_accept(mbedtls_net_context* bind_ctx,
-    mbedtls_net_context* client_ctx, void* client_ip, size_t buf_size,
-    size_t* cip_len)
-{
-    struct sockaddr_storage addr;
-    XSOCKLENT addrLen = (XSOCKLENT)sizeof(addr);
-    const void* ip;
-    size_t ipLen;
-
-    WOLFSSL_ENTER("mbedtls_net_accept");
-
-    if (bind_ctx == NULL || client_ctx == NULL || bind_ctx->fd < 0) {
-        return MBEDTLS_ERR_NET_INVALID_CONTEXT;
-    }
-    client_ctx->fd = (int)accept(bind_ctx->fd, (struct sockaddr*)&addr,
-        &addrLen);
-    if (client_ctx->fd < 0) {
-        return MBEDTLS_ERR_NET_ACCEPT_FAILED;
-    }
-    if (client_ip == NULL) {
-        return 0;
-    }
-
-    if (addr.ss_family == AF_INET) {
-        ip = &((struct sockaddr_in*)&addr)->sin_addr;
-        ipLen = sizeof(struct in_addr);
-    }
-    else {
-        ip = &((struct sockaddr_in6*)&addr)->sin6_addr;
-        ipLen = sizeof(struct in6_addr);
-    }
-    *cip_len = ipLen;
-    if (buf_size < ipLen) {
-        return MBEDTLS_ERR_NET_BUFFER_TOO_SMALL;
-    }
-    XMEMCPY(client_ip, ip, ipLen);
-    return 0;
-}
-
-void mbedtls_net_usleep(unsigned long usec)
-{
-    WOLFSSL_ENTER("mbedtls_net_usleep");
-
-#ifdef USE_WINDOWS_API
-    Sleep((DWORD)((usec + 999) / 1000));
-#else
-    struct timeval tv;
-
-    tv.tv_sec = (time_t)(usec / 1000000);
-    tv.tv_usec = (suseconds_t)(usec % 1000000);
-    (void)select(0, NULL, NULL, NULL, &tv);
-#endif /* USE_WINDOWS_API */
-}
-
-void mbedtls_net_close(mbedtls_net_context* ctx)
-{
-    WOLFSSL_ENTER("mbedtls_net_close");
-
-    if (ctx != NULL && ctx->fd >= 0) {
-        CloseSocket(ctx->fd);
-        ctx->fd = -1;
-    }
-}
-
-/* Also ends the connection for a forked process that shares the socket */
-void mbedtls_net_free(mbedtls_net_context* ctx)
-{
-    WOLFSSL_ENTER("mbedtls_net_free");
-
-    if (ctx != NULL && ctx->fd >= 0) {
-        (void)shutdown(ctx->fd, 2);
-    }
-    mbedtls_net_close(ctx);
-}
-
-int mbedtls_net_recv(void* ctx, unsigned char* buf, size_t len)
-{
-    mbedtls_net_context* net = (mbedtls_net_context*)ctx;
-    int ret;
-
-    WOLFSSL_ENTER("mbedtls_net_recv");
-
-    if (net == NULL || net->fd < 0) {
-        return MBEDTLS_ERR_NET_INVALID_CONTEXT;
-    }
-    ret = wolfIO_Recv(net->fd, (char*)buf, (int)len, 0);
-    if (ret >= 0) {
-        return ret;
-    }
-    return MbedIoErr(ret, MBED_IO_RECV, 0);
-}
-
-int mbedtls_net_send(void* ctx, const unsigned char* buf, size_t len)
-{
-    mbedtls_net_context* net = (mbedtls_net_context*)ctx;
-    int ret;
-
-    WOLFSSL_ENTER("mbedtls_net_send");
-
-    if (net == NULL || net->fd < 0) {
-        return MBEDTLS_ERR_NET_INVALID_CONTEXT;
-    }
-    ret = wolfIO_Send(net->fd, (char*)(wc_ptr_t)buf, (int)len, 0);
-    if (ret >= 0) {
-        return ret;
-    }
-    return MbedIoErr(ret, MBED_IO_SEND, 0);
-}
-#endif /* USE_WOLFSSL_IO */
 
 void mbedtls_x509_crt_init(mbedtls_x509_crt* crt)
 {
@@ -507,8 +286,9 @@ void mbedtls_x509_crt_free(mbedtls_x509_crt* crt)
     }
 }
 
-/* The number that failed if any parsed, else an error. Input without a PEM
- * header is DER, and PEM need not end with a NUL. */
+/* Returns 0 if all certificates parse, the number that failed if some parse,
+ * else an error. Input without a PEM header is DER. Unlike Mbed TLS, PEM
+ * need not be NUL terminated. */
 int mbedtls_x509_crt_parse(mbedtls_x509_crt* chain,
     const unsigned char* buf, size_t buflen)
 {
@@ -538,7 +318,7 @@ int mbedtls_x509_crt_parse(mbedtls_x509_crt* chain,
                 der->length);
         }
         else {
-            ret = MbedCrtErr(ret);
+            ret = MbedCertErr(ret);
         }
         wc_FreeDer(&der);
         if (ret == MBEDTLS_ERR_X509_ALLOC_FAILED) {
@@ -583,7 +363,7 @@ int mbedtls_x509_crt_parse_der(mbedtls_x509_crt* chain,
         return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
     }
 
-    ret = MbedCrtCheck(buf, &buflen);
+    ret = MbedCertCheck(buf, &buflen);
     if (ret != 0) {
         return ret;
     }
@@ -670,7 +450,8 @@ void mbedtls_ssl_conf_authmode(mbedtls_ssl_config* conf, int authmode)
         return;
     }
     conf->authmode = authmode;
-    wolfSSL_CTX_set_verify(conf->ctx, modes[authmode], MbedVerifyCb);
+    wolfSSL_CTX_set_verify(conf->ctx, modes[authmode],
+        (authmode == MBEDTLS_SSL_VERIFY_NONE) ? NULL : MbedVerifyCb);
 }
 
 int mbedtls_ssl_config_defaults(mbedtls_ssl_config* conf,
@@ -717,6 +498,7 @@ int mbedtls_ssl_config_defaults(mbedtls_ssl_config* conf,
 
     wolfSSL_CTX_free(conf->ctx);
     conf->err = 0;
+    conf->endpoint = endpoint;
     conf->ctx = wolfSSL_CTX_new(methods[i].method());
     if (conf->ctx == NULL) {
         return MBEDTLS_ERR_SSL_ALLOC_FAILED;
@@ -850,16 +632,24 @@ static int MbedSetHostname(WOLFSSL* ssl, const char* hostname)
     return ret;
 }
 
-/* A new WOLFSSL from the config, with this context's callbacks and host
- * name */
+/* Replaces the WOLFSSL with a new one from the config, with this context's
+ * callbacks and host name */
 static int MbedSslNew(mbedtls_ssl_context* ssl)
 {
+    if (ssl->conf->err != 0) {
+        return ssl->conf->err;
+    }
+    if (ssl->conf->ctx == NULL) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    wolfSSL_free(ssl->ssl);
     ssl->ssl = wolfSSL_new(ssl->conf->ctx);
     if (ssl->ssl == NULL) {
         return MBEDTLS_ERR_SSL_ALLOC_FAILED;
     }
     ssl->authmode = ssl->conf->authmode;
     ssl->verify_flags = 0;
+    ssl->peer_cert = 0;
     wolfSSL_SSLSetIORecv(ssl->ssl, MbedRecvCb);
     wolfSSL_SSLSetIOSend(ssl->ssl, MbedSendCb);
     wolfSSL_SetIOReadCtx(ssl->ssl, ssl);
@@ -875,12 +665,6 @@ int mbedtls_ssl_setup(mbedtls_ssl_context* ssl, const mbedtls_ssl_config* conf)
     if (ssl == NULL || conf == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
-    if (conf->err != 0) {
-        return conf->err;
-    }
-    if (conf->ctx == NULL) {
-        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
-    }
     ssl->conf = conf;
     return MbedSslNew(ssl);
 }
@@ -893,7 +677,6 @@ int mbedtls_ssl_session_reset(mbedtls_ssl_context* ssl)
     if (ssl == NULL || ssl->conf == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
-    wolfSSL_free(ssl->ssl);
     return MbedSslNew(ssl);
 }
 
@@ -911,12 +694,11 @@ void mbedtls_ssl_set_bio(mbedtls_ssl_context* ssl, void* p_bio,
     }
 }
 
-/* Before mbedtls_ssl_setup too, as in Mbed TLS */
+/* Before mbedtls_ssl_setup too, as in Mbed TLS. NULL skips the name check. */
 int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname)
 {
     char* copy = NULL;
     size_t len;
-    int ret = 0;
 
     WOLFSSL_ENTER("mbedtls_ssl_set_hostname");
 
@@ -928,24 +710,37 @@ int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname)
         if (len > MBEDTLS_SSL_MAX_HOST_NAME_LEN) {
             return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
         }
-        if (ssl->ssl != NULL) {
-            ret = MbedSetHostname(ssl->ssl, hostname);
+        copy = (char*)XMALLOC(len + 1, NULL, DYNAMIC_TYPE_DOMAIN);
+        if (copy == NULL) {
+            return MBEDTLS_ERR_SSL_ALLOC_FAILED;
         }
-        if (ret == 0) {
-            copy = (char*)XMALLOC(len + 1, NULL, DYNAMIC_TYPE_DOMAIN);
-            if (copy == NULL) {
-                ret = MBEDTLS_ERR_SSL_ALLOC_FAILED;
-            }
-        }
-        if (ret == 0) {
-            XMEMCPY(copy, hostname, len + 1);
-        }
+        XMEMCPY(copy, hostname, len + 1);
     }
-    if (ret == 0) {
-        XFREE(ssl->hostname, NULL, DYNAMIC_TYPE_DOMAIN);
-        ssl->hostname = copy;
+    XFREE(ssl->hostname, NULL, DYNAMIC_TYPE_DOMAIN);
+    ssl->hostname = copy;
+    ssl->hostname_set = 1;
+
+    if (ssl->ssl == NULL) {
+        return 0;
     }
-    return ret;
+    /* wolfSSL cannot remove a host name, so NULL needs a new WOLFSSL */
+    return (copy != NULL) ? MbedSetHostname(ssl->ssl, copy) :
+        MbedSslNew(ssl);
+}
+
+/* As in Mbed TLS 4.x, a client that verifies the server needs
+ * mbedtls_ssl_set_hostname() first */
+static int MbedSslCheck(const mbedtls_ssl_context* ssl)
+{
+    if (ssl == NULL || ssl->conf == NULL || ssl->ssl == NULL) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    if (ssl->conf->endpoint == MBEDTLS_SSL_IS_CLIENT &&
+            ssl->authmode == MBEDTLS_SSL_VERIFY_REQUIRED &&
+            !ssl->hostname_set) {
+        return MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME;
+    }
+    return 0;
 }
 
 int mbedtls_ssl_handshake(mbedtls_ssl_context* ssl)
@@ -954,8 +749,9 @@ int mbedtls_ssl_handshake(mbedtls_ssl_context* ssl)
 
     WOLFSSL_ENTER("mbedtls_ssl_handshake");
 
-    if (ssl == NULL) {
-        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    ret = MbedSslCheck(ssl);
+    if (ret != 0) {
+        return ret;
     }
     ret = wolfSSL_negotiate(ssl->ssl);
     return (ret == WOLFSSL_SUCCESS) ? 0 : MbedSslErr(ssl, ret);
@@ -975,8 +771,10 @@ uint32_t mbedtls_ssl_get_verify_result(const mbedtls_ssl_context* ssl)
     if (!wolfSSL_is_init_finished(ssl->ssl)) {
         return 0xFFFFFFFF;
     }
-    return (ssl->authmode == MBEDTLS_SSL_VERIFY_NONE) ?
-        MBEDTLS_X509_BADCERT_SKIP_VERIFY : 0;
+    if (ssl->authmode == MBEDTLS_SSL_VERIFY_NONE) {
+        return MBEDTLS_X509_BADCERT_SKIP_VERIFY;
+    }
+    return ssl->peer_cert ? 0 : MBEDTLS_X509_BADCERT_MISSING;
 }
 
 /* The IANA name, such as TLS_AES_128_GCM_SHA256, where Mbed TLS has its own,
@@ -997,11 +795,17 @@ int mbedtls_ssl_read(mbedtls_ssl_context* ssl, unsigned char* buf, size_t len)
 
     WOLFSSL_ENTER("mbedtls_ssl_read");
 
-    if (ssl == NULL) {
-        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    ret = MbedSslCheck(ssl);
+    if (ret != 0) {
+        return ret;
     }
     ret = wolfSSL_read(ssl->ssl, buf, (int)len);
-    return (ret > 0) ? ret : MbedSslErr(ssl, ret);
+    if (ret > 0) {
+        return ret;
+    }
+    ret = MbedSslErr(ssl, ret);
+    /* As in Mbed TLS, EOF without close_notify reads 0 */
+    return (ret == MBEDTLS_ERR_SSL_CONN_EOF) ? 0 : ret;
 }
 
 int mbedtls_ssl_write(mbedtls_ssl_context* ssl,
@@ -1011,8 +815,9 @@ int mbedtls_ssl_write(mbedtls_ssl_context* ssl,
 
     WOLFSSL_ENTER("mbedtls_ssl_write");
 
-    if (ssl == NULL) {
-        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    ret = MbedSslCheck(ssl);
+    if (ret != 0) {
+        return ret;
     }
     ret = wolfSSL_write(ssl->ssl, buf, (int)len);
     return (ret > 0) ? ret : MbedSslErr(ssl, ret);

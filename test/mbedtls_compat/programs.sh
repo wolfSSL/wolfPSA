@@ -1,12 +1,12 @@
 #!/bin/sh
 
-# Run x509_crt_test.c and pk_test.c on Mbed TLS's test data, then the Mbed TLS
-# migration guide client, client-tls-mbedtls.c, and Mbed TLS's sample
-# programs, built unchanged from MBEDTLS_PATH, against the wolfSSL example
-# server, one server per case. A program missing a feature macro prints
-# "... not defined" and exits 0, so that output fails the case, and a case
-# can require a line of output. A case whose wrapper, such as faketime, is
-# not installed is skipped. Then Mbed TLS's server programs, against the
+# Run x509_crt_test.c, pk_test.c and ssl_test.c on Mbed TLS's test data, then
+# the Mbed TLS migration guide client, client-tls-mbedtls.c, and Mbed TLS's
+# sample programs, built unchanged from MBEDTLS_PATH, against the wolfSSL
+# example server, one server per case. A program missing a feature macro
+# prints "... not defined" and exits 0, so that output fails the case, and a
+# case can require a line of output. A case whose wrapper, such as faketime,
+# is not installed is skipped. Then Mbed TLS's server programs, against the
 # wolfSSL example client and ssl_client1. WRAP prefixes the programs. Run by
 # the Makefile in this directory, which sets the paths.
 
@@ -15,6 +15,8 @@
 
 DATA=$MBEDTLS_PATH/framework/data_files
 READY=$BUILD_DIR/server-ready
+# With ASAN=1: faketime preloads a library, which ASan refuses by default
+export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}verify_asan_link_order=0"
 FAILS=0
 SKIPS=0
 
@@ -23,7 +25,7 @@ if [ ! -f "$DATA/server5.crt" ]; then
     exit 1
 fi
 
-TESTS="x509_crt_test pk_test"
+TESTS="x509_crt_test pk_test ssl_test"
 if [ "$MBEDTLS_THREADING_C" != 1 ]; then
     echo "SKIP: ssl_pthread_server: MBEDTLS_THREADING_C=1 not set"
     SKIPS=$((SKIPS + 1))

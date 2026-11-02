@@ -48,12 +48,14 @@
 
 /* Mbed TLS defines -135 and -141 as PSA_ERROR_INVALID_ARGUMENT and
  * PSA_ERROR_INSUFFICIENT_MEMORY */
+#define MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME -0x5D80
 #define MBEDTLS_ERR_SSL_TIMEOUT              -0x6800
 #define MBEDTLS_ERR_SSL_WANT_WRITE           -0x6880
 #define MBEDTLS_ERR_SSL_WANT_READ            -0x6900
 #define MBEDTLS_ERR_SSL_INTERNAL_ERROR       -0x6C00
 #define MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE  -0x7080
 #define MBEDTLS_ERR_SSL_CONN_EOF             -0x7280
+#define MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE -0x7480
 #define MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY    -0x7880
 #define MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET -0x7B00
 #define MBEDTLS_ERR_SSL_HW_ACCEL_FAILED      -0x7F80
@@ -72,20 +74,23 @@ typedef int mbedtls_ssl_recv_timeout_t(void* ctx, unsigned char* buf,
 
 typedef struct mbedtls_ssl_config {
     struct WOLFSSL_CTX* ctx;
-    int err; /* first failure of a void conf call, see mbedtls_ssl_setup() */
+    int err; /* first failed void conf call, returned at setup and reset */
     int authmode;
+    int endpoint;
 } mbedtls_ssl_config;
 
 typedef struct mbedtls_ssl_context {
     const mbedtls_ssl_config* conf;
     struct WOLFSSL* ssl;
     char* hostname; /* applied again by mbedtls_ssl_session_reset() */
+    int hostname_set; /* mbedtls_ssl_set_hostname() was called */
     void* p_bio;
     mbedtls_ssl_send_t* f_send;
     mbedtls_ssl_recv_t* f_recv;
     mbedtls_ssl_recv_timeout_t* f_recv_timeout;
     int authmode;
     uint32_t verify_flags; /* MBEDTLS_X509_BADCERT_* from the handshake */
+    int peer_cert; /* the peer sent a certificate */
 } mbedtls_ssl_context;
 
 void mbedtls_ssl_config_init(mbedtls_ssl_config* conf);
