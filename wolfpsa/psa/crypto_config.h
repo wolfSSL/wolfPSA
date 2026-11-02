@@ -44,6 +44,9 @@
 #define PSA_WANT_KEY_TYPE_ML_DSA 1
 #define PSA_WANT_KEY_TYPE_ML_KEM 1
 
+/* TF-PSA-Crypto platform option: the platform has stdio files */
+#define MBEDTLS_FS_IO
+
 #endif /* CONFIG_WOLFPSA */
 
 #endif
