@@ -313,6 +313,7 @@ mbedtls-compat-test: $(LIBNAME)
 		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
 		MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH)) \
 		BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
+		PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
 		WOLFPSA_LDFLAGS="$(LDFLAGS)" check
 else
 mbedtls-compat-test:

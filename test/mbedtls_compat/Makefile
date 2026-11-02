@@ -11,9 +11,10 @@ CFLAGS ?= -O2
 WARNFLAGS ?= -Wall
 
 # Clients use the layer in libwolfpsa.a. WOLFPSA_LDFLAGS has what its build
-# needs at link, such as -fsanitize=address with ASAN=1.
+# needs at link, such as -fsanitize=address with ASAN=1. PSA_CONFIG_DIR has
+# the generated PSA_WANT_* header.
 WOLFPSA_LIB := $(WOLFPSA_PATH)/libwolfpsa.a
-LAYER_FLAGS := -I$(WOLFPSA_PATH)/wolfpsa
+LAYER_FLAGS := -I$(WOLFPSA_PATH)/wolfpsa -I$(PSA_CONFIG_DIR)
 LAYER_LIBS := $(WOLFPSA_LIB) -lm $(WOLFPSA_LDFLAGS)
 
 # The peers are the wolfSSL example server and client, from a wolfSSL
