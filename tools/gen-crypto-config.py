@@ -8,7 +8,8 @@
 # configuration, by preprocessing psa_want_probe.c with the same flags as the
 # rest of the build. The result is the consumer-visible PSA_WANT_ surface:
 # exactly the algorithm families wolfCrypt has enabled AND wolfPSA implements.
-# It also has MBEDTLS_FS_IO unless the build defines NO_FILESYSTEM.
+# It also has the TF-PSA-Crypto options the build supports, such as
+# MBEDTLS_FS_IO.
 #
 # Python (not shell) to fit the Zephyr build ecosystem, invoked via CMake's
 # PYTHON_EXECUTABLE from wolfPSA's zephyr/CMakeLists.txt, and by the Makefile.
@@ -41,7 +42,7 @@ HEADER = """\
  * derived from the wolfCrypt features actually enabled in this build intersected
  * with what wolfPSA implements. wolfpsa/psa/crypto.h -> crypto_config.h includes
  * it, so PSA sizing macros (crypto_sizes.h) and consumer PSA_WANT_-gated code
- * track the real build. MBEDTLS_FS_IO is defined unless NO_FILESYSTEM is.
+ * track the real build, as do the MBEDTLS_ options it defines.
  */
 
 #ifndef {guard}
@@ -53,8 +54,8 @@ FOOTER = "\n#endif /* {guard} */\n"
 
 EMIT_TAG = "__WPSA_EMIT__"
 WANT_RE = re.compile(r"PSA_WANT_[A-Z0-9_]+")
-# TF-PSA-Crypto platform options, defined without a value as in TF-PSA
-OPTION_RE = re.compile(r"MBEDTLS_FS_IO")
+# TF-PSA-Crypto options, defined without a value as in TF-PSA
+OPTION_RE = re.compile(r"MBEDTLS_[A-Z0-9_]+")
 
 
 def main(argv):
@@ -109,8 +110,11 @@ def main(argv):
                 return 0
     except OSError:
         pass
-    with open(out_path, "w") as out_file:
+    # Replace atomically, so a parallel compile never reads a partial header
+    tmp_path = out_path + ".tmp"
+    with open(tmp_path, "w") as out_file:
         out_file.write(text)
+    os.replace(tmp_path, out_path)
 
     return 0
 

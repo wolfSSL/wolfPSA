@@ -66,6 +66,12 @@ You can override the wolfSSL source location:
 make wolfPSA WOLFSSL_PATH=~/src/wolfssl
 ```
 
+The build generates the `PSA_WANT_*` macros from the wolfCrypt configuration
+into `$(BUILD_DIR)/include/crypto_config_generated.h` (`build/include` by
+default), using python3. Set `PYTHON` to use another interpreter. Code that
+includes `<psa/crypto.h>` needs that directory on its include path next to
+`wolfpsa/`, and builds only after `make` has generated the header.
+
 ## Testing (PSA Architecture Test Suite)
 
 See `test-psa-api/README.md` for instructions on how to run the tests.

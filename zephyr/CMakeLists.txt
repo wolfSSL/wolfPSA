@@ -57,9 +57,10 @@ if(CONFIG_WOLFPSA)
   set(WOLFPSA_GEN_PY  ${WOLFPSA_DIR}/tools/gen-crypto-config.py)
   file(MAKE_DIRECTORY ${WOLFPSA_GEN_DIR})
 
+  # __ASSEMBLER__: settings.h then skips the Zephyr kernel headers
   set(_wolfpsa_probe_flags
-    -D__ZEPHYR__=1 -DWOLFSSL_USER_SETTINGS -DWOLFSSL_ZEPHYR
-    -I${WOLFPSA_DIR} -I${WOLFPSA_DIR}/wolfpsa
+    -D__ZEPHYR__=1 -D__ASSEMBLER__ -DWOLFSSL_USER_SETTINGS -DWOLFSSL_ZEPHYR
+    -I${_wolfssl_mod_dir} -I${WOLFPSA_DIR} -I${WOLFPSA_DIR}/wolfpsa
     -I${_wolfssl_mod_dir}/zephyr
     -imacros ${_wolfpsa_autoconf})
   # If the user supplied their own wolfCrypt config, the probe must see it too.

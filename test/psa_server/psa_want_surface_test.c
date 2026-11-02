@@ -62,6 +62,22 @@ static psa_status_t run_export(psa_key_id_t key)
     return status;
 }
 
+static psa_status_t run_sign(psa_key_id_t key, psa_algorithm_t alg)
+{
+    uint8_t msg[16];
+    uint8_t sig[PSA_SIGNATURE_MAX_SIZE];
+    size_t len = 0;
+    psa_status_t status;
+
+    memset(msg, 0, sizeof(msg));
+    status = run_export(key);
+    if (status == PSA_SUCCESS) {
+        status = psa_sign_message(key, alg, msg, sizeof(msg), sig,
+            sizeof(sig), &len);
+    }
+    return status;
+}
+
 static psa_status_t run_ecdh(psa_key_id_t key)
 {
     uint8_t pub[PSA_EXPORT_PUBLIC_KEY_MAX_SIZE];
@@ -126,6 +142,10 @@ static psa_status_t run_case(const struct want_case* c)
     else if (PSA_ALG_IS_MAC(c->alg)) {
         psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_SIGN_MESSAGE);
     }
+    else if (PSA_ALG_IS_SIGN(c->alg)) {
+        psa_set_key_usage_flags(&attr,
+            PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_EXPORT);
+    }
     else {
         psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_EXPORT);
     }
@@ -141,6 +161,9 @@ static psa_status_t run_case(const struct want_case* c)
         else if (PSA_ALG_IS_MAC(c->alg)) {
             status = run_mac(key, c->alg);
         }
+        else if (PSA_ALG_IS_SIGN(c->alg)) {
+            status = run_sign(key, c->alg);
+        }
         else {
             status = run_export(key);
         }
@@ -154,7 +177,9 @@ static void check_case(const struct want_case* c)
     psa_status_t status = run_case(c);
     int supported = (status == PSA_SUCCESS);
 
-    if (status != PSA_SUCCESS && status != PSA_ERROR_NOT_SUPPORTED) {
+    /* Without its PSA_WANT_ macros, a case may fail with any error */
+    if (status != PSA_SUCCESS && status != PSA_ERROR_NOT_SUPPORTED &&
+            c->want != 0) {
         printf("FAIL %s: status %d\n", c->name, (int)status);
         failures++;
     }
@@ -177,11 +202,18 @@ int main(void)
 {
     const psa_key_type_t ecc =
         PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1);
+    const psa_key_type_t k1 =
+        PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_K1);
+    const psa_key_type_t bp =
+        PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_BRAINPOOL_P_R1);
     const psa_key_type_t mont =
         PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_MONTGOMERY);
     const psa_key_type_t ed =
         PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_TWISTED_EDWARDS);
+    const psa_algorithm_t ecdsaAlg = PSA_ALG_ECDSA(PSA_ALG_SHA_256);
     const int ecdh = IS_DEFINED(PSA_WANT_ALG_ECDH) &&
+        IS_DEFINED(PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE);
+    const int ecdsa = IS_DEFINED(PSA_WANT_ALG_ECDSA) &&
         IS_DEFINED(PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE);
     const int eddsa = IS_DEFINED(PSA_WANT_ALG_PURE_EDDSA) &&
         IS_DEFINED(PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE);
@@ -194,14 +226,31 @@ int main(void)
             ecdh && IS_DEFINED(PSA_WANT_ECC_SECP_R1_384), NOT_CHECKED },
         { "secp521r1 ECDH", ecc, 521, PSA_ALG_ECDH,
             ecdh && IS_DEFINED(PSA_WANT_ECC_SECP_R1_521), NOT_CHECKED },
+        { "secp256r1 ECDSA", ecc, 256, ecdsaAlg,
+            ecdsa && IS_DEFINED(PSA_WANT_ECC_SECP_R1_256), NOT_CHECKED },
+        { "secp384r1 ECDSA", ecc, 384, ecdsaAlg,
+            ecdsa && IS_DEFINED(PSA_WANT_ECC_SECP_R1_384), NOT_CHECKED },
+        { "secp521r1 ECDSA", ecc, 521, ecdsaAlg,
+            ecdsa && IS_DEFINED(PSA_WANT_ECC_SECP_R1_521), NOT_CHECKED },
+        { "secp256k1 ECDH", k1, 256, PSA_ALG_ECDH,
+            ecdh && IS_DEFINED(PSA_WANT_ECC_SECP_K1_256), NOT_CHECKED },
+        { "brainpoolP256r1 ECDH", bp, 256, PSA_ALG_ECDH,
+            ecdh && IS_DEFINED(PSA_WANT_ECC_BRAINPOOL_P_R1_256),
+            NOT_CHECKED },
+        { "brainpoolP384r1 ECDH", bp, 384, PSA_ALG_ECDH,
+            ecdh && IS_DEFINED(PSA_WANT_ECC_BRAINPOOL_P_R1_384),
+            NOT_CHECKED },
+        { "brainpoolP512r1 ECDH", bp, 512, PSA_ALG_ECDH,
+            ecdh && IS_DEFINED(PSA_WANT_ECC_BRAINPOOL_P_R1_512),
+            NOT_CHECKED },
         { "X25519", mont, 255, PSA_ALG_ECDH,
             ecdh && IS_DEFINED(PSA_WANT_ECC_MONTGOMERY_255), NOT_CHECKED },
         { "X448", mont, 448, PSA_ALG_ECDH,
             ecdh && IS_DEFINED(PSA_WANT_ECC_MONTGOMERY_448), NOT_CHECKED },
-        { "Ed25519 export", ed, 255, PSA_ALG_PURE_EDDSA,
+        { "Ed25519", ed, 255, PSA_ALG_PURE_EDDSA,
             eddsa && IS_DEFINED(PSA_WANT_ECC_TWISTED_EDWARDS_255),
             NOT_CHECKED },
-        { "Ed448 export", ed, 448, PSA_ALG_PURE_EDDSA,
+        { "Ed448", ed, 448, PSA_ALG_PURE_EDDSA,
             eddsa && IS_DEFINED(PSA_WANT_ECC_TWISTED_EDWARDS_448),
             NOT_CHECKED },
         { "AES-128-GCM", PSA_KEY_TYPE_AES, 128, PSA_ALG_GCM,
@@ -222,8 +271,13 @@ int main(void)
         { "ML-KEM-1024 export", PSA_KEY_TYPE_ML_KEM_KEY_PAIR, 1024,
             PSA_ALG_ML_KEM, FAMILY_WANT(IS_DEFINED(PSA_WANT_KEY_TYPE_ML_KEM)),
             NOT_CHECKED },
-        { "ML-DSA-87 export", PSA_KEY_TYPE_ML_DSA_KEY_PAIR, 256,
+        { "ML-DSA-87", PSA_KEY_TYPE_ML_DSA_KEY_PAIR, 256,
             PSA_ALG_ML_DSA, FAMILY_WANT(IS_DEFINED(PSA_WANT_KEY_TYPE_ML_DSA)),
+            NOT_CHECKED },
+        { "RSA-2048 PKCS#1 v1.5", PSA_KEY_TYPE_RSA_KEY_PAIR, 2048,
+            PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256),
+            IS_DEFINED(PSA_WANT_ALG_RSA_PKCS1V15_SIGN) &&
+                IS_DEFINED(PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_GENERATE),
             NOT_CHECKED },
     };
     size_t i;

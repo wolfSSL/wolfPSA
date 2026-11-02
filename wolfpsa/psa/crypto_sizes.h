@@ -318,6 +318,16 @@
 #undef PSA_SIGNATURE_MAX_SIZE
 #define PSA_SIGNATURE_MAX_SIZE      4627u
 #endif
+/* Ed448 (114 bytes) and Ed25519 (64 bytes) signatures */
+#if defined(PSA_WANT_ECC_TWISTED_EDWARDS_448) && \
+    (114u > PSA_SIGNATURE_MAX_SIZE)
+#undef PSA_SIGNATURE_MAX_SIZE
+#define PSA_SIGNATURE_MAX_SIZE      114u
+#elif defined(PSA_WANT_ECC_TWISTED_EDWARDS_255) && \
+    (64u > PSA_SIGNATURE_MAX_SIZE)
+#undef PSA_SIGNATURE_MAX_SIZE
+#define PSA_SIGNATURE_MAX_SIZE      64u
+#endif
 
 
 #define PSA_ASYMMETRIC_ENCRYPT_OUTPUT_SIZE(key_type, key_bits, alg)     \
@@ -442,6 +452,15 @@
 #undef PSA_EXPORT_KEY_PAIR_MAX_SIZE
 #define PSA_EXPORT_KEY_PAIR_MAX_SIZE    \
     PSA_KEY_EXPORT_FFDH_KEY_PAIR_MAX_SIZE(PSA_VENDOR_FFDH_MAX_KEY_BITS)
+#endif
+/* ML-KEM and ML-DSA key pairs export as their 64 and 32 byte seeds */
+#if defined(PSA_WANT_KEY_TYPE_ML_KEM) && (64u > PSA_EXPORT_KEY_PAIR_MAX_SIZE)
+#undef PSA_EXPORT_KEY_PAIR_MAX_SIZE
+#define PSA_EXPORT_KEY_PAIR_MAX_SIZE    64u
+#endif
+#if defined(PSA_WANT_KEY_TYPE_ML_DSA) && (32u > PSA_EXPORT_KEY_PAIR_MAX_SIZE)
+#undef PSA_EXPORT_KEY_PAIR_MAX_SIZE
+#define PSA_EXPORT_KEY_PAIR_MAX_SIZE    32u
 #endif
 
 

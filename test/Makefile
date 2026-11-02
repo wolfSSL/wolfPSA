@@ -56,6 +56,7 @@ ifneq ($(WOLFSSL_BUILD_DIR),)
 CPPFLAGS += -I$(WOLFSSL_BUILD_DIR)
 endif
 CPPFLAGS += -I$(WOLFPSA_PATH) -I$(WOLFPSA_PATH)/wolfpsa
+CPPFLAGS += -I$(WOLFPSA_PATH)/$(BUILD_DIR)/include
 CPPFLAGS += -I$(WOLFPSA_PATH)/src
 CPPFLAGS += -I$(WOLFPSA_PATH)/test/psa_server
 
@@ -214,7 +215,7 @@ CRYPTOCB_BUILD_DIR := $(abspath .)/build-cryptocb$(if $(SANITIZE_FLAGS),-asan)
 CRYPTOCB_LIB := $(CRYPTOCB_BUILD_DIR)/libwolfpsa-cryptocb.a
 CRYPTOCB_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLF_CRYPTO_CB \
 	-I$(abspath $(WOLFSSL_PATH)) -I$(WOLFPSA_ABS) -I$(WOLFPSA_ABS)/wolfpsa \
-	-I$(WOLFPSA_ABS)/src
+	-I$(WOLFPSA_ABS)/src -I$(CRYPTOCB_BUILD_DIR)/include
 
 # FORCE, because only the sub-make knows whether a library source changed.
 # Without it make treats the existing archive as permanently up to date and
@@ -305,7 +306,8 @@ rebuild-wolfssl-psa: $(WOLFPSA_PATH)/libwolfpsa.so
 		--with-psa-lib="$(WOLFPSA_ABS)" \
 		--with-psa-lib-name=wolfpsa \
 		CFLAGS="-O2 $(DEBUG_FLAGS) $(SANITIZE_FLAGS)" \
-		CPPFLAGS="-DWOLFSSL_PSA_NO_RNG -DWOLFSSL_PSA_NO_HASH -DWOLFSSL_PSA_NO_AES" \
+		CPPFLAGS="-DWOLFSSL_PSA_NO_RNG -DWOLFSSL_PSA_NO_HASH -DWOLFSSL_PSA_NO_AES \
+			-I$(WOLFPSA_ABS)/$(BUILD_DIR)/include" \
 		LDFLAGS="$(SANITIZE_FLAGS) -Wl,-rpath,$(WOLFPSA_ABS) -Wl,-rpath-link,$(WOLFPSA_ABS)"
 	$(MAKE) -C "$(WOLFSSL_PATH)" CFLAGS="-O2 $(DEBUG_FLAGS) $(SANITIZE_FLAGS)" LDFLAGS="$(SANITIZE_FLAGS) -Wl,-rpath,$(WOLFPSA_ABS) -Wl,-rpath-link,$(WOLFPSA_ABS)" src/libwolfssl.la
 

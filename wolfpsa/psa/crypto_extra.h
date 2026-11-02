@@ -58,7 +58,8 @@ static inline int mbedtls_svc_key_id_is_null(mbedtls_svc_key_id_t key)
 
 /* Destroy all volatile keys and return to the state before psa_crypto_init().
  * Not thread safe: call when no other PSA call is in progress. Also
- * unregisters crypto callbacks; register them again after psa_crypto_init(). */
+ * unregisters crypto callbacks when PSA held the last wolfCrypt_Init()
+ * reference; register them again after psa_crypto_init(). */
 void mbedtls_psa_crypto_free(void);
 
 #ifdef __cplusplus

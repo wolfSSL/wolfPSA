@@ -92,14 +92,14 @@ jobs:
             modifiers: "-HAVE_ECC -HAVE_ECC_ENCRYPT"
           - name: rsa-1024
             modifiers: "-WOLFSSL_SP_1024 -RSA_MIN_SIZE +RSA_MIN_SIZE=2048"
-          # wolfPSA's own sources only: the bundled wolfCrypt sources do not
-          # build under WC_NO_RNG (asn.c trips -Wnonnull), which is a wolfSSL
-          # issue outside this lane's scope.
+          - name: no-rsa
+            modifiers: "+NO_RSA +ECC_USER_CURVES -WOLFSSL_HAVE_MLDSA"
           - name: no-rng
             modifiers: "+WC_NO_RNG +WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS"
             target: psa-objects
           - name: no-filesystem
             modifiers: "+NO_FILESYSTEM +WOLFPSA_CUSTOM_STORE"
+            target: libwolfpsa.a
 
     steps:
       - name: Check out wolfPSA
@@ -113,9 +113,10 @@ jobs:
       - name: Clone sibling wolfSSL
         run: git clone --depth 1 --branch ${{ matrix.wolfssl-ref }} https://github.com/wolfSSL/wolfssl ../wolfssl
 
+      # Builds the library, then runs the PSA_WANT_* surface test against it
       - name: Build ${{ matrix.config.name }}
         env:
-          BUILD_TARGET: ${{ matrix.config.target || 'libwolfpsa.so' }}
+          BUILD_TARGET: ${{ matrix.config.target || 'want-surface-test' }}
           # Fail on undefined symbols
           LDFLAGS: -Wl,-z,defs
         run: ./build-test/build-variant.sh "${{ matrix.config.name }}" ${{ matrix.config.modifiers }}

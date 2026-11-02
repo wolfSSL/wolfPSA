@@ -1,5 +1,4 @@
 build
-wolfpsa/psa/crypto_config_generated.h
 # gcov coverage artifacts (make cov)
 *.gcda
 *.gcno

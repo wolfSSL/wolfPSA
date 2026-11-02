@@ -192,6 +192,7 @@ psa_status_t psa_asymmetric_export_public_key_ecc(psa_key_type_t key_type,
                                                   size_t *output_length);
 #endif
 
+#ifndef NO_RSA
 static psa_status_t psa_wc_error_to_psa_status(int ret)
 {
     psa_status_t status;
@@ -224,6 +225,7 @@ static psa_status_t psa_wc_error_to_psa_status(int ret)
 
     return status;
 }
+#endif /* !NO_RSA */
 
 static psa_status_t wolfpsa_validate_stored_key_data_length(size_t
                                                             key_data_length)
