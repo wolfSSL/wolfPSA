@@ -149,7 +149,9 @@ Known differences from Mbed TLS:
 - `mbedtls_ssl_conf_ca_chain` leaves out a CA that wolfSSL does not load,
   such as an expired one. A peer certificate from that CA then fails as
   `NOT_TRUSTED`, where Mbed TLS reports `EXPIRED`.
-- IP address host names fail in `mbedtls_ssl_set_hostname`.
+- An IP address host name is matched against the certificate's IP address
+  SANs only. Mbed TLS also matches a DNS SAN with the same text, or the CN
+  of a certificate without SANs.
 - `mbedtls_ssl_set_hostname(ssl, NULL)` after `mbedtls_ssl_setup` starts a
   new connection, so call it before the handshake.
 - With `VERIFY_OPTIONAL`, a resumed session reports

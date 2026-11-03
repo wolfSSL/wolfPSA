@@ -101,7 +101,9 @@ wrong host, VERIFY_FAILED|$C|-S wrong.example.org $LO|$TLS13||1|$GOT -9984
 wrong CA, VERIFY_FAILED|$C|-A certs/ca-ecc-cert.pem $LO|$TLS13||1|$GOT -9984
 no CA file, X509_FILE_IO_ERROR|$C|-A certs/missing.pem $LO|$TLS13||1|$GOT -10496
 not a certificate, X509_INVALID_FORMAT|$C|-A README.md $LO|$TLS13||1|$GOT -8576
-IP address host, SSL_BAD_INPUT_DATA|$C|-S $LO $LO|$TLS13||1|$GOT -135
+IP address host|$C|-S $LO $LO|$TLS13||0|$GOT 0
+wrong IP address host, VERIFY_FAILED|$C|-S 127.0.0.2 $LO|$TLS13||1|$GOT -9984
+IPv6 address host, VERIFY_FAILED|$C|-S ::1 $LO|$TLS13||1|$GOT -9984
 mini_client|$P/mini_client||$SERVER5|$CA2_DATE|0|
 mini_client, expired CA, ssl_handshake_failed|$P/mini_client||$SERVER5||7|
 ssl_client1|$P/ssl_client1||$SERVER2||0|$VERIFY ok

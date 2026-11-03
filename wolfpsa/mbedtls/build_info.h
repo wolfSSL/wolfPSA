@@ -27,10 +27,20 @@
 
 #include "tf-psa-crypto/build_info.h"
 
+/* The Mbed TLS API version this layer follows */
+#define MBEDTLS_VERSION_MAJOR  4
+#define MBEDTLS_VERSION_MINOR  2
+#define MBEDTLS_VERSION_PATCH  0
+#define MBEDTLS_VERSION_NUMBER         0x04020000
+#define MBEDTLS_VERSION_STRING         "4.2.0"
+#define MBEDTLS_VERSION_STRING_FULL    "Mbed TLS 4.2.0"
+
 #define MBEDTLS_NET_C
 #define MBEDTLS_SSL_TLS_C
 #define MBEDTLS_SSL_CLI_C
 #define MBEDTLS_SSL_SRV_C
+#define MBEDTLS_SSL_PROTO_TLS1_2
+#define MBEDTLS_SSL_PROTO_TLS1_3
 #define MBEDTLS_X509_CRT_PARSE_C
 /* PEM certificates only, no mbedtls/pem.h */
 #define MBEDTLS_PEM_PARSE_C
