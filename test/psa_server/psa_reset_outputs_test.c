@@ -70,13 +70,33 @@ static void check_keys(void)
 {
     psa_key_attributes_t attrs = psa_key_attributes_init();
     psa_key_derivation_operation_t kdf = PSA_KEY_DERIVATION_OPERATION_INIT;
+    uint8_t buf[32];
     psa_key_id_t key;
+    size_t len;
     psa_status_t status;
 
+    memset(buf, 0, sizeof(buf));
     psa_set_key_type(&attrs, PSA_KEY_TYPE_NONE);
     psa_set_key_bits(&attrs, 128);
     CHECK_KEY(key, psa_generate_key(&attrs, &key));
+    CHECK_KEY(key, psa_generate_key_custom(&attrs, NULL, NULL, 0, &key));
     CHECK_KEY(key, psa_key_derivation_output_key(&attrs, &kdf, &key));
+    CHECK_KEY(key, psa_key_derivation_output_key_custom(&attrs, &kdf, NULL,
+                                                        NULL, 0, &key));
+
+    /* NULL arguments */
+    CHECK_KEY(key, psa_import_key(&attrs, NULL, 0, &key));
+    CHECK_KEY(key, psa_copy_key(MISSING_KEY, NULL, &key));
+    CHECK_KEY(key, psa_key_agreement(MISSING_KEY, buf, sizeof(buf),
+                                     PSA_ALG_ECDH, NULL, &key));
+    CHECK_KEY(key, psa_encapsulate(MISSING_KEY, PSA_ALG_ML_KEM, NULL, &key,
+                                   buf, sizeof(buf), &len));
+    CHECK_LENGTH(len, psa_encapsulate(MISSING_KEY, PSA_ALG_ML_KEM, NULL, &key,
+                                      buf, sizeof(buf), &len));
+    CHECK_KEY(key, psa_decapsulate(MISSING_KEY, PSA_ALG_ML_KEM, NULL, 0,
+                                   &attrs, &key));
+    CHECK_KEY(key, psa_unwrap_key(&attrs, MISSING_KEY, PSA_ALG_KW, NULL, 0,
+                                  &key));
 
     psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
     psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT);
@@ -97,6 +117,7 @@ static void check_lengths(void)
 {
     const psa_algorithm_t ecdsa = PSA_ALG_ECDSA(PSA_ALG_SHA_256);
     const psa_algorithm_t rsa = PSA_ALG_RSA_PKCS1V15_CRYPT;
+    const psa_algorithm_t hmac = PSA_ALG_HMAC(PSA_ALG_SHA_256);
     uint8_t in[32];
     uint8_t out[64];
     size_t len;
@@ -120,6 +141,49 @@ static void check_lengths(void)
     CHECK_LENGTH(len, psa_raw_key_agreement(PSA_ALG_ECDH, MISSING_KEY, in,
                                             sizeof(in), out, sizeof(out),
                                             &len));
+    CHECK_LENGTH(len, psa_wrap_key(MISSING_KEY, PSA_ALG_KW, MISSING_KEY, out,
+                                   sizeof(out), &len));
+    CHECK_LENGTH(len, psa_mac_compute(MISSING_KEY, hmac, in, sizeof(in), out,
+                                      sizeof(out), &len));
+    CHECK_LENGTH(len, psa_cipher_encrypt(MISSING_KEY, PSA_ALG_CTR, in,
+                                         sizeof(in), out, sizeof(out), &len));
+    CHECK_LENGTH(len, psa_cipher_decrypt(MISSING_KEY, PSA_ALG_CTR, in,
+                                         sizeof(in), out, sizeof(out), &len));
+    CHECK_LENGTH(len, psa_aead_encrypt(MISSING_KEY, PSA_ALG_GCM, in, 12, NULL,
+                                       0, in, sizeof(in), out, sizeof(out),
+                                       &len));
+    CHECK_LENGTH(len, psa_aead_decrypt(MISSING_KEY, PSA_ALG_GCM, in, 12, NULL,
+                                       0, in, sizeof(in), out, sizeof(out),
+                                       &len));
+}
+
+/* Each operation is inactive, so every call fails */
+static void check_multipart(void)
+{
+    psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
+    psa_mac_operation_t mac = PSA_MAC_OPERATION_INIT;
+    psa_cipher_operation_t cipher = PSA_CIPHER_OPERATION_INIT;
+    psa_aead_operation_t aead = PSA_AEAD_OPERATION_INIT;
+    uint8_t in[16];
+    uint8_t out[64];
+    size_t len;
+    size_t tag_len;
+
+    memset(in, 0, sizeof(in));
+    CHECK_LENGTH(len, psa_hash_finish(&hash, out, sizeof(out), &len));
+    CHECK_LENGTH(len, psa_mac_sign_finish(&mac, out, sizeof(out), &len));
+    CHECK_LENGTH(len, psa_cipher_generate_iv(&cipher, out, sizeof(out),
+                                             &len));
+    CHECK_LENGTH(len, psa_cipher_finish(&cipher, out, sizeof(out), &len));
+    CHECK_LENGTH(len, psa_aead_generate_nonce(&aead, out, sizeof(out), &len));
+    CHECK_LENGTH(len, psa_aead_update(&aead, in, sizeof(in), out, sizeof(out),
+                                      &len));
+    CHECK_LENGTH(len, psa_aead_finish(&aead, out, sizeof(out), &len, in,
+                                      sizeof(in), &tag_len));
+    CHECK_LENGTH(tag_len, psa_aead_finish(&aead, out, sizeof(out), &len, in,
+                                          sizeof(in), &tag_len));
+    CHECK_LENGTH(len, psa_aead_verify(&aead, out, sizeof(out), &len, in,
+                                      sizeof(in)));
 }
 
 int main(void)
@@ -131,6 +195,7 @@ int main(void)
 
     check_keys();
     check_lengths();
+    check_multipart();
 
     if (failures == 0) {
         printf("reset outputs tests: all passed\n");

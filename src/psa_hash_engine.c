@@ -30,6 +30,7 @@
 #include <psa/crypto.h>
 #include "psa_trace.h"
 #include "psa_size.h"
+#include "psa_output.h"
 #include <wolfpsa/psa_engine.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/types.h>
@@ -605,6 +606,7 @@ psa_status_t psa_hash_finish(psa_hash_operation_t *operation,
     size_t expected_hash_size;
     psa_hash_operation_ctx_t *ctx = psa_hash_get_ctx(operation);
 
+    wolfpsa_clear_length(hash_length);
     /* A NULL hash pointer is only an error when the caller declared a
      * nonzero capacity; (NULL, 0) must reach the size check below. */
     if (operation == NULL || hash_length == NULL ||

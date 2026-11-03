@@ -41,6 +41,7 @@
 #endif
 #include "psa_aead_internal.h"
 #include "psa_size.h"
+#include "psa_output.h"
 
 static wolfpsa_aead_ctx_t* wolfpsa_aead_get_ctx(psa_aead_operation_t *operation)
 {
@@ -487,6 +488,7 @@ psa_status_t psa_aead_generate_nonce(psa_aead_operation_t *operation,
     size_t expected;
     psa_status_t status;
 
+    wolfpsa_clear_length(nonce_length);
     if (ctx == NULL) {
         return PSA_ERROR_BAD_STATE;
     }
@@ -1017,6 +1019,7 @@ psa_status_t psa_aead_update(psa_aead_operation_t *operation,
     wolfpsa_aead_ctx_t *ctx = wolfpsa_aead_get_ctx(operation);
     psa_status_t status;
 
+    wolfpsa_clear_length(output_length);
     if (ctx == NULL) {
         return PSA_ERROR_BAD_STATE;
     }
@@ -1025,7 +1028,6 @@ psa_status_t psa_aead_update(psa_aead_operation_t *operation,
     }
     (void)output;
     (void)output_size;
-    *output_length = 0;
 
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM) && !ctx->lengths_set) {
         return PSA_ERROR_BAD_STATE;
@@ -1470,6 +1472,8 @@ psa_status_t psa_aead_finish(psa_aead_operation_t *operation,
     wolfpsa_aead_ctx_t *ctx = wolfpsa_aead_get_ctx(operation);
     psa_status_t status;
 
+    wolfpsa_clear_length(ciphertext_length);
+    wolfpsa_clear_length(tag_length);
     if (ctx == NULL) {
         return PSA_ERROR_BAD_STATE;
     }
@@ -1495,6 +1499,7 @@ psa_status_t psa_aead_verify(psa_aead_operation_t *operation,
     wolfpsa_aead_ctx_t *ctx = wolfpsa_aead_get_ctx(operation);
     psa_status_t status;
 
+    wolfpsa_clear_length(plaintext_length);
     if (ctx == NULL) {
         return PSA_ERROR_BAD_STATE;
     }
@@ -1918,6 +1923,7 @@ psa_status_t psa_aead_encrypt(psa_key_id_t key,
     size_t tag_length = 0;
     size_t out_len = 0;
 
+    wolfpsa_clear_length(ciphertext_length);
     /* One-shot-only algorithms: bypass the multipart state machine. */
 #ifdef HAVE_XCHACHA
     if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_XCHACHA20_POLY1305)) {
@@ -2008,6 +2014,7 @@ psa_status_t psa_aead_decrypt(psa_key_id_t key,
     size_t tag_length;
     size_t ct_len;
 
+    wolfpsa_clear_length(plaintext_length);
     /* One-shot-only algorithms: bypass the multipart state machine. */
 #ifdef HAVE_XCHACHA
     if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_XCHACHA20_POLY1305)) {

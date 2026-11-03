@@ -31,6 +31,7 @@
 
 #include <psa/crypto.h>
 #include "psa_size.h"
+#include "psa_output.h"
 #include <wolfpsa/psa_engine.h>
 #include <wolfpsa/psa_key_storage.h>
 #include <wolfssl/wolfcrypt/hmac.h>

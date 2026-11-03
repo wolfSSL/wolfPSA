@@ -45,18 +45,4 @@ static inline psa_status_t wolfpsa_check_word32_length(size_t length)
     return PSA_SUCCESS;
 }
 
-static inline void wolfpsa_clear_length(size_t* length)
-{
-    if (length != NULL) {
-        *length = 0;
-    }
-}
-
-static inline void wolfpsa_clear_key_id(psa_key_id_t* key)
-{
-    if (key != NULL) {
-        *key = PSA_KEY_ID_NULL;
-    }
-}
-
 #endif /* WOLFPSA_SIZE_H */

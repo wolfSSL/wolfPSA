@@ -29,6 +29,7 @@
 
 #include <psa/crypto.h>
 #include "psa_size.h"
+#include "psa_output.h"
 #include "psa_trace.h"
 #include "psa_pqc_internal.h"
 #include <wolfpsa/psa_engine.h>
@@ -1608,10 +1609,10 @@ psa_status_t psa_key_agreement(psa_key_id_t private_key,
     psa_key_attributes_t priv_attr = PSA_KEY_ATTRIBUTES_INIT;
     psa_key_derivation_operation_t kdf_op = PSA_KEY_DERIVATION_OPERATION_INIT;
 
+    wolfpsa_clear_key_id(key);
     if (attributes == NULL || key == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-    *key = PSA_KEY_ID_NULL;
 
     if (!PSA_ALG_IS_KEY_AGREEMENT(alg)) {
         return PSA_ERROR_NOT_SUPPORTED;

@@ -23,6 +23,7 @@
 #include <wolfssl/wolfcrypt/wc_port.h>
 
 #include <psa/crypto.h>
+#include "psa_output.h"
 
 extern int wolfPSA_CryptoIsInitialized(void);
 
@@ -374,6 +375,7 @@ psa_status_t psa_generate_key_custom(const psa_key_attributes_t *attributes,
                                       const uint8_t *custom_data,
                                       size_t custom_data_length,
                                       psa_key_id_t *key) {
+    wolfpsa_clear_key_id(key);
     if (custom == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -395,6 +397,7 @@ psa_status_t psa_key_derivation_output_key_custom(
     const uint8_t *custom_data,
     size_t custom_data_length,
     psa_key_id_t *key) {
+    wolfpsa_clear_key_id(key);
     if (custom == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }

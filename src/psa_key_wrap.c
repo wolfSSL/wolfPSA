@@ -29,6 +29,7 @@
 
 #include <psa/crypto.h>
 #include "psa_trace.h"
+#include "psa_output.h"
 #include <wolfpsa/psa_engine.h>
 #include <wolfpsa/psa_key_storage.h>
 #include <wolfssl/wolfcrypt/aes.h>
@@ -66,6 +67,7 @@ psa_status_t psa_wrap_key(psa_key_id_t wrapping_key,
     wolfpsa_trace("psa_wrap_key(wrapping_key=%u alg=0x%08x key=%u)",
                   (unsigned)wrapping_key, (unsigned)alg, (unsigned)key);
 
+    wolfpsa_clear_length(data_length);
     /* Validate output pointers */
     if (data == NULL || data_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
@@ -217,12 +219,11 @@ psa_status_t psa_unwrap_key(const psa_key_attributes_t *attributes,
     wolfpsa_trace("psa_unwrap_key(wrapping_key=%u alg=0x%08x data_len=%zu)",
                   (unsigned)wrapping_key, (unsigned)alg, data_length);
 
+    wolfpsa_clear_key_id(key);
     /* Validate pointers */
     if (attributes == NULL || data == NULL || key == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-
-    *key = PSA_KEY_ID_NULL;
 
     /* Only key-wrap category algorithms are accepted */
     if (!PSA_ALG_IS_KEY_WRAP(alg)) {
