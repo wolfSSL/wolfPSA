@@ -62,9 +62,16 @@
 #define MBEDTLS_ERR_SSL_BAD_INPUT_DATA       -135
 #define MBEDTLS_ERR_SSL_ALLOC_FAILED         -141
 
+typedef enum {
+    MBEDTLS_SSL_VERSION_UNKNOWN,
+    MBEDTLS_SSL_VERSION_TLS1_2 = 0x0303,
+    MBEDTLS_SSL_VERSION_TLS1_3 = 0x0304
+} mbedtls_ssl_protocol_version;
+
 /* wolfSSL objects, opaque to the application */
 struct WOLFSSL_CTX;
 struct WOLFSSL;
+struct WOLFSSL_SESSION;
 
 typedef int mbedtls_ssl_send_t(void* ctx, const unsigned char* buf,
     size_t len);
@@ -77,7 +84,17 @@ typedef struct mbedtls_ssl_config {
     int err; /* first failed void conf call, returned at setup and reset */
     int authmode;
     int endpoint;
+    mbedtls_ssl_protocol_version min_tls_version;
+    mbedtls_ssl_protocol_version max_tls_version;
+    const int* ciphersuites; /* the application's, NULL for the default */
+    /* Kept, not called yet */
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*);
+    void* p_vrfy;
 } mbedtls_ssl_config;
+
+typedef struct mbedtls_ssl_session {
+    struct WOLFSSL_SESSION* session;
+} mbedtls_ssl_session;
 
 typedef struct mbedtls_ssl_context {
     const mbedtls_ssl_config* conf;
@@ -104,6 +121,19 @@ int mbedtls_ssl_conf_own_cert(mbedtls_ssl_config* conf,
     mbedtls_x509_crt* own_cert, mbedtls_pk_context* pk_key);
 void mbedtls_ssl_conf_dbg(mbedtls_ssl_config* conf,
     void (*f_dbg)(void*, int, const char*, int, const char*), void* p_dbg);
+void mbedtls_ssl_conf_min_tls_version(mbedtls_ssl_config* conf,
+    mbedtls_ssl_protocol_version tls_version);
+void mbedtls_ssl_conf_max_tls_version(mbedtls_ssl_config* conf,
+    mbedtls_ssl_protocol_version tls_version);
+void mbedtls_ssl_conf_ciphersuites(mbedtls_ssl_config* conf,
+    const int* ciphersuites);
+void mbedtls_ssl_conf_verify(mbedtls_ssl_config* conf,
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*), void* p_vrfy);
+void mbedtls_ssl_conf_cert_profile(mbedtls_ssl_config* conf,
+    const mbedtls_x509_crt_profile* profile);
+
+const int* mbedtls_ssl_list_ciphersuites(void);
+const char* mbedtls_ssl_get_ciphersuite_name(const int ciphersuite_id);
 
 void mbedtls_ssl_init(mbedtls_ssl_context* ssl);
 void mbedtls_ssl_free(mbedtls_ssl_context* ssl);
@@ -116,10 +146,26 @@ int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname);
 int mbedtls_ssl_handshake(mbedtls_ssl_context* ssl);
 uint32_t mbedtls_ssl_get_verify_result(const mbedtls_ssl_context* ssl);
 const char* mbedtls_ssl_get_ciphersuite(const mbedtls_ssl_context* ssl);
+int mbedtls_ssl_get_ciphersuite_id_from_ssl(const mbedtls_ssl_context* ssl);
+const char* mbedtls_ssl_get_version(const mbedtls_ssl_context* ssl);
+mbedtls_ssl_protocol_version mbedtls_ssl_get_version_number(
+    const mbedtls_ssl_context* ssl);
+size_t mbedtls_ssl_get_bytes_avail(const mbedtls_ssl_context* ssl);
 int mbedtls_ssl_read(mbedtls_ssl_context* ssl, unsigned char* buf, size_t len);
 int mbedtls_ssl_write(mbedtls_ssl_context* ssl,
     const unsigned char* buf, size_t len);
 int mbedtls_ssl_close_notify(mbedtls_ssl_context* ssl);
+
+void mbedtls_ssl_session_init(mbedtls_ssl_session* session);
+void mbedtls_ssl_session_free(mbedtls_ssl_session* session);
+int mbedtls_ssl_get_session(const mbedtls_ssl_context* ssl,
+    mbedtls_ssl_session* session);
+int mbedtls_ssl_set_session(mbedtls_ssl_context* ssl,
+    const mbedtls_ssl_session* session);
+int mbedtls_ssl_session_save(const mbedtls_ssl_session* session,
+    unsigned char* buf, size_t buf_len, size_t* olen);
+int mbedtls_ssl_session_load(mbedtls_ssl_session* session,
+    const unsigned char* buf, size_t len);
 
 #ifdef __cplusplus
     } /* extern "C" */

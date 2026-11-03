@@ -38,6 +38,13 @@ typedef struct mbedtls_x509_crt {
 
 typedef struct mbedtls_x509_crl mbedtls_x509_crl;
 
+/* Not applied: wolfSSL's own limits hold */
+typedef struct mbedtls_x509_crt_profile mbedtls_x509_crt_profile;
+
+extern const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_default;
+extern const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_next;
+extern const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_suiteb;
+
 void mbedtls_x509_crt_init(mbedtls_x509_crt* crt);
 void mbedtls_x509_crt_free(mbedtls_x509_crt* crt);
 int mbedtls_x509_crt_parse(mbedtls_x509_crt* chain,
@@ -46,6 +53,7 @@ int mbedtls_x509_crt_parse_der(mbedtls_x509_crt* chain,
     const unsigned char* buf, size_t buflen);
 #if defined(MBEDTLS_FS_IO)
 int mbedtls_x509_crt_parse_file(mbedtls_x509_crt* chain, const char* path);
+int mbedtls_x509_crt_parse_path(mbedtls_x509_crt* chain, const char* path);
 #endif /* MBEDTLS_FS_IO */
 
 #ifdef __cplusplus
