@@ -934,6 +934,7 @@ psa_status_t psa_hash_compute(psa_algorithm_t alg,
     psa_hash_operation_t operation = PSA_HASH_OPERATION_INIT;
     psa_status_t status;
 
+    wolfpsa_clear_length(hash_length);
     if (!wolfPSA_CryptoIsInitialized()) {
         return PSA_ERROR_BAD_STATE;
     }

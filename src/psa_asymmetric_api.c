@@ -382,6 +382,7 @@ psa_status_t psa_asymmetric_encrypt(psa_key_id_t key,
     size_t key_data_length = 0;
     psa_status_t status;
 
+    wolfpsa_clear_length(output_length);
     if (output_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -430,6 +431,7 @@ psa_status_t psa_asymmetric_decrypt(psa_key_id_t key,
     size_t key_data_length = 0;
     psa_status_t status;
 
+    wolfpsa_clear_length(output_length);
     if (output_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -480,6 +482,7 @@ static psa_status_t wolfpsa_sign_hash_worker(psa_key_id_t key,
     size_t sig_size;
     psa_status_t status;
 
+    wolfpsa_clear_length(signature_length);
     if (signature_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -844,6 +847,7 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
     size_t sig_size;
     psa_status_t status;
 
+    wolfpsa_clear_length(signature_length);
     if (signature_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -1576,6 +1580,7 @@ psa_status_t psa_raw_key_agreement(psa_algorithm_t alg,
     wolfpsa_trace("psa_raw_key_agreement(alg=0x%08x key=%u peer_len=%zu)",
                   (unsigned)alg, (unsigned)private_key, peer_key_length);
 
+    wolfpsa_clear_length(output_length);
     if (output_length == NULL || (output == NULL && output_size != 0)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
