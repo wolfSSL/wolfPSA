@@ -93,6 +93,36 @@ static int wc_psa_get_mgf(int hash_type)
 }
 #endif /* WC_RSA_PSS || WOLFSSL_RSA_OAEP */
 
+/* PSA requires the hash to be as long as the one the algorithm names. Raw
+ * PKCS#1 v1.5 signs any input. */
+static int wc_psa_rsa_hash_length_ok(psa_algorithm_t alg, size_t hash_length)
+{
+    size_t expected;
+
+    if (alg == PSA_ALG_RSA_PKCS1V15_SIGN_RAW) {
+        return 1;
+    }
+    expected = PSA_HASH_LENGTH(PSA_ALG_SIGN_GET_HASH(alg));
+    return expected != 0 && hash_length == expected;
+}
+
+/* Status for a failed RSA operation. Callers check the output buffer size
+ * first, so a buffer, padding or range error refers to the input. */
+static psa_status_t wc_psa_rsa_status(int ret, psa_status_t bad_input)
+{
+    switch (ret) {
+        case BUFFER_E:
+        case RSA_BUFFER_E:
+        case BAD_PADDING_E:
+        case RSA_PAD_E:
+        case PSS_SALTLEN_E:
+        case RSA_OUT_OF_RANGE_E:
+            return bad_input;
+        default:
+            return wc_error_to_psa_status(ret);
+    }
+}
+
 #ifdef WC_RSA_PSS
 static int wc_psa_rsa_pss_check_padding(const byte* hash, word32 hash_length,
                                         const byte* encoded, word32 encoded_length,
@@ -136,7 +166,6 @@ psa_status_t psa_asymmetric_sign_rsa(psa_key_type_t key_type,
     int padding;
     int hash_type;
     int hash_oid;
-    size_t expected_hash_len;
     byte* sig_input = NULL;
     word32 sig_input_len = 0;
     word32 sig_input_alloc_len = 0;
@@ -150,7 +179,8 @@ psa_status_t psa_asymmetric_sign_rsa(psa_key_type_t key_type,
     }
     if ((wolfpsa_check_word32_length(key_buffer_size) != PSA_SUCCESS) ||
         (wolfpsa_check_word32_length(hash_length) != PSA_SUCCESS) ||
-        (wolfpsa_check_word32_length(signature_size) != PSA_SUCCESS)) {
+        (wolfpsa_check_word32_length(signature_size) != PSA_SUCCESS) ||
+        !wc_psa_rsa_hash_length_ok(alg, hash_length)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
     
@@ -194,18 +224,12 @@ psa_status_t psa_asymmetric_sign_rsa(psa_key_type_t key_type,
                 wc_FreeRsaKey(&rsa_key);
                 return PSA_ERROR_NOT_SUPPORTED;
             }
-            /* PSA requires the digest to be exactly as long as the hash
-             * named by the algorithm; anything else is INVALID_ARGUMENT.
-             * wc_EncodeSignature() would otherwise happily wrap a 20-byte
-             * digest in a SHA-256 DigestInfo, and since the verify path
-             * re-encodes the same way that malformed structure would
-             * round-trip to success in violation of RFC 8017 A.2.4. The
-             * WC_MAX_DIGEST_SIZE term is retained as the buffer
-             * precondition: wc_EncodeSignature() does not bound its own
-             * write, and the two constants can diverge. */
-            expected_hash_len = PSA_HASH_LENGTH(PSA_ALG_SIGN_GET_HASH(alg));
-            if (expected_hash_len == 0 || hash_length != expected_hash_len ||
-                hash_length > WC_MAX_DIGEST_SIZE) {
+            /* The hash length is checked above, so wc_EncodeSignature()
+             * cannot wrap a 20-byte digest in a SHA-256 DigestInfo. This is
+             * the buffer precondition: wc_EncodeSignature() does not bound
+             * its own write, and WC_MAX_DIGEST_SIZE and PSA_HASH_LENGTH()
+             * can diverge. */
+            if (hash_length > WC_MAX_DIGEST_SIZE) {
                 wc_FreeRng(&rng);
                 wc_FreeRsaKey(&rsa_key);
                 return PSA_ERROR_INVALID_ARGUMENT;
@@ -256,7 +280,7 @@ psa_status_t psa_asymmetric_sign_rsa(psa_key_type_t key_type,
     wc_FreeRsaKey(&rsa_key);
     
     if (ret < 0) {
-        return wc_error_to_psa_status(ret);
+        return wc_psa_rsa_status(ret, PSA_ERROR_INVALID_ARGUMENT);
     }
     
     *signature_length = (size_t)ret;
@@ -280,7 +304,6 @@ psa_status_t psa_asymmetric_verify_rsa(psa_key_type_t key_type,
     word32 idx = 0;
     int padding;
     int hash_type;
-    size_t expected_hash_len;
 
     (void)key_bits;
 
@@ -291,7 +314,8 @@ psa_status_t psa_asymmetric_verify_rsa(psa_key_type_t key_type,
     }
     if ((wolfpsa_check_word32_length(key_buffer_size) != PSA_SUCCESS) ||
         (wolfpsa_check_word32_length(hash_length) != PSA_SUCCESS) ||
-        (wolfpsa_check_word32_length(signature_length) != PSA_SUCCESS)) {
+        (wolfpsa_check_word32_length(signature_length) != PSA_SUCCESS) ||
+        !wc_psa_rsa_hash_length_ok(alg, hash_length)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
     
@@ -313,6 +337,10 @@ psa_status_t psa_asymmetric_verify_rsa(psa_key_type_t key_type,
     if (ret != 0) {
         wc_FreeRsaKey(&rsa_key);
         return wc_error_to_psa_status(ret);
+    }
+    if (signature_length != (size_t)wc_RsaEncryptSize(&rsa_key)) {
+        wc_FreeRsaKey(&rsa_key);
+        return PSA_ERROR_INVALID_SIGNATURE;
     }
     
     /* Get padding type and hash type */
@@ -359,15 +387,8 @@ psa_status_t psa_asymmetric_verify_rsa(psa_key_type_t key_type,
                 wc_FreeRsaKey(&rsa_key);
                 return PSA_ERROR_NOT_SUPPORTED;
             }
-            /* Same bound as the sign path: PSA requires the digest to match
-             * the length of the hash named by the algorithm, and the
-             * WC_MAX_DIGEST_SIZE term is the buffer precondition for the
-             * unbounded write wc_EncodeSignature() performs. Accepting a
-             * mismatched length here would let a DigestInfo whose OID and
-             * digest length disagree verify successfully. */
-            expected_hash_len = PSA_HASH_LENGTH(PSA_ALG_SIGN_GET_HASH(alg));
-            if (expected_hash_len == 0 || hash_length != expected_hash_len ||
-                hash_length > WC_MAX_DIGEST_SIZE) {
+            /* Same buffer precondition as the sign path */
+            if (hash_length > WC_MAX_DIGEST_SIZE) {
                 wc_ForceZero(decoded, sizeof(decoded));
                 wc_FreeRsaKey(&rsa_key);
                 return PSA_ERROR_INVALID_ARGUMENT;
@@ -452,13 +473,7 @@ psa_status_t psa_asymmetric_verify_rsa(psa_key_type_t key_type,
     wc_FreeRsaKey(&rsa_key);
 
     if (ret < 0) {
-        /* The shared mapper sends RSA_PAD_E to PSA_ERROR_INVALID_PADDING for
-         * the decrypt path. On a verification a failed unpad is a signature
-         * mismatch, and psa_verify_hash does not define INVALID_PADDING. */
-        if (ret == RSA_PAD_E) {
-            return PSA_ERROR_INVALID_SIGNATURE;
-        }
-        return wc_error_to_psa_status(ret);
+        return wc_psa_rsa_status(ret, PSA_ERROR_INVALID_SIGNATURE);
     }
 
     if ((size_t)ret != hash_length) {
@@ -575,7 +590,7 @@ psa_status_t psa_asymmetric_encrypt_rsa(psa_key_type_t key_type,
     wc_FreeRsaKey(&rsa_key);
     
     if (ret < 0) {
-        return wc_error_to_psa_status(ret);
+        return wc_psa_rsa_status(ret, PSA_ERROR_INVALID_ARGUMENT);
     }
     
     *output_length = (size_t)ret;
@@ -721,7 +736,7 @@ psa_status_t psa_asymmetric_decrypt_rsa(psa_key_type_t key_type,
         status = PSA_ERROR_BUFFER_TOO_SMALL;
     }
     else if (ret < 0) {
-        status = wc_error_to_psa_status(ret);
+        status = wc_psa_rsa_status(ret, PSA_ERROR_INVALID_PADDING);
     }
     else {
         if (ret > 0) {

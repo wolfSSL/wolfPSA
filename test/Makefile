@@ -107,6 +107,7 @@ PSA_REGRESSION_TESTS = psa_aead_multipart_test \
 	psa_ecc_curve_caps_test \
 	psa_xof_no_backend_test \
 	psa_ecc_sig_len_test \
+	psa_rsa_status_test \
 	psa_xof_set_context_test \
 	psa_cipher_inplace_test \
 	psa_cipher_overlap_test \
