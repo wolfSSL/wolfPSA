@@ -235,7 +235,8 @@ UNIT_TESTS := psa_api_test \
 	psa_copy_key_cross_lifetime_test \
 	psa_zero_capacity_buffer_test \
 	psa_want_surface_test \
-	psa_tf_psa_extra_test
+	psa_tf_psa_extra_test \
+	psa_aead_gcm_short_tag_test
 
 # Run the unit test loop from the repo root (psa_rsa_pss_interop_test reads
 # its certificate relative to the root). Assumes the tests are already built.

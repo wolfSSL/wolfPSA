@@ -143,6 +143,10 @@ extern "C" {
  * emit the payload from psa_aead_update() instead of buffering it all for
  * finish(). */
 #define WOLFSSL_AESGCM_STREAM
+/* PSA allows 4 and 8 byte GCM tags; wolfCrypt's default minimum is 12 */
+#ifndef WOLFSSL_MIN_AUTH_TAG_SZ
+#define WOLFSSL_MIN_AUTH_TAG_SZ 4
+#endif
 #define HAVE_AESCCM
 #define HAVE_AES_ECB
 /* Constant-time AES. WOLFSSL_AES_TOUCH_LINES keeps the table access pattern

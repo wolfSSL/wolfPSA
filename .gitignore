@@ -87,6 +87,7 @@ test/psa_copy_key_cross_lifetime_test
 test/psa_tf_psa_extra_test
 test/psa_want_surface_test
 test/psa_zero_capacity_buffer_test
+test/psa_aead_gcm_short_tag_test
 build-test/out/
 .cache/
 compile_commands.json
