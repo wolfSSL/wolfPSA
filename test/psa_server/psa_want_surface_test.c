@@ -64,16 +64,27 @@ static psa_status_t run_export(psa_key_id_t key)
 
 static psa_status_t run_sign(psa_key_id_t key, psa_algorithm_t alg)
 {
-    uint8_t msg[16];
+    uint8_t msg[32];
     uint8_t sig[PSA_SIGNATURE_MAX_SIZE];
     size_t len = 0;
     psa_status_t status;
 
     memset(msg, 0, sizeof(msg));
     status = run_export(key);
-    if (status == PSA_SUCCESS) {
+    if (status == PSA_SUCCESS && PSA_ALG_IS_SIGN_MESSAGE(alg)) {
         status = psa_sign_message(key, alg, msg, sizeof(msg), sig,
             sizeof(sig), &len);
+        if (status == PSA_SUCCESS) {
+            status = psa_verify_message(key, alg, msg, sizeof(msg), sig, len);
+        }
+    }
+    /* Hash-only algorithms such as ECDSA_ANY sign msg as the hash */
+    else if (status == PSA_SUCCESS) {
+        status = psa_sign_hash(key, alg, msg, sizeof(msg), sig, sizeof(sig),
+            &len);
+        if (status == PSA_SUCCESS) {
+            status = psa_verify_hash(key, alg, msg, sizeof(msg), sig, len);
+        }
     }
     return status;
 }
@@ -144,7 +155,9 @@ static psa_status_t run_case(const struct want_case* c)
     }
     else if (PSA_ALG_IS_SIGN(c->alg)) {
         psa_set_key_usage_flags(&attr,
-            PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_EXPORT);
+            PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_VERIFY_MESSAGE |
+            PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_VERIFY_HASH |
+            PSA_KEY_USAGE_EXPORT);
     }
     else {
         psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_EXPORT);
@@ -215,6 +228,9 @@ int main(void)
         IS_DEFINED(PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE);
     const int ecdsa = IS_DEFINED(PSA_WANT_ALG_ECDSA) &&
         IS_DEFINED(PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE);
+    const int ecdsaAny = IS_DEFINED(PSA_WANT_ALG_ECDSA_ANY) &&
+        IS_DEFINED(PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE);
+    const int rsaGen = IS_DEFINED(PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_GENERATE);
     const int eddsa = IS_DEFINED(PSA_WANT_ALG_PURE_EDDSA) &&
         IS_DEFINED(PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE);
     const int aes = IS_DEFINED(PSA_WANT_KEY_TYPE_AES);
@@ -232,6 +248,8 @@ int main(void)
             ecdsa && IS_DEFINED(PSA_WANT_ECC_SECP_R1_384), NOT_CHECKED },
         { "secp521r1 ECDSA", ecc, 521, ecdsaAlg,
             ecdsa && IS_DEFINED(PSA_WANT_ECC_SECP_R1_521), NOT_CHECKED },
+        { "secp256r1 ECDSA any", ecc, 256, PSA_ALG_ECDSA_ANY,
+            ecdsaAny && IS_DEFINED(PSA_WANT_ECC_SECP_R1_256), NOT_CHECKED },
         { "secp256k1 ECDH", k1, 256, PSA_ALG_ECDH,
             ecdh && IS_DEFINED(PSA_WANT_ECC_SECP_K1_256), NOT_CHECKED },
         { "brainpoolP256r1 ECDH", bp, 256, PSA_ALG_ECDH,
@@ -276,8 +294,15 @@ int main(void)
             NOT_CHECKED },
         { "RSA-2048 PKCS#1 v1.5", PSA_KEY_TYPE_RSA_KEY_PAIR, 2048,
             PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256),
-            IS_DEFINED(PSA_WANT_ALG_RSA_PKCS1V15_SIGN) &&
-                IS_DEFINED(PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_GENERATE),
+            rsaGen && IS_DEFINED(PSA_WANT_ALG_RSA_PKCS1V15_SIGN),
+            NOT_CHECKED },
+        { "RSA-2048 PKCS#1 v1.5 raw", PSA_KEY_TYPE_RSA_KEY_PAIR, 2048,
+            PSA_ALG_RSA_PKCS1V15_SIGN_RAW,
+            rsaGen && IS_DEFINED(PSA_WANT_ALG_RSA_PKCS1V15_SIGN_RAW),
+            NOT_CHECKED },
+        { "RSA-2048 PSS any salt", PSA_KEY_TYPE_RSA_KEY_PAIR, 2048,
+            PSA_ALG_RSA_PSS_ANY_SALT(PSA_ALG_SHA_256),
+            rsaGen && IS_DEFINED(PSA_WANT_ALG_RSA_PSS_ANY_SALT),
             NOT_CHECKED },
     };
     size_t i;
