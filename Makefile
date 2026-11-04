@@ -214,6 +214,7 @@ UNIT_TESTS := psa_api_test \
 	psa_cipher_inplace_test \
 	psa_cipher_overlap_test \
 	psa_des3_pkcs7_test \
+	psa_aead_call_order_test \
 	psa_eddsa_mont_export_test \
 	psa_eddsa_mont_gen_test \
 	psa_pure_eddsa_context_test \
