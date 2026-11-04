@@ -282,6 +282,19 @@ static inline psa_algorithm_t psa_get_key_algorithm(
     return attributes->policy.alg;
 }
 
+/* Mbed TLS second permitted algorithm, honored with WOLFPSA_ENROLLMENT_ALG */
+static inline void psa_set_key_enrollment_algorithm(
+    psa_key_attributes_t *attributes, psa_algorithm_t alg2)
+{
+    attributes->policy.alg2 = alg2;
+}
+
+static inline psa_algorithm_t psa_get_key_enrollment_algorithm(
+    const psa_key_attributes_t *attributes)
+{
+    return attributes->policy.alg2;
+}
+
 static inline void psa_set_key_type(psa_key_attributes_t *attributes,
                                     psa_key_type_t type)
 {

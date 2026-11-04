@@ -162,7 +162,6 @@ static psa_status_t wolfpsa_cipher_check_key(
 {
     psa_status_t status;
     psa_key_usage_t key_usage;
-    psa_algorithm_t key_alg;
 
     status = wolfpsa_get_key_data(key, attributes, key_data, key_data_length);
     if (status != PSA_SUCCESS) {
@@ -229,8 +228,7 @@ static psa_status_t wolfpsa_cipher_check_key(
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    key_alg = psa_get_key_algorithm(attributes);
-    if (key_alg == PSA_ALG_NONE || key_alg != alg) {
+    if (!wolfpsa_key_permits_alg(attributes, alg)) {
         wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
         *key_data = NULL;
         *key_data_length = 0;

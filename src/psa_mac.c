@@ -164,6 +164,32 @@ static int wolfpsa_hash_type_from_alg(psa_algorithm_t alg)
     }
 }
 
+/* Whether permitted algorithm key_alg allows MAC alg and its length */
+static int wolfpsa_mac_alg_permitted(const psa_key_attributes_t *attributes,
+                                     psa_algorithm_t key_alg,
+                                     psa_algorithm_t alg)
+{
+    size_t req_length;
+    size_t min_length;
+
+    if (key_alg == PSA_ALG_NONE ||
+        PSA_ALG_FULL_LENGTH_MAC(key_alg) != PSA_ALG_FULL_LENGTH_MAC(alg)) {
+        return 0;
+    }
+
+    req_length = PSA_MAC_LENGTH(attributes->type, attributes->bits, alg);
+    min_length = PSA_MAC_TRUNCATED_LENGTH(key_alg);
+    if (min_length == 0) {
+        min_length = PSA_MAC_LENGTH(attributes->type, attributes->bits,
+                                    PSA_ALG_FULL_LENGTH_MAC(key_alg));
+    }
+
+    if ((key_alg & PSA_ALG_MAC_AT_LEAST_THIS_LENGTH_FLAG) != 0) {
+        return req_length >= min_length;
+    }
+    return req_length == min_length;
+}
+
 static psa_status_t wolfpsa_mac_check_key(psa_key_id_t key,
                                           psa_key_usage_t usage,
                                           psa_algorithm_t alg,
@@ -173,12 +199,6 @@ static psa_status_t wolfpsa_mac_check_key(psa_key_id_t key,
 {
     psa_status_t status;
     psa_key_usage_t key_usage;
-    psa_algorithm_t key_alg;
-    psa_algorithm_t key_alg_full;
-    psa_algorithm_t req_alg_full;
-    size_t req_mac_length;
-    size_t key_full_length;
-    size_t key_min_length;
 
     status = wolfpsa_get_key_data(key, attributes, key_data, key_data_length);
     if (status != PSA_SUCCESS) {
@@ -222,55 +242,15 @@ static psa_status_t wolfpsa_mac_check_key(psa_key_id_t key,
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    key_alg = psa_get_key_algorithm(attributes);
-    if (key_alg == PSA_ALG_NONE) {
+    if (!wolfpsa_mac_alg_permitted(attributes,
+                                   psa_get_key_algorithm(attributes), alg) &&
+        !wolfpsa_mac_alg_permitted(attributes,
+                                   psa_get_key_enrollment_algorithm(attributes),
+                                   alg)) {
         wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
         *key_data = NULL;
         *key_data_length = 0;
         return PSA_ERROR_NOT_PERMITTED;
-    }
-
-    /* Algorithm match checks */
-    key_alg_full = PSA_ALG_FULL_LENGTH_MAC(key_alg);
-    req_alg_full = PSA_ALG_FULL_LENGTH_MAC(alg);
-
-    if (key_alg_full != req_alg_full) {
-        wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
-        *key_data = NULL;
-        *key_data_length = 0;
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-
-    req_mac_length = PSA_MAC_LENGTH(attributes->type, attributes->bits, alg);
-    key_full_length = PSA_MAC_LENGTH(attributes->type, attributes->bits, key_alg_full);
-    key_min_length = PSA_MAC_TRUNCATED_LENGTH(key_alg);
-    if (key_min_length == 0) {
-        key_min_length = key_full_length;
-    }
-
-    if ((key_alg & PSA_ALG_MAC_AT_LEAST_THIS_LENGTH_FLAG) != 0) {
-        if (req_mac_length < key_min_length) {
-            wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
-            *key_data = NULL;
-            *key_data_length = 0;
-            return PSA_ERROR_NOT_PERMITTED;
-        }
-    }
-    else {
-        if ((key_alg & PSA_ALG_MAC_TRUNCATION_MASK) != 0) {
-            if (req_mac_length != key_min_length) {
-                wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
-                *key_data = NULL;
-                *key_data_length = 0;
-                return PSA_ERROR_NOT_PERMITTED;
-            }
-        }
-        else if (req_mac_length != key_full_length) {
-            wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
-            *key_data = NULL;
-            *key_data_length = 0;
-            return PSA_ERROR_NOT_PERMITTED;
-        }
     }
 
     return PSA_SUCCESS;

@@ -73,6 +73,8 @@ test/psa_devid_cryptocb_test
 test/build-probe
 test/build-cryptocb
 test/build-cryptocb-asan
+test/build-enroll
+test/build-enroll-asan
 test/psa_store_commit_test
 test/psa_store_dir_validation_test
 test/psa_store_read_open_test
@@ -88,6 +90,7 @@ test/psa_tf_psa_extra_test
 test/psa_want_surface_test
 test/psa_zero_capacity_buffer_test
 test/psa_aead_gcm_short_tag_test
+test/psa_enrollment_alg_test
 build-test/out/
 .cache/
 compile_commands.json
