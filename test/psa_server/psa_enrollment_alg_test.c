@@ -90,14 +90,27 @@ static psa_status_t mac(psa_key_id_t key, psa_algorithm_t alg)
 
 static psa_status_t aead(psa_key_id_t key, psa_algorithm_t alg)
 {
-    uint8_t nonce[13] = {0};
-    uint8_t out[32];
-    size_t out_len = 0;
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    uint8_t nonce[PSA_AEAD_NONCE_MAX_SIZE] = {0};
+    size_t nonce_len = 0;
+    uint8_t ct[32];
+    uint8_t pt[32];
+    size_t ct_len = 0;
+    size_t pt_len = 0;
+    psa_status_t status;
 
-    return psa_aead_encrypt(key, alg, nonce,
-                            PSA_AEAD_NONCE_LENGTH(PSA_KEY_TYPE_AES, alg),
-                            NULL, 0, (const uint8_t *)"abc", 3, out,
-                            sizeof(out), &out_len);
+    status = psa_get_key_attributes(key, &attrs);
+    if (status == PSA_SUCCESS) {
+        nonce_len = PSA_AEAD_NONCE_LENGTH(psa_get_key_type(&attrs), alg);
+        status = psa_aead_encrypt(key, alg, nonce, nonce_len, NULL, 0,
+                                  (const uint8_t *)"abc", 3, ct, sizeof(ct),
+                                  &ct_len);
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_aead_decrypt(key, alg, nonce, nonce_len, NULL, 0, ct,
+                                  ct_len, pt, sizeof(pt), &pt_len);
+    }
+    return status;
 }
 
 static psa_status_t sign(psa_key_id_t key, psa_algorithm_t alg)
@@ -140,6 +153,46 @@ static psa_status_t derive(psa_key_id_t key, psa_algorithm_t alg)
     return status;
 }
 
+/* Wrap the key with itself, then unwrap it */
+static psa_status_t wrap(psa_key_id_t key, psa_algorithm_t alg)
+{
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    uint8_t data[32];
+    size_t data_len = 0;
+    psa_key_id_t out = PSA_KEY_ID_NULL;
+    psa_status_t status;
+
+    status = psa_wrap_key(key, alg, key, data, sizeof(data), &data_len);
+    if (status == PSA_SUCCESS) {
+        psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
+        psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT);
+        psa_set_key_algorithm(&attrs, PSA_ALG_CTR);
+        status = psa_unwrap_key(&attrs, key, alg, data, data_len, &out);
+        psa_destroy_key(out);
+    }
+    return status;
+}
+
+static psa_status_t kem(psa_key_id_t key, psa_algorithm_t alg)
+{
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    uint8_t ct[PSA_ENCAPSULATE_CIPHERTEXT_MAX_SIZE];
+    size_t ct_len = 0;
+    psa_key_id_t out = PSA_KEY_ID_NULL;
+    psa_status_t status;
+
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_DERIVE);
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE);
+    status = psa_encapsulate(key, alg, &attrs, &out, ct, sizeof(ct), &ct_len);
+    psa_destroy_key(out);
+    out = PSA_KEY_ID_NULL;
+    if (status == PSA_SUCCESS) {
+        status = psa_decapsulate(key, alg, ct, ct_len, &attrs, &out);
+        psa_destroy_key(out);
+    }
+    return status;
+}
+
 /* One key per row: alg2 is permitted as well as alg, other (if set) is not */
 static void check_operations(void)
 {
@@ -159,9 +212,22 @@ static void check_operations(void)
         { "MAC", PSA_KEY_TYPE_HMAC, 256, PSA_KEY_USAGE_SIGN_MESSAGE,
           PSA_ALG_HMAC(PSA_ALG_SHA_256), PSA_ALG_HMAC(PSA_ALG_SHA_384),
           PSA_ALG_HMAC(PSA_ALG_SHA_512), mac },
-        { "AEAD", PSA_KEY_TYPE_AES, 128, PSA_KEY_USAGE_ENCRYPT,
+        { "AEAD", PSA_KEY_TYPE_AES, 128,
+          PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT,
           PSA_ALG_GCM, PSA_ALG_CCM,
           PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, 12), aead },
+        { "XChaCha20-Poly1305", PSA_KEY_TYPE_XCHACHA20, 256,
+          PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT, PSA_ALG_NONE,
+          PSA_ALG_XCHACHA20_POLY1305, PSA_ALG_NONE, aead },
+        { "Ascon-AEAD128", PSA_KEY_TYPE_ASCON, 128,
+          PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT, PSA_ALG_NONE,
+          PSA_ALG_ASCON_AEAD128, PSA_ALG_NONE, aead },
+        { "key wrap", PSA_KEY_TYPE_AES, 128,
+          PSA_KEY_USAGE_WRAP | PSA_KEY_USAGE_UNWRAP | PSA_KEY_USAGE_EXPORT,
+          PSA_ALG_CTR, PSA_ALG_KW, PSA_ALG_NONE, wrap },
+        { "ML-KEM", PSA_KEY_TYPE_ML_KEM_KEY_PAIR, 768,
+          PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT, PSA_ALG_NONE,
+          PSA_ALG_ML_KEM, PSA_ALG_NONE, kem },
         { "ECDSA", PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1), 256,
           PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_DERIVE, PSA_ALG_ECDH,
           PSA_ALG_ECDSA(PSA_ALG_ANY_HASH),

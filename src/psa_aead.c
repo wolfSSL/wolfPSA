@@ -224,6 +224,15 @@ static int wolfpsa_aead_alg_permitted(psa_algorithm_t key_alg,
     return req_tag_len == key_tag_len;
 }
 
+/* Whether the permitted or enrollment algorithm allows AEAD alg */
+static int wolfpsa_aead_key_permits_alg(const psa_key_attributes_t *attributes,
+                                        psa_algorithm_t alg)
+{
+    return wolfpsa_aead_alg_permitted(psa_get_key_algorithm(attributes), alg) ||
+           wolfpsa_aead_alg_permitted(
+               psa_get_key_enrollment_algorithm(attributes), alg);
+}
+
 static psa_status_t wolfpsa_aead_check_key(psa_key_id_t key,
                                            psa_key_usage_t usage,
                                            psa_algorithm_t alg,
@@ -281,9 +290,7 @@ static psa_status_t wolfpsa_aead_check_key(psa_key_id_t key,
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    if (!wolfpsa_aead_alg_permitted(psa_get_key_algorithm(attributes), alg) &&
-        !wolfpsa_aead_alg_permitted(
-            psa_get_key_enrollment_algorithm(attributes), alg)) {
+    if (!wolfpsa_aead_key_permits_alg(attributes, alg)) {
         wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
         *key_data = NULL;
         *key_data_length = 0;
@@ -1583,7 +1590,6 @@ static psa_status_t wolfpsa_xchacha_oneshot_encrypt(
     size_t key_data_length = 0;
     psa_status_t status;
     psa_key_usage_t key_usage;
-    psa_algorithm_t key_alg;
     int ret;
     /* Encrypt produces plaintext_length bytes of ciphertext plus 16-byte tag. */
     size_t out_len;
@@ -1627,12 +1633,7 @@ static psa_status_t wolfpsa_xchacha_oneshot_encrypt(
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    key_alg = psa_get_key_algorithm(&attributes);
-    if (!PSA_ALG_AEAD_EQUAL(key_alg, PSA_ALG_XCHACHA20_POLY1305)) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-    if (!PSA_ALG_AEAD_EQUAL(key_alg, alg)) {
+    if (!wolfpsa_aead_key_permits_alg(&attributes, alg)) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_NOT_PERMITTED;
     }
@@ -1669,7 +1670,6 @@ static psa_status_t wolfpsa_xchacha_oneshot_decrypt(
     size_t key_data_length = 0;
     psa_status_t status;
     psa_key_usage_t key_usage;
-    psa_algorithm_t key_alg;
     int ret;
     size_t pt_len;
 
@@ -1710,12 +1710,7 @@ static psa_status_t wolfpsa_xchacha_oneshot_decrypt(
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    key_alg = psa_get_key_algorithm(&attributes);
-    if (!PSA_ALG_AEAD_EQUAL(key_alg, PSA_ALG_XCHACHA20_POLY1305)) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-    if (!PSA_ALG_AEAD_EQUAL(key_alg, alg)) {
+    if (!wolfpsa_aead_key_permits_alg(&attributes, alg)) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_NOT_PERMITTED;
     }
@@ -1759,7 +1754,6 @@ static psa_status_t wolfpsa_ascon_oneshot_encrypt(
     size_t key_data_length = 0;
     psa_status_t status;
     psa_key_usage_t key_usage;
-    psa_algorithm_t key_alg;
     wc_AsconAEAD128 ascon;
     int ret;
     size_t out_len;
@@ -1807,12 +1801,7 @@ static psa_status_t wolfpsa_ascon_oneshot_encrypt(
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    key_alg = psa_get_key_algorithm(&attributes);
-    if (!PSA_ALG_AEAD_EQUAL(key_alg, PSA_ALG_ASCON_AEAD128)) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-    if (!PSA_ALG_AEAD_EQUAL(key_alg, alg)) {
+    if (!wolfpsa_aead_key_permits_alg(&attributes, alg)) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_NOT_PERMITTED;
     }
@@ -1865,7 +1854,6 @@ static psa_status_t wolfpsa_ascon_oneshot_decrypt(
     size_t key_data_length = 0;
     psa_status_t status;
     psa_key_usage_t key_usage;
-    psa_algorithm_t key_alg;
     wc_AsconAEAD128 ascon;
     int ret;
     size_t ct_len; /* ciphertext body length (without tag) */
@@ -1912,12 +1900,7 @@ static psa_status_t wolfpsa_ascon_oneshot_decrypt(
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    key_alg = psa_get_key_algorithm(&attributes);
-    if (!PSA_ALG_AEAD_EQUAL(key_alg, PSA_ALG_ASCON_AEAD128)) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-    if (!PSA_ALG_AEAD_EQUAL(key_alg, alg)) {
+    if (!wolfpsa_aead_key_permits_alg(&attributes, alg)) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_NOT_PERMITTED;
     }

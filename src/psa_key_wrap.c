@@ -55,7 +55,6 @@ psa_status_t psa_wrap_key(psa_key_id_t wrapping_key,
     psa_key_attributes_t target_attr;
     psa_key_type_t wrap_type;
     psa_key_usage_t wrap_usage;
-    psa_algorithm_t wrap_alg;
     uint8_t *kek = NULL;
     size_t kek_len = 0;
     uint8_t *plaintext = NULL;
@@ -107,8 +106,7 @@ psa_status_t psa_wrap_key(psa_key_id_t wrapping_key,
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    wrap_alg = psa_get_key_algorithm(&wrap_attr);
-    if (wrap_alg == PSA_ALG_NONE || wrap_alg != alg) {
+    if (!wolfpsa_key_permits_alg(&wrap_attr, alg)) {
         wolfpsa_forcezero_free_key_data(kek, kek_len);
         return PSA_ERROR_NOT_PERMITTED;
     }
@@ -208,7 +206,6 @@ psa_status_t psa_unwrap_key(const psa_key_attributes_t *attributes,
     psa_key_attributes_t wrap_attr;
     psa_key_type_t wrap_type;
     psa_key_usage_t wrap_usage;
-    psa_algorithm_t wrap_alg;
     uint8_t *kek = NULL;
     size_t kek_len = 0;
     uint8_t *plaintext = NULL;
@@ -267,8 +264,7 @@ psa_status_t psa_unwrap_key(const psa_key_attributes_t *attributes,
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    wrap_alg = psa_get_key_algorithm(&wrap_attr);
-    if (wrap_alg == PSA_ALG_NONE || wrap_alg != alg) {
+    if (!wolfpsa_key_permits_alg(&wrap_attr, alg)) {
         wolfpsa_forcezero_free_key_data(kek, kek_len);
         return PSA_ERROR_NOT_PERMITTED;
     }
