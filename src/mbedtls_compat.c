@@ -726,7 +726,8 @@ static void MbedSuiteName(byte cs0, byte cs, char* name, size_t sz)
 const int* mbedtls_ssl_list_ciphersuites(void)
 {
     WOLFSSL_CTX* ctx;
-    Suites* suites;
+    WOLFSSL* ssl = NULL;
+    const Suites* suites = NULL;
     size_t n = 0;
     word16 i;
     byte cs0;
@@ -738,10 +739,13 @@ const int* mbedtls_ssl_list_ciphersuites(void)
         return mbedSuiteIds;
     }
     ctx = wolfSSL_CTX_new(wolfTLS_client_method());
-    suites = (Suites*)XMALLOC(sizeof(*suites), NULL, DYNAMIC_TYPE_SUITES);
-    if (ctx != NULL && suites != NULL) {
-        XMEMSET(suites, 0, sizeof(*suites));
-        InitSSL_CTX_Suites(ctx, suites);
+    if (ctx != NULL) {
+        ssl = wolfSSL_new(ctx);
+    }
+    if (ssl != NULL) {
+        suites = WOLFSSL_SUITES(ssl);
+    }
+    if (suites != NULL) {
         for (i = 0; i + 1 < suites->suiteSz && n < MBED_SUITES_MAX; i += 2) {
             cs0 = suites->suites[i];
             cs = suites->suites[i + 1];
@@ -756,7 +760,7 @@ const int* mbedtls_ssl_list_ciphersuites(void)
         mbedSuitesSet = 1;
     }
     mbedSuiteIds[n] = 0;
-    XFREE(suites, NULL, DYNAMIC_TYPE_SUITES);
+    wolfSSL_free(ssl);
     wolfSSL_CTX_free(ctx);
     return mbedSuiteIds;
 }
