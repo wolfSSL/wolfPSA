@@ -155,10 +155,21 @@ static const struct {
     { PSA_ALG_CHACHA20_POLY1305, UINT64_MAX, (uint64_t)UINT32_MAX * 64 },
 };
 
-static int wolfpsa_aead_lengths_valid(psa_algorithm_t alg, size_t ad_length,
-                                      size_t plaintext_length)
+/* A zero nonce_length means the nonce is not set yet */
+static int wolfpsa_aead_lengths_valid(psa_algorithm_t alg, size_t nonce_length,
+                                      size_t ad_length, size_t plaintext_length)
 {
     size_t i;
+    size_t len_size;
+
+    /* CCM encodes the plaintext length in the 15 - nonce_length bytes */
+    if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM) && nonce_length != 0) {
+        len_size = 15 - nonce_length;
+        if (len_size < sizeof(uint64_t) &&
+            ((uint64_t)plaintext_length >> (8 * len_size)) != 0) {
+            return 0;
+        }
+    }
 
     for (i = 0; i < sizeof(wolfpsa_aead_limits) /
                     sizeof(wolfpsa_aead_limits[0]); i++) {
@@ -453,8 +464,8 @@ psa_status_t psa_aead_set_lengths(psa_aead_operation_t *operation,
     if (ctx->lengths_set || ctx->ad_started || ctx->body_started) {
         status = PSA_ERROR_BAD_STATE;
     }
-    else if (!wolfpsa_aead_lengths_valid(ctx->alg, ad_length,
-                                         plaintext_length)) {
+    else if (!wolfpsa_aead_lengths_valid(ctx->alg, ctx->nonce_length,
+                                         ad_length, plaintext_length)) {
         status = PSA_ERROR_INVALID_ARGUMENT;
     }
     if (status != PSA_SUCCESS) {
@@ -507,6 +518,11 @@ psa_status_t psa_aead_set_nonce(psa_aead_operation_t *operation,
         if (expected == 0 || nonce_length != expected) {
             return PSA_ERROR_INVALID_ARGUMENT;
         }
+    }
+    if (ctx->lengths_set &&
+        !wolfpsa_aead_lengths_valid(ctx->alg, nonce_length, ctx->ad_expected,
+                                    ctx->plaintext_expected)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
     }
 
     XMEMCPY(ctx->nonce, nonce, nonce_length);
@@ -577,15 +593,12 @@ psa_status_t psa_aead_update_ad(psa_aead_operation_t *operation,
         psa_aead_abort(operation);
         return status;
     }
-    if (ctx->nonce_length == 0) {
+    if (ctx->nonce_length == 0 || wolfpsa_aead_lengths_missing(ctx)) {
         return PSA_ERROR_BAD_STATE;
     }
     if (input_length == 0) {
         ctx->ad_started = 1;
         return PSA_SUCCESS;
-    }
-    if (wolfpsa_aead_lengths_missing(ctx)) {
-        return PSA_ERROR_BAD_STATE;
     }
     if (ctx->lengths_set &&
         (input_length > SIZE_MAX - ctx->aad_length ||

@@ -127,10 +127,12 @@ static void check_ccm_without_lengths(void)
            "CCM setup");
     expect(psa_aead_generate_nonce(&op, gen, sizeof(gen), &len), PSA_SUCCESS,
            "CCM generate nonce before lengths");
-    expect(psa_aead_update_ad(&op, ad, 0), PSA_SUCCESS,
+    expect(psa_aead_update_ad(&op, ad, 0), PSA_ERROR_BAD_STATE,
            "CCM empty additional data before lengths");
     expect(psa_aead_update_ad(&op, ad, sizeof(ad)), PSA_ERROR_BAD_STATE,
            "CCM additional data before lengths");
+    expect(psa_aead_set_lengths(&op, sizeof(ad), sizeof(msg)), PSA_SUCCESS,
+           "CCM lengths after rejected additional data");
     psa_aead_abort(&op);
 
     expect(psa_aead_encrypt_setup(&op, key, PSA_ALG_CCM), PSA_SUCCESS,
@@ -140,6 +142,39 @@ static void check_ccm_without_lengths(void)
     expect(psa_aead_finish(&op, buf, sizeof(buf), &len, buf, sizeof(buf),
                            &tag_len),
            PSA_ERROR_BAD_STATE, "CCM finish without lengths");
+    psa_aead_abort(&op);
+    psa_destroy_key(key);
+}
+
+/* A 12-byte CCM nonce leaves 3 bytes for the plaintext length, checked by
+ * whichever of the nonce and lengths is set second. */
+static void check_ccm_length_limit(void)
+{
+    psa_aead_operation_t op = PSA_AEAD_OPERATION_INIT;
+    psa_key_id_t key = import_key(PSA_ALG_CCM);
+
+    expect(psa_aead_encrypt_setup(&op, key, PSA_ALG_CCM), PSA_SUCCESS,
+           "CCM setup");
+    expect(psa_aead_set_nonce(&op, nonce, sizeof(nonce)), PSA_SUCCESS,
+           "CCM nonce");
+    expect(psa_aead_set_lengths(&op, 0, 0x1000000),
+           PSA_ERROR_INVALID_ARGUMENT, "CCM lengths over the nonce limit");
+    psa_aead_abort(&op);
+
+    expect(psa_aead_encrypt_setup(&op, key, PSA_ALG_CCM), PSA_SUCCESS,
+           "CCM setup");
+    expect(psa_aead_set_nonce(&op, nonce, sizeof(nonce)), PSA_SUCCESS,
+           "CCM nonce");
+    expect(psa_aead_set_lengths(&op, 0, 0xFFFFFF), PSA_SUCCESS,
+           "CCM lengths at the nonce limit");
+    psa_aead_abort(&op);
+
+    expect(psa_aead_encrypt_setup(&op, key, PSA_ALG_CCM), PSA_SUCCESS,
+           "CCM setup");
+    expect(psa_aead_set_lengths(&op, 0, 0x1000000), PSA_SUCCESS,
+           "CCM lengths before nonce");
+    expect(psa_aead_set_nonce(&op, nonce, sizeof(nonce)),
+           PSA_ERROR_INVALID_ARGUMENT, "CCM nonce over the length limit");
     psa_aead_abort(&op);
     psa_destroy_key(key);
 }
@@ -195,6 +230,7 @@ int main(void)
     check_lengths_after_nonce(PSA_ALG_GCM, "GCM lengths after nonce");
     check_lengths_after_nonce(PSA_ALG_CCM, "CCM lengths after nonce");
     check_ccm_without_lengths();
+    check_ccm_length_limit();
     check_lengths_too_late();
 
     if (failures == 0) {
