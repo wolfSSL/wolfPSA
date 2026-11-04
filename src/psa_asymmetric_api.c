@@ -224,26 +224,10 @@ static int wolfpsa_sign_alg_permitted(psa_algorithm_t key_alg,
     }
     /* Standard PSA_ALG_ANY_HASH wildcard for hash-and-sign families */
     if (PSA_ALG_IS_SIGN_HASH(alg) &&
-        PSA_ALG_SIGN_GET_HASH(key_alg) == PSA_ALG_ANY_HASH) {
-        return (PSA_ALG_SIGN_GET_HASH(alg) != PSA_ALG_ANY_HASH) &&
-               ((key_alg & ~PSA_ALG_HASH_MASK) == (alg & ~PSA_ALG_HASH_MASK));
-    }
-    /* PSA_ALG_ANY_HASH wildcard for HashML-DSA and DeterministicHashML-DSA.
-     * PSA_ALG_IS_HASH_ML_DSA matches both families (its mask covers the
-     * 0x100 family selector bit), so gate on the hedged predicate and
-     * compare with the hash-only mask: a wildcard policy must not cross
-     * the hedged/deterministic boundary. */
-    if (PSA_ALG_IS_HEDGED_HASH_ML_DSA(alg) &&
-        PSA_ALG_IS_HEDGED_HASH_ML_DSA(key_alg) &&
-        PSA_ALG_GET_HASH(key_alg) == PSA_ALG_ANY_HASH) {
-        return (PSA_ALG_GET_HASH(alg) != PSA_ALG_ANY_HASH) &&
-               ((key_alg & ~0x000000ffU) == (alg & ~0x000000ffU));
-    }
-    if (PSA_ALG_IS_DETERMINISTIC_HASH_ML_DSA(alg) &&
-        PSA_ALG_IS_DETERMINISTIC_HASH_ML_DSA(key_alg) &&
-        PSA_ALG_GET_HASH(key_alg) == PSA_ALG_ANY_HASH) {
-        return (PSA_ALG_GET_HASH(alg) != PSA_ALG_ANY_HASH) &&
-               ((key_alg & ~0x000000ffU) == (alg & ~0x000000ffU));
+        PSA_ALG_SIGN_GET_HASH(key_alg) == PSA_ALG_ANY_HASH &&
+        PSA_ALG_SIGN_GET_HASH(alg) != PSA_ALG_ANY_HASH &&
+        (key_alg & ~PSA_ALG_HASH_MASK) == (alg & ~PSA_ALG_HASH_MASK)) {
+        return 1;
     }
     /* PSA 1.4 ECDSA verify-equivalence: for verify usages, ECDSA and
      * DETERMINISTIC_ECDSA with the same hash are interchangeable.
@@ -266,9 +250,7 @@ static int wolfpsa_sign_alg_permitted(psa_algorithm_t key_alg,
         if (PSA_ALG_IS_HASH_ML_DSA(alg) &&
             PSA_ALG_IS_HASH_ML_DSA(key_alg) &&
             PSA_ALG_GET_HASH(alg) != PSA_ALG_ANY_HASH) {
-            /* A wildcard is a policy placeholder, not an executable
-             * algorithm: the request must name a concrete hash, the
-             * same invariant the wildcard blocks above enforce. */
+            /* A wildcard is a policy, so the request must name a hash */
             if (PSA_ALG_GET_HASH(key_alg) == PSA_ALG_ANY_HASH ||
                 PSA_ALG_GET_HASH(key_alg) == PSA_ALG_GET_HASH(alg)) {
                 return 1;
@@ -1618,6 +1600,43 @@ psa_status_t psa_raw_key_agreement(psa_algorithm_t alg,
                                         output_length);
 }
 
+static psa_status_t wolfpsa_key_agreement_kdf(psa_key_id_t private_key,
+                                              const uint8_t *peer_key,
+                                              size_t peer_key_length,
+                                              psa_algorithm_t alg,
+                                              const psa_key_attributes_t *
+                                              attributes,
+                                              psa_key_id_t *key)
+{
+    psa_algorithm_t kdf_alg = PSA_ALG_KEY_AGREEMENT_GET_KDF(alg);
+    psa_key_derivation_operation_t kdf_op = PSA_KEY_DERIVATION_OPERATION_INIT;
+    psa_status_t status;
+
+    status = psa_key_derivation_setup(&kdf_op, alg);
+    if (status == PSA_SUCCESS &&
+        (PSA_ALG_IS_HKDF(kdf_alg) || PSA_ALG_IS_HKDF_EXTRACT(kdf_alg))) {
+        status = psa_key_derivation_input_bytes(&kdf_op,
+                                                PSA_KEY_DERIVATION_INPUT_SALT,
+                                                NULL, 0);
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_key_derivation_key_agreement(
+            &kdf_op, PSA_KEY_DERIVATION_INPUT_SECRET, private_key, peer_key,
+            peer_key_length);
+    }
+    if (status == PSA_SUCCESS &&
+        (PSA_ALG_IS_HKDF(kdf_alg) || PSA_ALG_IS_HKDF_EXPAND(kdf_alg))) {
+        status = psa_key_derivation_input_bytes(&kdf_op,
+                                                PSA_KEY_DERIVATION_INPUT_INFO,
+                                                NULL, 0);
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_key_derivation_output_key(attributes, &kdf_op, key);
+    }
+    psa_key_derivation_abort(&kdf_op);
+    return status;
+}
+
 psa_status_t psa_key_agreement(psa_key_id_t private_key,
                                const uint8_t *peer_key,
                                size_t peer_key_length,
@@ -1629,9 +1648,8 @@ psa_status_t psa_key_agreement(psa_key_id_t private_key,
     size_t secret_len;
     size_t output_len = 0;
     psa_status_t status;
-    psa_algorithm_t kdf_alg;
+    psa_key_type_t out_type;
     psa_key_attributes_t priv_attr = PSA_KEY_ATTRIBUTES_INIT;
-    psa_key_derivation_operation_t kdf_op = PSA_KEY_DERIVATION_OPERATION_INIT;
 
     wolfpsa_clear_key_id(key);
     if (attributes == NULL || key == NULL) {
@@ -1640,6 +1658,12 @@ psa_status_t psa_key_agreement(psa_key_id_t private_key,
 
     if (!PSA_ALG_IS_KEY_AGREEMENT(alg)) {
         return PSA_ERROR_NOT_SUPPORTED;
+    }
+
+    if (!PSA_ALG_IS_RAW_KEY_AGREEMENT(alg)) {
+        return wolfpsa_key_agreement_kdf(private_key, peer_key,
+                                         peer_key_length, alg, attributes,
+                                         key);
     }
 
     status = psa_get_key_attributes(private_key, &priv_attr);
@@ -1667,62 +1691,16 @@ psa_status_t psa_key_agreement(psa_key_id_t private_key,
         return status;
     }
 
-    kdf_alg = PSA_ALG_KEY_AGREEMENT_GET_KDF(alg);
-    if (kdf_alg == PSA_ALG_CATEGORY_KEY_DERIVATION) {
-        psa_key_type_t out_type = psa_get_key_type(attributes);
-
-        if (out_type != PSA_KEY_TYPE_DERIVE &&
-            out_type != PSA_KEY_TYPE_RAW_DATA) {
-            wc_ForceZero(secret, secret_len);
-            XFREE(secret, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            return PSA_ERROR_INVALID_ARGUMENT;
-        }
+    out_type = psa_get_key_type(attributes);
+    if (out_type != PSA_KEY_TYPE_DERIVE &&
+        out_type != PSA_KEY_TYPE_RAW_DATA) {
+        status = PSA_ERROR_INVALID_ARGUMENT;
+    }
+    else {
         status = psa_import_key(attributes, secret, output_len, key);
-        wc_ForceZero(secret, secret_len);
-        XFREE(secret, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        return status;
     }
-
-    status = psa_key_derivation_setup(&kdf_op, kdf_alg);
-    if (status != PSA_SUCCESS) {
-        wc_ForceZero(secret, secret_len);
-        XFREE(secret, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        return status;
-    }
-
-    if (PSA_ALG_IS_HKDF(kdf_alg) || PSA_ALG_IS_HKDF_EXTRACT(kdf_alg)) {
-        status = psa_key_derivation_input_bytes(&kdf_op,
-                                                PSA_KEY_DERIVATION_INPUT_SALT,
-                                                NULL, 0);
-        if (status != PSA_SUCCESS) {
-            wc_ForceZero(secret, secret_len);
-            XFREE(secret, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            psa_key_derivation_abort(&kdf_op);
-            return status;
-        }
-    }
-
-    status = psa_key_derivation_input_bytes(&kdf_op, PSA_KEY_DERIVATION_INPUT_SECRET,
-                                            secret, output_len);
     wc_ForceZero(secret, secret_len);
     XFREE(secret, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    if (status != PSA_SUCCESS) {
-        psa_key_derivation_abort(&kdf_op);
-        return status;
-    }
-
-    if (PSA_ALG_IS_HKDF(kdf_alg) || PSA_ALG_IS_HKDF_EXPAND(kdf_alg)) {
-        status = psa_key_derivation_input_bytes(&kdf_op,
-                                                PSA_KEY_DERIVATION_INPUT_INFO,
-                                                NULL, 0);
-        if (status != PSA_SUCCESS) {
-            psa_key_derivation_abort(&kdf_op);
-            return status;
-        }
-    }
-
-    status = psa_key_derivation_output_key(attributes, &kdf_op, key);
-    psa_key_derivation_abort(&kdf_op);
     return status;
 }
 

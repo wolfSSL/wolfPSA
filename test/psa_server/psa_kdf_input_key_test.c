@@ -87,19 +87,205 @@ static psa_status_t derive(psa_key_derivation_operation_t *op,
     return status;
 }
 
-static psa_status_t import_secret_key(const uint8_t *key, size_t key_len,
-                                      psa_algorithm_t kdf_alg,
-                                      psa_key_type_t type,
-                                      psa_key_id_t *kid)
+static psa_status_t import_usage_key(const uint8_t *key, size_t key_len,
+                                     psa_algorithm_t kdf_alg,
+                                     psa_key_type_t type,
+                                     psa_key_usage_t usage,
+                                     psa_key_id_t *kid)
 {
     psa_key_attributes_t attrs = psa_key_attributes_init();
 
     *kid = PSA_KEY_ID_NULL;
     psa_set_key_type(&attrs, type);
     psa_set_key_bits(&attrs, (psa_key_bits_t)(key_len * 8u));
-    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE);
+    psa_set_key_usage_flags(&attrs, usage);
     psa_set_key_algorithm(&attrs, kdf_alg);
     return psa_import_key(&attrs, key, key_len, kid);
+}
+
+static psa_status_t import_secret_key(const uint8_t *key, size_t key_len,
+                                      psa_algorithm_t kdf_alg,
+                                      psa_key_type_t type,
+                                      psa_key_id_t *kid)
+{
+    return import_usage_key(key, key_len, kdf_alg, type,
+                            PSA_KEY_USAGE_DERIVE, kid);
+}
+
+static const uint8_t kdf_input[16] = {
+    0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+    0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b
+};
+
+/* Set up alg and, for PBKDF2, input the cost that must come first */
+static psa_status_t kdf_start(psa_key_derivation_operation_t *op,
+                              psa_algorithm_t alg)
+{
+    psa_status_t status = psa_key_derivation_setup(op, alg);
+
+    if (status == PSA_SUCCESS && PSA_ALG_IS_PBKDF2(alg)) {
+        status = psa_key_derivation_input_integer(
+            op, PSA_KEY_DERIVATION_INPUT_COST, 1);
+    }
+    return status;
+}
+
+/* Key type accepted or rejected for each input step */
+static void test_input_key_types(void)
+{
+    static const struct {
+        const char *name;
+        psa_algorithm_t alg;
+        psa_key_derivation_step_t step;
+        psa_key_type_t type;
+        psa_status_t expected;
+    } cases[] = {
+        { "HKDF secret DERIVE", PSA_ALG_HKDF(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_SECRET, PSA_KEY_TYPE_DERIVE,
+          PSA_SUCCESS },
+        { "HKDF secret RAW_DATA", PSA_ALG_HKDF(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_SECRET, PSA_KEY_TYPE_RAW_DATA,
+          PSA_ERROR_INVALID_ARGUMENT },
+        { "HKDF salt RAW_DATA", PSA_ALG_HKDF(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_SALT, PSA_KEY_TYPE_RAW_DATA,
+          PSA_SUCCESS },
+        { "HKDF salt DERIVE", PSA_ALG_HKDF(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_SALT, PSA_KEY_TYPE_DERIVE,
+          PSA_ERROR_INVALID_ARGUMENT },
+        { "HKDF info RAW_DATA", PSA_ALG_HKDF(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_INFO, PSA_KEY_TYPE_RAW_DATA,
+          PSA_SUCCESS },
+        { "TLS 1.2 PRF seed RAW_DATA", PSA_ALG_TLS12_PRF(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_SEED, PSA_KEY_TYPE_RAW_DATA,
+          PSA_SUCCESS },
+        { "PBKDF2 password PASSWORD", PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_PASSWORD, PSA_KEY_TYPE_PASSWORD,
+          PSA_SUCCESS },
+        { "PBKDF2 password DERIVE", PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_PASSWORD, PSA_KEY_TYPE_DERIVE,
+          PSA_SUCCESS },
+        { "PBKDF2 password RAW_DATA", PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_PASSWORD, PSA_KEY_TYPE_RAW_DATA,
+          PSA_ERROR_INVALID_ARGUMENT },
+        { "PBKDF2 salt RAW_DATA", PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_SALT, PSA_KEY_TYPE_RAW_DATA,
+          PSA_SUCCESS },
+        { "SP800-108 context RAW_DATA",
+          PSA_ALG_SP800_108_COUNTER_HMAC(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_CONTEXT, PSA_KEY_TYPE_RAW_DATA,
+          PSA_SUCCESS },
+    };
+    psa_key_derivation_operation_t op;
+    psa_key_id_t kid;
+    psa_status_t status;
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        op = psa_key_derivation_operation_init();
+        status = kdf_start(&op, cases[i].alg);
+        if (status == PSA_ERROR_NOT_SUPPORTED) {
+            continue;
+        }
+        if (expect_status(cases[i].name, status, PSA_SUCCESS) != 0 ||
+            expect_status(cases[i].name,
+                          import_secret_key(kdf_input, sizeof(kdf_input),
+                                            cases[i].alg, cases[i].type,
+                                            &kid), PSA_SUCCESS) != 0) {
+            failures++;
+            psa_key_derivation_abort(&op);
+            continue;
+        }
+        status = psa_key_derivation_input_key(&op, cases[i].step, kid);
+        if (expect_status(cases[i].name, status, cases[i].expected) != 0)
+            failures++;
+        psa_key_derivation_abort(&op);
+        psa_destroy_key(kid);
+    }
+}
+
+/* output_key needs the secret or password to come from a DERIVE key.
+ * A usage of 0 inputs the secret or password as bytes. */
+static void test_output_key_permission(void)
+{
+    static const struct {
+        const char *name;
+        psa_algorithm_t alg;
+        psa_key_derivation_step_t step;
+        psa_key_usage_t usage;
+        psa_status_t expected;
+    } cases[] = {
+        { "HKDF secret from key", PSA_ALG_HKDF(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_SECRET, PSA_KEY_USAGE_DERIVE,
+          PSA_SUCCESS },
+        { "HKDF secret from verify-only key", PSA_ALG_HKDF(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_SECRET, PSA_KEY_USAGE_VERIFY_DERIVATION,
+          PSA_ERROR_NOT_PERMITTED },
+        { "HKDF secret from bytes", PSA_ALG_HKDF(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_SECRET, 0, PSA_ERROR_NOT_PERMITTED },
+        { "PBKDF2 password from key", PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_PASSWORD, PSA_KEY_USAGE_DERIVE,
+          PSA_SUCCESS },
+        { "PBKDF2 password from verify-only key",
+          PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_PASSWORD, PSA_KEY_USAGE_VERIFY_DERIVATION,
+          PSA_ERROR_NOT_PERMITTED },
+        { "PBKDF2 password from bytes",
+          PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256),
+          PSA_KEY_DERIVATION_INPUT_PASSWORD, 0, PSA_ERROR_NOT_PERMITTED },
+    };
+    psa_key_attributes_t out_attrs = psa_key_attributes_init();
+    psa_key_derivation_operation_t op;
+    psa_key_id_t kid = PSA_KEY_ID_NULL;
+    psa_key_id_t out_id = PSA_KEY_ID_NULL;
+    psa_status_t status;
+    size_t i;
+
+    psa_set_key_type(&out_attrs, PSA_KEY_TYPE_RAW_DATA);
+    psa_set_key_bits(&out_attrs, 128);
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        op = psa_key_derivation_operation_init();
+        status = kdf_start(&op, cases[i].alg);
+        if (status == PSA_ERROR_NOT_SUPPORTED) {
+            continue;
+        }
+        if (status == PSA_SUCCESS && PSA_ALG_IS_PBKDF2(cases[i].alg)) {
+            status = psa_key_derivation_input_bytes(
+                &op, PSA_KEY_DERIVATION_INPUT_SALT, kdf_input,
+                sizeof(kdf_input));
+        }
+        if (status == PSA_SUCCESS && cases[i].usage != 0) {
+            status = import_usage_key(kdf_input, sizeof(kdf_input),
+                                      cases[i].alg, PSA_KEY_TYPE_DERIVE,
+                                      cases[i].usage, &kid);
+            if (status == PSA_SUCCESS)
+                status = psa_key_derivation_input_key(&op, cases[i].step,
+                                                      kid);
+        }
+        else if (status == PSA_SUCCESS) {
+            status = psa_key_derivation_input_bytes(&op, cases[i].step,
+                                                    kdf_input,
+                                                    sizeof(kdf_input));
+        }
+        if (status == PSA_SUCCESS && PSA_ALG_IS_HKDF(cases[i].alg)) {
+            status = psa_key_derivation_input_bytes(
+                &op, PSA_KEY_DERIVATION_INPUT_INFO, kdf_input,
+                sizeof(kdf_input));
+        }
+        if (expect_status(cases[i].name, status, PSA_SUCCESS) != 0) {
+            failures++;
+        }
+        else {
+            status = psa_key_derivation_output_key(&out_attrs, &op, &out_id);
+            if (expect_status(cases[i].name, status, cases[i].expected) != 0)
+                failures++;
+        }
+        psa_key_derivation_abort(&op);
+        psa_destroy_key(out_id);
+        psa_destroy_key(kid);
+        out_id = PSA_KEY_ID_NULL;
+        kid = PSA_KEY_ID_NULL;
+    }
 }
 
 int main(void)
@@ -216,6 +402,9 @@ int main(void)
 
     psa_destroy_key(aes_id);
     psa_destroy_key(hmac_id);
+
+    test_input_key_types();
+    test_output_key_permission();
 
     if (failures == 0) {
         printf("input-key tests: all passed\n");

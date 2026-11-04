@@ -141,6 +141,14 @@ static int wolfpsa_hash_type_from_alg(psa_algorithm_t alg)
             return WC_HASH_TYPE_SHA512_224;
         case PSA_ALG_SHA_512_256:
             return WC_HASH_TYPE_SHA512_256;
+        case PSA_ALG_SHA3_224:
+            return WC_HASH_TYPE_SHA3_224;
+        case PSA_ALG_SHA3_256:
+            return WC_HASH_TYPE_SHA3_256;
+        case PSA_ALG_SHA3_384:
+            return WC_HASH_TYPE_SHA3_384;
+        case PSA_ALG_SHA3_512:
+            return WC_HASH_TYPE_SHA3_512;
         default:
             return WC_HASH_TYPE_NONE;
     }
