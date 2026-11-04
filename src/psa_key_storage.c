@@ -542,6 +542,74 @@ static psa_status_t wolfpsa_volatile_get_attributes(psa_key_id_t key_id,
     return st;
 }
 
+#ifndef NO_RSA
+/* Decode RSA key data of the given type and get the modulus size in bits. */
+static psa_status_t wolfpsa_rsa_key_bits(psa_key_type_t type,
+                                         const uint8_t* data,
+                                         size_t data_length,
+                                         psa_key_bits_t* bits)
+{
+    RsaKey rsa;
+    word32 idx = 0;
+    int ret;
+    int n_bits = 0;
+
+    ret = wc_InitRsaKey(&rsa, NULL);
+    if (ret == 0) {
+        if (type == PSA_KEY_TYPE_RSA_PUBLIC_KEY) {
+            ret = wc_RsaPublicKeyDecode(data, &idx, &rsa, (word32)data_length);
+        }
+        else {
+            ret = wc_RsaPrivateKeyDecode(data, &idx, &rsa,
+                                         (word32)data_length);
+        }
+        if (ret == 0) {
+            n_bits = mp_count_bits(&rsa.n);
+        }
+        wc_FreeRsaKey(&rsa);
+    }
+
+    if (ret == MEMORY_E) {
+        return PSA_ERROR_INSUFFICIENT_MEMORY;
+    }
+    if (ret != 0 || idx != (word32)data_length || n_bits <= 0) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if ((n_bits % 8) != 0 || n_bits > (int)PSA_VENDOR_RSA_MAX_KEY_BITS) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    *bits = (psa_key_bits_t)n_bits;
+    return PSA_SUCCESS;
+}
+#endif /* !NO_RSA */
+
+#ifdef HAVE_ECC
+/* wolfCrypt checks that the private scalar is in [1, n-1] on import. */
+static psa_status_t wolfpsa_ecc_check_private_key(
+    const psa_key_attributes_t* attr, const uint8_t* data, size_t data_length)
+{
+    ecc_key ecc;
+    int curve_id;
+    int ret;
+
+    curve_id = wc_psa_get_ecc_curve_id(attr->type, attr->bits);
+    if (curve_id == ECC_CURVE_INVALID) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    ret = wc_ecc_init_ex(&ecc, NULL, INVALID_DEVID);
+    if (ret == 0) {
+        ret = wc_ecc_import_private_key_ex(data, (word32)data_length, NULL, 0,
+                                           &ecc, curve_id);
+        wc_ecc_free(&ecc);
+    }
+
+    if (ret == MEMORY_E) {
+        return PSA_ERROR_INSUFFICIENT_MEMORY;
+    }
+    return (ret == 0) ? PSA_SUCCESS : PSA_ERROR_INVALID_ARGUMENT;
+}
+#endif /* HAVE_ECC */
+
 static psa_status_t wolfpsa_infer_key_bits(psa_key_attributes_t* attr,
                                            const uint8_t* data,
                                            size_t data_length)
@@ -605,43 +673,6 @@ static psa_status_t wolfpsa_infer_key_bits(psa_key_attributes_t* attr,
         attr->bits = inferred_bits;
         return PSA_SUCCESS;
     }
-
-#ifndef NO_RSA
-    if (PSA_KEY_TYPE_IS_RSA(attr->type)) {
-        RsaKey rsa;
-        word32 idx = 0;
-        int ret;
-        int size;
-
-        /* Parse-only key: no devId, because wc_RsaEncryptSize() answers a
-         * hard-coded 2048 bits for a device that declines the call, which
-         * would let a zero-modulus key past the size check below. */
-        ret = wc_InitRsaKey(&rsa, NULL);
-        if (ret != 0) {
-            return psa_wc_error_to_psa_status(ret);
-        }
-
-        if (attr->type == PSA_KEY_TYPE_RSA_PUBLIC_KEY) {
-            ret = wc_RsaPublicKeyDecode(data, &idx, &rsa, (word32)data_length);
-        }
-        else {
-            ret = wc_RsaPrivateKeyDecode(data, &idx, &rsa, (word32)data_length);
-        }
-
-        if (ret == 0) {
-            size = wc_RsaEncryptSize(&rsa);
-            if (size <= 0) {
-                ret = BAD_FUNC_ARG;
-            }
-            else {
-                attr->bits = (psa_key_bits_t)((size_t)size * 8U);
-            }
-        }
-
-        wc_FreeRsaKey(&rsa);
-        return ret == 0 ? PSA_SUCCESS : psa_wc_error_to_psa_status(ret);
-    }
-#endif
 
     if (PSA_KEY_TYPE_IS_DH(attr->type)) {
         attr->bits = (psa_key_bits_t)(data_length * 8U);
@@ -1172,6 +1203,23 @@ psa_status_t psa_import_key(
         wolfpsa_debug_import_reason("unsupported key type", &attr, data_length);
         return PSA_ERROR_NOT_SUPPORTED;
     }
+#ifndef NO_RSA
+    if (PSA_KEY_TYPE_IS_RSA(attr.type)) {
+        psa_key_bits_t rsa_bits = 0;
+
+        status = wolfpsa_rsa_key_bits(attr.type, data, data_length,
+                                      &rsa_bits);
+        if (status == PSA_SUCCESS && attr.bits != 0 && attr.bits != rsa_bits) {
+            status = PSA_ERROR_INVALID_ARGUMENT;
+        }
+        if (status != PSA_SUCCESS) {
+            wolfpsa_debug_import_reason("invalid RSA key data", &attr,
+                                        data_length);
+            return status;
+        }
+        attr.bits = rsa_bits;
+    }
+#endif /* !NO_RSA */
     if (attr.bits == 0) {
         status = wolfpsa_infer_key_bits(&attr, data, data_length);
         if (status != PSA_SUCCESS) {
@@ -1418,6 +1466,18 @@ psa_status_t psa_import_key(
                                         data_length);
             return PSA_ERROR_INVALID_ARGUMENT;
         }
+#ifdef HAVE_ECC
+        if (PSA_KEY_TYPE_IS_ECC_KEY_PAIR(attr.type) &&
+            family != PSA_ECC_FAMILY_MONTGOMERY &&
+            family != PSA_ECC_FAMILY_TWISTED_EDWARDS) {
+            status = wolfpsa_ecc_check_private_key(&attr, data, data_length);
+            if (status != PSA_SUCCESS) {
+                wolfpsa_debug_import_reason("invalid ECC private key", &attr,
+                                            data_length);
+                return status;
+            }
+        }
+#endif /* HAVE_ECC */
     }
 
     /* Check if the key storage is initialized */
