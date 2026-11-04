@@ -35,7 +35,13 @@
 #else
 
 #define WOLFCRYPT_ONLY
+/* MBEDTLS_THREADING_C: thread safe, see src/psa_lock.h */
+#if defined(MBEDTLS_THREADING_C) && !defined(WOLFPSA_THREAD_SAFE)
+#define WOLFPSA_THREAD_SAFE
+#endif /* MBEDTLS_THREADING_C && !WOLFPSA_THREAD_SAFE */
+#ifndef WOLFPSA_THREAD_SAFE
 #define SINGLE_THREADED
+#endif /* WOLFPSA_THREAD_SAFE */
 #define WOLFSSL_PSA_ENGINE
 #define WOLFSSL_SP_MATH_ALL
 #define WOLFSSL_HAVE_SP_RSA

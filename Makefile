@@ -79,6 +79,17 @@ WOLFCRYPT_SRC := \
 WOLFCRYPT_OBJ := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 
+# MBEDTLS_THREADING_C=1 builds a thread safe library, as in Mbed TLS. See
+# user_settings.h. Applications define MBEDTLS_THREADING_C too.
+ifeq ($(MBEDTLS_THREADING_C),1)
+CPPFLAGS += -DMBEDTLS_THREADING_C
+LDFLAGS += -pthread
+endif
+
+# Changing MBEDTLS_THREADING_C rebuilds every object
+OPTIONS_STAMP := $(BUILD_DIR)/options_$(if \
+	$(filter 1,$(MBEDTLS_THREADING_C)),threads,nothreads)
+
 WOLFSSL_CPPFLAGS ?= -DWOLFSSL_USER_SETTINGS
 
 CPPFLAGS += -I$(WOLFSSL_PATH) -I$(USER_SETTINGS_PATH) \
@@ -161,6 +172,13 @@ want-surface-test: $(LIBNAME) $(SHLIBNAME)
 		-lpthread -lm
 	$(BUILD_DIR)/psa_want_surface_test
 
+$(OBJ) $(WOLFCRYPT_OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC): $(OPTIONS_STAMP)
+
+$(OPTIONS_STAMP):
+	@mkdir -p $(@D)
+	rm -f $(BUILD_DIR)/options_*
+	touch $@
+
 $(OBJDIR)/%.o: src/%.c
 	@mkdir -p $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
@@ -241,7 +259,9 @@ UNIT_TESTS := psa_api_test \
 	psa_zero_capacity_buffer_test \
 	psa_want_surface_test \
 	psa_tf_psa_extra_test \
-	psa_aead_gcm_short_tag_test
+	psa_aead_gcm_short_tag_test \
+	psa_tf_psa_pk_test \
+	psa_tf_psa_threading_test
 
 # Run the unit test loop from the repo root (psa_rsa_pss_interop_test reads
 # its certificate relative to the root). Assumes the tests are already built.

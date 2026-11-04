@@ -144,8 +144,12 @@ PSA_REGRESSION_TESTS = psa_aead_multipart_test \
 BINARIES += $(PSA_REGRESSION_TESTS)
 
 # TF-PSA-Crypto extension tests, built with the default link recipe.
-PSA_TF_PSA_TESTS = psa_tf_psa_extra_test
+PSA_TF_PSA_TESTS = psa_tf_psa_extra_test psa_tf_psa_pk_test
 BINARIES += $(PSA_TF_PSA_TESTS)
+
+# The pk test reads wolfSSL's test keys
+psa_tf_psa_pk_test: \
+	CPPFLAGS += -DPK_CERTS_DIR='"$(abspath $(WOLFSSL_PATH))/certs"'
 
 # Regression test with a custom link: it replaces the store backend, so it
 # cannot use the recipe above (see PROBE_LIB below).
@@ -320,6 +324,21 @@ psa_store_commit_test: require-wolfssl-lib psa_server/psa_store_commit_test.o FO
 	$(CC) $(CFLAGS) -o $@ psa_server/psa_store_commit_test.o \
 		$(WOLFPSA_PATH)/libwolfpsa.a $(LDFLAGS) -lwolfssl -lpthread -lm $(RPATH_WOLFSSL)
 
+# The threading API exists only with MBEDTLS_THREADING_C, so its test has a
+# library built with it
+THREADS_BUILD_DIR := $(abspath .)/build-threads$(if $(SANITIZE_FLAGS),-asan)
+THREADS_LIB := $(THREADS_BUILD_DIR)/libwolfpsa-threads.a
+THREADS_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DMBEDTLS_THREADING_C \
+	$(VARIANT_INC) -I$(THREADS_BUILD_DIR)/include
+
+$(THREADS_LIB): FORCE
+	$(call variant_lib,$(THREADS_BUILD_DIR),-DMBEDTLS_THREADING_C)
+
+psa_tf_psa_threading_test: psa_server/psa_tf_psa_threading_test.c \
+		$(THREADS_LIB) FORCE
+	$(CC) $(THREADS_CPPFLAGS) $(CFLAGS) -o $@ $< $(THREADS_LIB) \
+		$(SANITIZE_FLAGS) -pthread -lm
+
 wolfcrypt-psa-benchmark:
 	make -C wolfcrypt-benchmark
 	cp wolfcrypt-benchmark/wolfcrypt-psa-benchmark ./wolfcrypt-psa-benchmark
@@ -360,6 +379,7 @@ clean:
 	rm -rf $(abspath .)/build-cryptocb $(abspath .)/build-cryptocb-asan
 	rm -rf $(abspath .)/build-probe $(abspath .)/build-probe-asan
 	rm -rf $(abspath .)/build-enroll $(abspath .)/build-enroll-asan
+	rm -rf $(abspath .)/build-threads $(abspath .)/build-threads-asan
 	rm -f $(BINARIES) psa_devid_cryptocb_test psa_kdf_zeroize_output_test *.o *.log
-	rm -f psa_enrollment_alg_test
+	rm -f psa_enrollment_alg_test psa_tf_psa_threading_test
 	rm -f psa_server/*.gcda psa_server/*.gcno
