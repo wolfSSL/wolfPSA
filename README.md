@@ -102,6 +102,9 @@ make MBEDTLS_COMPAT=1
 - wolfSSL's TLS sources are compiled from `WOLFSSL_PATH` into
   `libwolfpsa.a`, like wolfCrypt, with the TLS settings in
   `user_settings.h`. Changing the option rebuilds everything.
+- It also turns on `ENROLLMENT_ALG=1` (`WOLFPSA_ENROLLMENT_ALG`): a
+  volatile key may have the Mbed TLS enrollment algorithm, a second
+  permitted algorithm.
 - Applications use `-I<wolfPSA>/wolfpsa` and `-I<wolfPSA>/build/include`, and
   link `libwolfpsa.a`, in place of Mbed TLS's libraries. The headers include
   no wolfSSL header.

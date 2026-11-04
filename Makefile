@@ -85,6 +85,7 @@ WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/
 WOLFSSL_TLS_SRC :=
 ifeq ($(MBEDTLS_COMPAT),1)
 CPPFLAGS += -DWOLFPSA_MBEDTLS_COMPAT
+ENROLLMENT_ALG := 1
 WOLFSSL_TLS_SRC := $(addprefix $(WOLFSSL_PATH)/src/,internal.c keys.c ssl.c \
 	tls.c tls13.c wolfio.c)
 endif
