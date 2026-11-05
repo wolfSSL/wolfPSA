@@ -1156,6 +1156,7 @@ cleanup:
     return ret;
 }
 
+#ifdef HAVE_AES_ECB
 /* ECB takes no IV; the failed call aborts, so setup works again */
 static int test_cipher_ecb_iv(void)
 {
@@ -1206,6 +1207,22 @@ static int test_cipher_ecb_iv(void)
     st = psa_cipher_encrypt_setup(&op, key_id, PSA_ALG_ECB_NO_PADDING);
     if (check_status(st, "psa_cipher_encrypt_setup(ecb_iv 3)") != TEST_OK)
         goto cleanup;
+    st = psa_cipher_set_iv(&op, NULL, 0);
+    if (check_true(st == PSA_ERROR_BAD_STATE,
+                   "psa_cipher_set_iv rejects ECB NULL IV") != TEST_OK)
+        goto cleanup;
+
+    st = psa_cipher_encrypt_setup(&op, key_id, PSA_ALG_ECB_NO_PADDING);
+    if (check_status(st, "psa_cipher_encrypt_setup(ecb_iv 4)") != TEST_OK)
+        goto cleanup;
+    st = psa_cipher_generate_iv(&op, NULL, sizeof(iv), &iv_len);
+    if (check_true(st == PSA_ERROR_BAD_STATE,
+                   "psa_cipher_generate_iv rejects ECB NULL IV") != TEST_OK)
+        goto cleanup;
+
+    st = psa_cipher_encrypt_setup(&op, key_id, PSA_ALG_ECB_NO_PADDING);
+    if (check_status(st, "psa_cipher_encrypt_setup(ecb_iv 5)") != TEST_OK)
+        goto cleanup;
 
     ret = TEST_OK;
 
@@ -1216,6 +1233,7 @@ cleanup:
     }
     return ret;
 }
+#endif /* HAVE_AES_ECB */
 
 static int test_cipher_rejects_algorithm_mismatch(void)
 {
@@ -4536,6 +4554,19 @@ static int test_asym_ecc(void)
 /* F-3176: exercise high-level psa_key_agreement validation and dispatch. */
 static int test_psa_key_agreement(void)
 {
+    static const struct {
+        psa_key_type_t type;
+        psa_key_usage_t usage;
+        psa_algorithm_t alg;
+    } raw_outputs[] = {
+        { PSA_KEY_TYPE_DERIVE, PSA_KEY_USAGE_DERIVE,
+          PSA_ALG_HKDF(PSA_ALG_SHA_256) },
+        { PSA_KEY_TYPE_HMAC, PSA_KEY_USAGE_SIGN_MESSAGE,
+          PSA_ALG_HMAC(PSA_ALG_SHA_256) },
+        { PSA_KEY_TYPE_PASSWORD, PSA_KEY_USAGE_DERIVE,
+          PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256) },
+    };
+    size_t i;
     uint8_t peer_pub[128];
     uint8_t exported[32];
     size_t peer_pub_len = 0;
@@ -4563,19 +4594,24 @@ static int test_psa_key_agreement(void)
     if (check_status(st, "psa_export_public_key(psa_key_agreement peer)") != TEST_OK)
         goto cleanup;
 
-    psa_set_key_type(&out_attrs, PSA_KEY_TYPE_DERIVE);
-    psa_set_key_bits(&out_attrs, 256);
-    psa_set_key_usage_flags(&out_attrs, PSA_KEY_USAGE_DERIVE);
-    psa_set_key_algorithm(&out_attrs, PSA_ALG_HKDF(PSA_ALG_SHA_256));
+    for (i = 0; i < sizeof(raw_outputs) / sizeof(raw_outputs[0]); i++) {
+        psa_reset_key_attributes(&out_attrs);
+        psa_set_key_type(&out_attrs, raw_outputs[i].type);
+        psa_set_key_bits(&out_attrs, 256);
+        psa_set_key_usage_flags(&out_attrs, raw_outputs[i].usage);
+        psa_set_key_algorithm(&out_attrs, raw_outputs[i].alg);
 
-    st = psa_key_agreement(private_key, peer_pub, peer_pub_len, PSA_ALG_ECDH,
-                           &out_attrs, &agreed_key);
-    if (check_status(st, "psa_key_agreement raw ECDH to DERIVE key") != TEST_OK)
-        goto cleanup;
-    st = psa_destroy_key(agreed_key);
-    if (check_status(st, "psa_destroy_key(raw agreement output)") != TEST_OK)
-        goto cleanup;
-    agreed_key = PSA_KEY_ID_NULL;
+        st = psa_key_agreement(private_key, peer_pub, peer_pub_len,
+                               PSA_ALG_ECDH, &out_attrs, &agreed_key);
+        if (check_status(st, "psa_key_agreement raw ECDH output type") !=
+                TEST_OK)
+            goto cleanup;
+        st = psa_destroy_key(agreed_key);
+        if (check_status(st, "psa_destroy_key(raw agreement output)") !=
+                TEST_OK)
+            goto cleanup;
+        agreed_key = PSA_KEY_ID_NULL;
+    }
 
     psa_reset_key_attributes(&out_attrs);
     psa_set_key_type(&out_attrs, PSA_KEY_TYPE_AES);
@@ -9042,10 +9078,12 @@ int main(int argc, char** argv)
     if (only == NULL || strcmp(only, "cipher_generate_iv") == 0) {
         if (run_named_test("cipher_generate_iv", test_cipher_generate_iv) == TEST_FAIL) return TEST_FAIL;
     }
+#ifdef HAVE_AES_ECB
     if (only == NULL || strcmp(only, "cipher_ecb_iv") == 0) {
         if (run_named_test("cipher_ecb_iv", test_cipher_ecb_iv) == TEST_FAIL)
             return TEST_FAIL;
     }
+#endif /* HAVE_AES_ECB */
     if (only == NULL || strcmp(only, "cipher_algorithm_mismatch") == 0) {
         if (run_named_test("cipher_algorithm_mismatch",
                            test_cipher_rejects_algorithm_mismatch) == TEST_FAIL) {

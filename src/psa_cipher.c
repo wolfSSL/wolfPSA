@@ -599,12 +599,11 @@ static psa_status_t wolfpsa_cipher_set_iv(psa_cipher_operation_t *operation,
         return PSA_ERROR_BAD_STATE;
     }
     ctx->iv_attempted = 1;
-    if (iv == NULL) {
-        return PSA_ERROR_INVALID_ARGUMENT;
-    }
-
     if (wolfpsa_cipher_iv_length(ctx->alg, ctx->key_type) == 0) {
         return PSA_ERROR_BAD_STATE;
+    }
+    if (iv == NULL) {
+        return PSA_ERROR_INVALID_ARGUMENT;
     }
 
     if (ctx->alg == PSA_ALG_STREAM_CIPHER) {
@@ -696,16 +695,16 @@ static psa_status_t wolfpsa_cipher_generate_iv(
     if (ctx->direction != AES_ENCRYPTION) {
         return PSA_ERROR_BAD_STATE;
     }
+    expected_len = wolfpsa_cipher_iv_length(ctx->alg, ctx->key_type);
+    if (expected_len == 0) {
+        return PSA_ERROR_BAD_STATE;
+    }
     /* A NULL iv pointer is only an error when the caller declared a
      * nonzero capacity; (NULL, 0) must reach the size check below. */
     if (iv_length == NULL || (iv == NULL && iv_size != 0)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    expected_len = wolfpsa_cipher_iv_length(ctx->alg, ctx->key_type);
-    if (expected_len == 0) {
-        return PSA_ERROR_BAD_STATE;
-    }
     if (iv_size < expected_len) {
         return PSA_ERROR_BUFFER_TOO_SMALL;
     }

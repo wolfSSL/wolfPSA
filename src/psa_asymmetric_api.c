@@ -1666,6 +1666,14 @@ psa_status_t psa_key_agreement(psa_key_id_t private_key,
                                          key);
     }
 
+    out_type = psa_get_key_type(attributes);
+    if (out_type != PSA_KEY_TYPE_DERIVE &&
+        out_type != PSA_KEY_TYPE_RAW_DATA &&
+        out_type != PSA_KEY_TYPE_HMAC &&
+        out_type != PSA_KEY_TYPE_PASSWORD) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+
     status = psa_get_key_attributes(private_key, &priv_attr);
     if (status != PSA_SUCCESS) {
         return status;
@@ -1685,18 +1693,7 @@ psa_status_t psa_key_agreement(psa_key_id_t private_key,
     status = wolfpsa_key_agreement_secret(alg, private_key, peer_key,
                                           peer_key_length, secret, secret_len,
                                           &output_len);
-    if (status != PSA_SUCCESS) {
-        wc_ForceZero(secret, secret_len);
-        XFREE(secret, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        return status;
-    }
-
-    out_type = psa_get_key_type(attributes);
-    if (out_type != PSA_KEY_TYPE_DERIVE &&
-        out_type != PSA_KEY_TYPE_RAW_DATA) {
-        status = PSA_ERROR_INVALID_ARGUMENT;
-    }
-    else {
+    if (status == PSA_SUCCESS) {
         status = psa_import_key(attributes, secret, output_len, key);
     }
     wc_ForceZero(secret, secret_len);
