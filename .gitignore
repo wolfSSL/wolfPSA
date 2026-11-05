@@ -40,6 +40,7 @@ test/psa_des3_pkcs7_test
 test/psa_ecc_curve_caps_test
 test/psa_ecc_ecdh_curve_test
 test/psa_ecc_sig_len_test
+test/psa_rsa_status_test
 test/psa_ecc_verify_curve_test
 test/psa_eddsa_mont_export_test
 test/psa_eddsa_mont_gen_test

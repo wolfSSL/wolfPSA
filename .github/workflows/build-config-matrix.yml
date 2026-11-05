@@ -80,10 +80,16 @@ jobs:
             modifiers: "-HAVE_HKDF -HAVE_ECC_ENCRYPT"
           - name: tls-prf
             modifiers: "-WOLFSSL_HAVE_PRF"
+          # Static library: the shared library has an undefined wc_PBKDF2()
+          # until the wolfSSL -stable ref has the HAVE_PBKDF2 caller guards.
+          # Drop 'target' then.
           - name: pbkdf2
             modifiers: "-HAVE_PBKDF2 +NO_PBKDF2"
+            target: libwolfpsa.a
           - name: ecc384
             modifiers: "-WOLFSSL_SP_384 -HAVE_ECC384"
+          - name: no-ecc
+            modifiers: "-HAVE_ECC -HAVE_ECC_ENCRYPT"
           - name: rsa-1024
             modifiers: "-WOLFSSL_SP_1024 -RSA_MIN_SIZE +RSA_MIN_SIZE=2048"
           # wolfPSA's own sources only: the bundled wolfCrypt sources do not
@@ -107,5 +113,7 @@ jobs:
 
       - name: Build ${{ matrix.config.name }}
         env:
-          BUILD_TARGET: ${{ matrix.config.target || 'libwolfpsa.a' }}
+          BUILD_TARGET: ${{ matrix.config.target || 'libwolfpsa.so' }}
+          # Fail on undefined symbols
+          LDFLAGS: -Wl,-z,defs
         run: ./build-test/build-variant.sh "${{ matrix.config.name }}" ${{ matrix.config.modifiers }}
