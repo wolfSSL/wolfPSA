@@ -29,6 +29,7 @@
 
 #include <psa/crypto.h>
 #include "psa_size.h"
+#include "psa_output.h"
 #include "psa_trace.h"
 #include "psa_pqc_internal.h"
 #include <wolfpsa/psa_engine.h>
@@ -398,6 +399,7 @@ psa_status_t psa_asymmetric_encrypt(psa_key_id_t key,
     size_t key_data_length = 0;
     psa_status_t status;
 
+    wolfpsa_clear_length(output_length);
     if (output_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -446,6 +448,7 @@ psa_status_t psa_asymmetric_decrypt(psa_key_id_t key,
     size_t key_data_length = 0;
     psa_status_t status;
 
+    wolfpsa_clear_length(output_length);
     if (output_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -496,6 +499,7 @@ static psa_status_t wolfpsa_sign_hash_worker(psa_key_id_t key,
     size_t sig_size;
     psa_status_t status;
 
+    wolfpsa_clear_length(signature_length);
     if (signature_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -864,6 +868,7 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
     size_t sig_size;
     psa_status_t status;
 
+    wolfpsa_clear_length(signature_length);
     if (signature_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -1600,6 +1605,7 @@ psa_status_t psa_raw_key_agreement(psa_algorithm_t alg,
     wolfpsa_trace("psa_raw_key_agreement(alg=0x%08x key=%u peer_len=%zu)",
                   (unsigned)alg, (unsigned)private_key, peer_key_length);
 
+    wolfpsa_clear_length(output_length);
     if (output_length == NULL || (output == NULL && output_size != 0)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -1627,10 +1633,10 @@ psa_status_t psa_key_agreement(psa_key_id_t private_key,
     psa_key_attributes_t priv_attr = PSA_KEY_ATTRIBUTES_INIT;
     psa_key_derivation_operation_t kdf_op = PSA_KEY_DERIVATION_OPERATION_INIT;
 
+    wolfpsa_clear_key_id(key);
     if (attributes == NULL || key == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-    *key = PSA_KEY_ID_NULL;
 
     if (!PSA_ALG_IS_KEY_AGREEMENT(alg)) {
         return PSA_ERROR_NOT_SUPPORTED;

@@ -32,6 +32,7 @@
 #include <wolfpsa/psa_key_storage.h>
 #include "psa_pqc_internal.h"
 #include "psa_trace.h"
+#include "psa_output.h"
 #include <wolfssl/wolfcrypt/types.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
@@ -99,6 +100,8 @@ psa_status_t psa_encapsulate(psa_key_id_t key,
     wolfpsa_trace("psa_encapsulate(key=%u alg=0x%08x)",
                   (unsigned)key, (unsigned)alg);
 
+    wolfpsa_clear_key_id(output_key);
+    wolfpsa_clear_length(ciphertext_length);
     /* --- Argument validation ---
      * A NULL ciphertext pointer is only an error when the caller declared a
      * nonzero capacity; (NULL, 0) must reach the size check below. */
@@ -106,9 +109,6 @@ psa_status_t psa_encapsulate(psa_key_id_t key,
         attributes == NULL || (ciphertext == NULL && ciphertext_size != 0)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-
-    *output_key = PSA_KEY_ID_NULL;
-    *ciphertext_length = 0;
 
     status = wolfpsa_kem_check_alg(alg);
     if (status != PSA_SUCCESS) {
@@ -214,12 +214,11 @@ psa_status_t psa_decapsulate(psa_key_id_t key,
     wolfpsa_trace("psa_decapsulate(key=%u alg=0x%08x ct_len=%zu)",
                   (unsigned)key, (unsigned)alg, ciphertext_length);
 
+    wolfpsa_clear_key_id(output_key);
     /* --- Argument validation --- */
     if (output_key == NULL || ciphertext == NULL || attributes == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-
-    *output_key = PSA_KEY_ID_NULL;
 
     status = wolfpsa_kem_check_alg(alg);
     if (status != PSA_SUCCESS) {

@@ -34,6 +34,7 @@ test/psa_14_misc_test
 test/psa_aead_multipart_test
 test/psa_cipher_inplace_test
 test/psa_cipher_oneshot_len_test
+test/psa_reset_outputs_test
 test/psa_cipher_overlap_test
 test/psa_copy_key_narrowing_test
 test/psa_des3_pkcs7_test

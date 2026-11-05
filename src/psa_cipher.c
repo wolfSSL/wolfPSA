@@ -30,6 +30,7 @@
 #include <psa/crypto.h>
 #include "psa_trace.h"
 #include "psa_size.h"
+#include "psa_output.h"
 #include <wolfpsa/psa_engine.h>
 #include <wolfpsa/psa_key_storage.h>
 #include <wolfssl/wolfcrypt/aes.h>
@@ -680,6 +681,7 @@ psa_status_t psa_cipher_generate_iv(psa_cipher_operation_t *operation,
     wolfpsa_cipher_ctx_t *ctx = wolfpsa_cipher_get_ctx(operation);
     size_t expected_len;
 
+    wolfpsa_clear_length(iv_length);
     if (ctx == NULL) {
         return PSA_ERROR_BAD_STATE;
     }
@@ -1363,6 +1365,7 @@ psa_status_t psa_cipher_finish(psa_cipher_operation_t *operation,
     wolfpsa_cipher_ctx_t *ctx = wolfpsa_cipher_get_ctx(operation);
     int ret = 0;
 
+    wolfpsa_clear_length(output_length);
     if (operation == NULL || output_length == NULL) {
         return wolfpsa_cipher_fail(operation, PSA_ERROR_INVALID_ARGUMENT);
     }
@@ -1495,7 +1498,6 @@ cbc_pkcs7_decrypt_done:
         return wolfpsa_cipher_fail(operation, PSA_ERROR_INVALID_ARGUMENT);
     }
 
-    *output_length = 0;
     psa_cipher_abort(operation);
     return PSA_SUCCESS;
 }
@@ -1542,6 +1544,7 @@ psa_status_t psa_cipher_encrypt(psa_key_id_t key,
     size_t offset = 0;
     wolfpsa_cipher_ctx_t *ctx;
 
+    wolfpsa_clear_length(output_length);
     if (output_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -1636,6 +1639,7 @@ psa_status_t psa_cipher_decrypt(psa_key_id_t key,
     size_t offset = 0;
     wolfpsa_cipher_ctx_t *ctx;
 
+    wolfpsa_clear_length(output_length);
     if (output_length == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }

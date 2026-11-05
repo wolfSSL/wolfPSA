@@ -31,6 +31,7 @@
 
 #include <psa/crypto.h>
 #include "psa_size.h"
+#include "psa_output.h"
 #include <wolfpsa/psa_engine.h>
 #include <wolfpsa/psa_key_storage.h>
 #include <wolfssl/wolfcrypt/hmac.h>
@@ -2061,6 +2062,7 @@ psa_status_t psa_key_derivation_output_key(const psa_key_attributes_t *
     wolfpsa_kdf_ctx_t *ctx = wolfpsa_kdf_get_ctx(operation);
     psa_status_t status = wolfpsa_kdf_check_state(ctx);
 
+    wolfpsa_clear_key_id(key);
     if (status != PSA_SUCCESS) {
         return status;
     }

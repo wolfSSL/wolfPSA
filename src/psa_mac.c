@@ -29,6 +29,7 @@
 
 #include <psa/crypto.h>
 #include "psa_size.h"
+#include "psa_output.h"
 #include <wolfpsa/psa_engine.h>
 #include <wolfpsa/psa_key_storage.h>
 #include <wolfssl/wolfcrypt/hmac.h>
@@ -520,6 +521,7 @@ psa_status_t psa_mac_sign_finish(psa_mac_operation_t *operation,
     wolfpsa_mac_ctx_t *ctx = wolfpsa_mac_get_ctx(operation);
     psa_status_t status;
 
+    wolfpsa_clear_length(mac_length);
     if (ctx == NULL) {
         return wolfpsa_mac_fail(operation, PSA_ERROR_BAD_STATE);
     }
@@ -623,6 +625,7 @@ psa_status_t psa_mac_compute(psa_key_id_t key,
     psa_mac_operation_t operation = PSA_MAC_OPERATION_INIT;
     psa_status_t status;
 
+    wolfpsa_clear_length(mac_length);
     status = psa_mac_sign_setup(&operation, key, alg);
     if (status != PSA_SUCCESS) {
         return status;

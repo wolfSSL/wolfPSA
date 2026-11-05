@@ -34,6 +34,7 @@
 #include "psa_trace.h"
 #include "psa_lock.h"
 #include "psa_size.h"
+#include "psa_output.h"
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/types.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
@@ -1115,15 +1116,13 @@ psa_status_t psa_import_key(
     void* store = NULL;
     psa_key_attributes_t attr;
 
+    wolfpsa_clear_key_id(key_id);
     /* Check parameters */
     if (attributes == NULL || data == NULL || key_id == NULL) {
         wolfpsa_debug_import_reason("invalid parameters", attributes,
                                     data_length);
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-
-    /* Always treat key_id as output-only. */
-    *key_id = PSA_KEY_ID_NULL;
 
     /* A zero-length blob is not a valid key of any type. Reject it up front:
      * the bits-inference path only rejects it when bits are not supplied, and
@@ -1579,6 +1578,7 @@ psa_status_t psa_generate_key(
     uint8_t *key_data = NULL;
     size_t key_data_length = 0;
 
+    wolfpsa_clear_key_id(key_id);
     if (attributes == NULL || key_id == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -1887,6 +1887,7 @@ psa_status_t psa_export_key(
     int ret;
     void* store = NULL;
 
+    wolfpsa_clear_length(data_length);
     /* Check parameters: a NULL data pointer is only an error when the
      * caller declared a nonzero capacity; (NULL, 0) is a valid
      * zero-capacity output buffer that must reach the size checks below. */
@@ -1979,7 +1980,6 @@ psa_status_t psa_export_key(
         /* A short/failed read may have left partial key material in the
          * caller-owned buffer; zeroize it like the sibling read paths. */
         wc_ForceZero(data, key_data_length);
-        *data_length = 0;
         return PSA_ERROR_STORAGE_FAILURE;
     }
     *data_length = key_data_length;
@@ -2007,6 +2007,7 @@ psa_status_t psa_export_public_key(
     void* store = NULL;
     int use_volatile = 0;
 
+    wolfpsa_clear_length(data_length);
     /* A NULL data pointer is only an error when the caller declared a
      * nonzero capacity; (NULL, 0) must reach the size checks below. */
     if (data_length == NULL || (data == NULL && data_size != 0)) {
@@ -2368,6 +2369,7 @@ psa_status_t psa_get_key_attributes(
     if (attributes == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
+    psa_reset_key_attributes(attributes);
 
     /* Check if the key storage is initialized */
     status = psa_key_storage_check_init();
@@ -2584,14 +2586,11 @@ psa_status_t psa_copy_key(
     psa_key_attributes_t dst_attr;
     psa_algorithm_t copy_alg = PSA_ALG_NONE;
 
+    wolfpsa_clear_key_id(target_key);
     /* Check parameters */
     if (attributes == NULL || target_key == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-
-    /* The API guarantees PSA_KEY_ID_NULL on failure, so clear the output
-     * before any fallible operation below. */
-    *target_key = PSA_KEY_ID_NULL;
 
     /* Check if the key storage is initialized */
     status = psa_key_storage_check_init();
