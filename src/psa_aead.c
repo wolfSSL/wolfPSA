@@ -144,20 +144,21 @@ static int wolfpsa_aead_lengths_missing(const wolfpsa_aead_ctx_t *ctx)
     return PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM) && !ctx->lengths_set;
 }
 
-/* SP 800-38D and RFC 8439 limits; the CCM code encodes AAD length in 4 bytes */
+/* SP 800-38D and RFC 8439 limits */
 static const struct {
     psa_algorithm_t alg;
     uint64_t max_ad;
     uint64_t max_plaintext;
 } wolfpsa_aead_limits[] = {
     { PSA_ALG_GCM, (1ULL << 61) - 1, 0xFFFFFFFE0ULL },
-    { PSA_ALG_CCM, UINT32_MAX, UINT64_MAX },
     { PSA_ALG_CHACHA20_POLY1305, UINT64_MAX, (uint64_t)UINT32_MAX * 64 },
 };
 
 /* A zero nonce_length means the nonce is not set yet */
-static int wolfpsa_aead_lengths_valid(psa_algorithm_t alg, size_t nonce_length,
-                                      size_t ad_length, size_t plaintext_length)
+static psa_status_t wolfpsa_aead_check_lengths(psa_algorithm_t alg,
+                                               size_t nonce_length,
+                                               size_t ad_length,
+                                               size_t plaintext_length)
 {
     size_t i;
     size_t len_size;
@@ -167,19 +168,27 @@ static int wolfpsa_aead_lengths_valid(psa_algorithm_t alg, size_t nonce_length,
         len_size = 15 - nonce_length;
         if (len_size < sizeof(uint64_t) &&
             ((uint64_t)plaintext_length >> (8 * len_size)) != 0) {
-            return 0;
+            return PSA_ERROR_INVALID_ARGUMENT;
         }
     }
 
     for (i = 0; i < sizeof(wolfpsa_aead_limits) /
                     sizeof(wolfpsa_aead_limits[0]); i++) {
-        if (PSA_ALG_AEAD_EQUAL(alg, wolfpsa_aead_limits[i].alg)) {
-            return (uint64_t)ad_length <= wolfpsa_aead_limits[i].max_ad &&
-                   (uint64_t)plaintext_length <=
-                   wolfpsa_aead_limits[i].max_plaintext;
+        if (PSA_ALG_AEAD_EQUAL(alg, wolfpsa_aead_limits[i].alg) &&
+            ((uint64_t)ad_length > wolfpsa_aead_limits[i].max_ad ||
+             (uint64_t)plaintext_length >
+             wolfpsa_aead_limits[i].max_plaintext)) {
+            return PSA_ERROR_INVALID_ARGUMENT;
         }
     }
-    return 1;
+
+    /* AAD, and GCM and ChaCha20-Poly1305 data, have 32-bit lengths here */
+    if (wolfpsa_check_word32_length(ad_length) != PSA_SUCCESS ||
+        (!PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM) &&
+         wolfpsa_check_word32_length(plaintext_length) != PSA_SUCCESS)) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    return PSA_SUCCESS;
 }
 
 #ifdef HAVE_AESGCM
@@ -464,9 +473,9 @@ psa_status_t psa_aead_set_lengths(psa_aead_operation_t *operation,
     if (ctx->lengths_set || ctx->ad_started || ctx->body_started) {
         status = PSA_ERROR_BAD_STATE;
     }
-    else if (!wolfpsa_aead_lengths_valid(ctx->alg, ctx->nonce_length,
-                                         ad_length, plaintext_length)) {
-        status = PSA_ERROR_INVALID_ARGUMENT;
+    else {
+        status = wolfpsa_aead_check_lengths(ctx->alg, ctx->nonce_length,
+                                            ad_length, plaintext_length);
     }
     if (status != PSA_SUCCESS) {
         psa_aead_abort(operation);
@@ -484,6 +493,7 @@ psa_status_t psa_aead_set_nonce(psa_aead_operation_t *operation,
                                 size_t nonce_length)
 {
     wolfpsa_aead_ctx_t *ctx = wolfpsa_aead_get_ctx(operation);
+    psa_status_t status;
     size_t expected;
 
     if (ctx == NULL) {
@@ -519,10 +529,13 @@ psa_status_t psa_aead_set_nonce(psa_aead_operation_t *operation,
             return PSA_ERROR_INVALID_ARGUMENT;
         }
     }
-    if (ctx->lengths_set &&
-        !wolfpsa_aead_lengths_valid(ctx->alg, nonce_length, ctx->ad_expected,
-                                    ctx->plaintext_expected)) {
-        return PSA_ERROR_INVALID_ARGUMENT;
+    if (ctx->lengths_set) {
+        status = wolfpsa_aead_check_lengths(ctx->alg, nonce_length,
+                                            ctx->ad_expected,
+                                            ctx->plaintext_expected);
+        if (status != PSA_SUCCESS) {
+            return status;
+        }
     }
 
     XMEMCPY(ctx->nonce, nonce, nonce_length);

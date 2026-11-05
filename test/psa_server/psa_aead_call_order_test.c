@@ -1,7 +1,8 @@
 /* psa_aead_call_order_test.c
  *
  * Multipart AEAD accepts psa_aead_set_lengths() before or after the nonce,
- * and rejects it once additional data or payload has been passed.
+ * and rejects it once additional data or payload has been passed, or when
+ * the lengths are over the limits.
  *
  * Copyright (C) 2026 wolfSSL Inc.
  *
@@ -48,28 +49,62 @@ static void expect(psa_status_t got, psa_status_t want, const char *what)
 
 static psa_key_id_t import_key(psa_algorithm_t alg)
 {
-    static const uint8_t key_data[16] = {
+    static const uint8_t key_data[32] = {
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
     };
     psa_key_attributes_t attrs = psa_key_attributes_init();
     psa_key_id_t key = PSA_KEY_ID_NULL;
 
-    psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
-    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT);
+    psa_set_key_type(&attrs,
+                     PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CHACHA20_POLY1305) ?
+                     PSA_KEY_TYPE_CHACHA20 : PSA_KEY_TYPE_AES);
+    psa_set_key_usage_flags(&attrs,
+                            PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
     psa_set_key_algorithm(&attrs, alg);
     expect(psa_import_key(&attrs, key_data, sizeof(key_data), &key),
            PSA_SUCCESS, "import key");
     return key;
 }
 
-/* Multipart encrypt with the lengths set after the nonce, checked against
- * the one-shot result. */
+/* Set the nonce, then the lengths, then pass the additional data and the
+ * payload */
+static psa_status_t start_lengths_after_nonce(psa_aead_operation_t *op,
+                                              psa_key_id_t key,
+                                              psa_algorithm_t alg,
+                                              int encrypt,
+                                              const uint8_t *in,
+                                              uint8_t *out, size_t *out_len)
+{
+    psa_status_t status;
+
+    status = encrypt ? psa_aead_encrypt_setup(op, key, alg) :
+                       psa_aead_decrypt_setup(op, key, alg);
+    if (status == PSA_SUCCESS) {
+        status = psa_aead_set_nonce(op, nonce, sizeof(nonce));
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_aead_set_lengths(op, sizeof(ad), sizeof(msg));
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_aead_update_ad(op, ad, sizeof(ad));
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_aead_update(op, in, sizeof(msg), out, sizeof(msg),
+                                 out_len);
+    }
+    return status;
+}
+
+/* Multipart encrypt and decrypt with the lengths set after the nonce,
+ * checked against the one-shot result. */
 static void check_lengths_after_nonce(psa_algorithm_t alg, const char *name)
 {
     psa_aead_operation_t op = PSA_AEAD_OPERATION_INIT;
     psa_key_id_t key = import_key(alg);
-    uint8_t want[sizeof(msg) + TAG_LEN];
+    uint8_t want[sizeof(msg) + TAG_LEN] = { 0 };
     uint8_t out[sizeof(msg)];
     uint8_t tag[TAG_LEN];
     size_t want_len = 0;
@@ -82,20 +117,7 @@ static void check_lengths_after_nonce(psa_algorithm_t alg, const char *name)
                             msg, sizeof(msg), want, sizeof(want), &want_len),
            PSA_SUCCESS, name);
 
-    status = psa_aead_encrypt_setup(&op, key, alg);
-    if (status == PSA_SUCCESS) {
-        status = psa_aead_set_nonce(&op, nonce, sizeof(nonce));
-    }
-    if (status == PSA_SUCCESS) {
-        status = psa_aead_set_lengths(&op, sizeof(ad), sizeof(msg));
-    }
-    if (status == PSA_SUCCESS) {
-        status = psa_aead_update_ad(&op, ad, sizeof(ad));
-    }
-    if (status == PSA_SUCCESS) {
-        status = psa_aead_update(&op, msg, sizeof(msg), out, sizeof(out),
-                                 &out_len);
-    }
+    status = start_lengths_after_nonce(&op, key, alg, 1, msg, out, &out_len);
     if (status == PSA_SUCCESS) {
         status = psa_aead_finish(&op, out + out_len, sizeof(out) - out_len,
                                  &fin_len, tag, sizeof(tag), &tag_len);
@@ -106,6 +128,21 @@ static void check_lengths_after_nonce(psa_algorithm_t alg, const char *name)
          memcmp(want, out, out_len + fin_len) != 0 ||
          memcmp(want + out_len + fin_len, tag, tag_len) != 0)) {
         printf("FAIL: %s: output differs from one-shot\n", name);
+        failures++;
+    }
+    psa_aead_abort(&op);
+
+    out_len = 0;
+    fin_len = 0;
+    status = start_lengths_after_nonce(&op, key, alg, 0, want, out, &out_len);
+    if (status == PSA_SUCCESS) {
+        status = psa_aead_verify(&op, out + out_len, sizeof(out) - out_len,
+                                 &fin_len, want + sizeof(msg), TAG_LEN);
+    }
+    if (status != PSA_SUCCESS || out_len + fin_len != sizeof(msg) ||
+        memcmp(out, msg, sizeof(msg)) != 0) {
+        printf("FAIL: %s: decrypt got %d or wrong plaintext\n", name,
+               (int)status);
         failures++;
     }
     psa_aead_abort(&op);
@@ -220,6 +257,64 @@ static void check_lengths_too_late(void)
     psa_destroy_key(key);
 }
 
+#if SIZE_MAX > UINT32_MAX
+/* Over the algorithm limit is invalid, over the 32-bit lengths of the
+ * implementation is not supported */
+static const struct {
+    psa_algorithm_t alg;
+    size_t ad_length;
+    size_t plaintext_length;
+    psa_status_t want;
+    const char *name;
+} length_limits[] = {
+    { PSA_ALG_GCM, 0, UINT32_MAX, PSA_SUCCESS,
+      "GCM plaintext at the limit" },
+    { PSA_ALG_GCM, 0, (size_t)UINT32_MAX + 1, PSA_ERROR_NOT_SUPPORTED,
+      "GCM plaintext over the limit" },
+    { PSA_ALG_GCM, 0, (size_t)0xFFFFFFFE0ULL + 1, PSA_ERROR_INVALID_ARGUMENT,
+      "GCM plaintext over the algorithm limit" },
+    { PSA_ALG_GCM, UINT32_MAX, 0, PSA_SUCCESS,
+      "GCM additional data at the limit" },
+    { PSA_ALG_GCM, (size_t)UINT32_MAX + 1, 0, PSA_ERROR_NOT_SUPPORTED,
+      "GCM additional data over the limit" },
+    { PSA_ALG_CHACHA20_POLY1305, 0, UINT32_MAX, PSA_SUCCESS,
+      "ChaCha20-Poly1305 plaintext at the limit" },
+    { PSA_ALG_CHACHA20_POLY1305, 0, (size_t)UINT32_MAX + 1,
+      PSA_ERROR_NOT_SUPPORTED,
+      "ChaCha20-Poly1305 plaintext over the limit" },
+    { PSA_ALG_CHACHA20_POLY1305, 0, (size_t)UINT32_MAX * 64 + 1,
+      PSA_ERROR_INVALID_ARGUMENT,
+      "ChaCha20-Poly1305 plaintext over the algorithm limit" },
+    { PSA_ALG_CHACHA20_POLY1305, UINT32_MAX, 0, PSA_SUCCESS,
+      "ChaCha20-Poly1305 additional data at the limit" },
+    { PSA_ALG_CHACHA20_POLY1305, (size_t)UINT32_MAX + 1, 0,
+      PSA_ERROR_NOT_SUPPORTED,
+      "ChaCha20-Poly1305 additional data over the limit" },
+    { PSA_ALG_CCM, 0, (size_t)UINT32_MAX + 1, PSA_SUCCESS,
+      "CCM plaintext over 32 bits before the nonce" },
+    { PSA_ALG_CCM, (size_t)UINT32_MAX + 1, 0, PSA_ERROR_NOT_SUPPORTED,
+      "CCM additional data over the limit" },
+};
+
+static void check_length_limits(void)
+{
+    psa_aead_operation_t op = PSA_AEAD_OPERATION_INIT;
+    psa_key_id_t key;
+    size_t i;
+
+    for (i = 0; i < sizeof(length_limits) / sizeof(length_limits[0]); i++) {
+        key = import_key(length_limits[i].alg);
+        expect(psa_aead_encrypt_setup(&op, key, length_limits[i].alg),
+               PSA_SUCCESS, length_limits[i].name);
+        expect(psa_aead_set_lengths(&op, length_limits[i].ad_length,
+                                    length_limits[i].plaintext_length),
+               length_limits[i].want, length_limits[i].name);
+        psa_aead_abort(&op);
+        psa_destroy_key(key);
+    }
+}
+#endif /* SIZE_MAX > UINT32_MAX */
+
 int main(void)
 {
     if (psa_crypto_init() != PSA_SUCCESS) {
@@ -229,9 +324,14 @@ int main(void)
 
     check_lengths_after_nonce(PSA_ALG_GCM, "GCM lengths after nonce");
     check_lengths_after_nonce(PSA_ALG_CCM, "CCM lengths after nonce");
+    check_lengths_after_nonce(PSA_ALG_CHACHA20_POLY1305,
+                              "ChaCha20-Poly1305 lengths after nonce");
     check_ccm_without_lengths();
     check_ccm_length_limit();
     check_lengths_too_late();
+#if SIZE_MAX > UINT32_MAX
+    check_length_limits();
+#endif /* SIZE_MAX > UINT32_MAX */
 
     if (failures == 0) {
         printf("AEAD call order tests: all passed\n");
