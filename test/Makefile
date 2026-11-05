@@ -204,8 +204,9 @@ $(PSA_REGRESSION_TESTS) $(PSA_TF_PSA_TESTS): %: require-wolfssl-lib \
 		psa_server/%.o
 	$(CC) $(CFLAGS) -o $@ psa_server/$@.o $(LDFLAGS) $(LDLIBS) $(RPATH_WOLFPSA) $(RPATH_WOLFSSL)
 
-# Its expectations come from the library's PSA_WANT_* macros
-psa_server/psa_want_surface_test.o: $(wildcard $(PSA_CONFIG))
+# Their expectations come from the library's PSA_WANT_* macros
+psa_server/psa_want_surface_test.o psa_server/psa_import_key_data_test.o: \
+	$(wildcard $(PSA_CONFIG))
 
 ifdef WOLFSSL_HAS_PSA_TLS
 psa_tls_server: psa_server/psa_tls_server.o

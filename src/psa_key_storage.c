@@ -542,6 +542,22 @@ static psa_status_t wolfpsa_volatile_get_attributes(psa_key_id_t key_id,
     return st;
 }
 
+#if !defined(NO_RSA) || defined(HAVE_ECC)
+/* Status for key data that wolfCrypt did not accept: a failure that is not
+ * about the data keeps its own status. */
+static psa_status_t wolfpsa_key_data_status(int ret)
+{
+    switch (ret) {
+    case MEMORY_E:
+    case RNG_FAILURE_E:
+    case WC_HW_E:
+        return wc_error_to_psa_status(ret);
+    default:
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+}
+#endif /* !NO_RSA || HAVE_ECC */
+
 #ifndef NO_RSA
 /* Decode RSA key data of the given type and get the modulus size in bits. */
 static psa_status_t wolfpsa_rsa_key_bits(psa_key_type_t type,
@@ -553,29 +569,32 @@ static psa_status_t wolfpsa_rsa_key_bits(psa_key_type_t type,
     word32 idx = 0;
     int ret;
     int n_bits = 0;
+    int e_valid = 0;
 
     ret = wc_InitRsaKey(&rsa, NULL);
+    if (ret != 0) {
+        return wc_error_to_psa_status(ret);
+    }
+    if (type == PSA_KEY_TYPE_RSA_PUBLIC_KEY) {
+        ret = wc_RsaPublicKeyDecode(data, &idx, &rsa, (word32)data_length);
+    }
+    else {
+        ret = wc_RsaPrivateKeyDecode(data, &idx, &rsa, (word32)data_length);
+    }
     if (ret == 0) {
-        if (type == PSA_KEY_TYPE_RSA_PUBLIC_KEY) {
-            ret = wc_RsaPublicKeyDecode(data, &idx, &rsa, (word32)data_length);
-        }
-        else {
-            ret = wc_RsaPrivateKeyDecode(data, &idx, &rsa,
-                                         (word32)data_length);
-        }
-        if (ret == 0) {
-            n_bits = mp_count_bits(&rsa.n);
-        }
-        wc_FreeRsaKey(&rsa);
+        n_bits = mp_count_bits(&rsa.n);
+        e_valid = mp_isodd(&rsa.e) && mp_cmp_d(&rsa.e, 3) != MP_LT;
     }
+    wc_FreeRsaKey(&rsa);
 
-    if (ret == MEMORY_E) {
-        return PSA_ERROR_INSUFFICIENT_MEMORY;
+    if (ret != 0) {
+        return wolfpsa_key_data_status(ret);
     }
-    if (ret != 0 || idx != (word32)data_length || n_bits <= 0) {
+    if (idx != (word32)data_length || n_bits <= 0 || !e_valid) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-    if ((n_bits % 8) != 0 || n_bits > (int)PSA_VENDOR_RSA_MAX_KEY_BITS) {
+    if ((n_bits % 8) != 0 || n_bits < RSA_MIN_SIZE ||
+        n_bits > (int)PSA_VENDOR_RSA_MAX_KEY_BITS) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
     *bits = (psa_key_bits_t)n_bits;
@@ -584,9 +603,11 @@ static psa_status_t wolfpsa_rsa_key_bits(psa_key_type_t type,
 #endif /* !NO_RSA */
 
 #ifdef HAVE_ECC
-/* wolfCrypt checks that the private scalar is in [1, n-1] on import. */
-static psa_status_t wolfpsa_ecc_check_private_key(
-    const psa_key_attributes_t* attr, const uint8_t* data, size_t data_length)
+/* wolfCrypt checks on import that a private scalar is in [1, n-1] and that a
+ * public point is on the curve. */
+static psa_status_t wolfpsa_ecc_check_key(const psa_key_attributes_t* attr,
+                                          const uint8_t* data,
+                                          size_t data_length)
 {
     ecc_key ecc;
     int curve_id;
@@ -594,19 +615,24 @@ static psa_status_t wolfpsa_ecc_check_private_key(
 
     curve_id = wc_psa_get_ecc_curve_id(attr->type, attr->bits);
     if (curve_id == ECC_CURVE_INVALID) {
-        return PSA_ERROR_NOT_SUPPORTED;
+        /* Curve not in this build: operations on the key are rejected */
+        return PSA_SUCCESS;
     }
     ret = wc_ecc_init_ex(&ecc, NULL, INVALID_DEVID);
-    if (ret == 0) {
+    if (ret != 0) {
+        return wc_error_to_psa_status(ret);
+    }
+    if (PSA_KEY_TYPE_IS_ECC_KEY_PAIR(attr->type)) {
         ret = wc_ecc_import_private_key_ex(data, (word32)data_length, NULL, 0,
                                            &ecc, curve_id);
-        wc_ecc_free(&ecc);
     }
+    else {
+        ret = wc_ecc_import_x963_ex(data, (word32)data_length, &ecc,
+                                    curve_id);
+    }
+    wc_ecc_free(&ecc);
 
-    if (ret == MEMORY_E) {
-        return PSA_ERROR_INSUFFICIENT_MEMORY;
-    }
-    return (ret == 0) ? PSA_SUCCESS : PSA_ERROR_INVALID_ARGUMENT;
+    return (ret == 0) ? PSA_SUCCESS : wolfpsa_key_data_status(ret);
 }
 #endif /* HAVE_ECC */
 
@@ -1467,12 +1493,11 @@ psa_status_t psa_import_key(
             return PSA_ERROR_INVALID_ARGUMENT;
         }
 #ifdef HAVE_ECC
-        if (PSA_KEY_TYPE_IS_ECC_KEY_PAIR(attr.type) &&
-            family != PSA_ECC_FAMILY_MONTGOMERY &&
+        if (family != PSA_ECC_FAMILY_MONTGOMERY &&
             family != PSA_ECC_FAMILY_TWISTED_EDWARDS) {
-            status = wolfpsa_ecc_check_private_key(&attr, data, data_length);
+            status = wolfpsa_ecc_check_key(&attr, data, data_length);
             if (status != PSA_SUCCESS) {
-                wolfpsa_debug_import_reason("invalid ECC private key", &attr,
+                wolfpsa_debug_import_reason("invalid ECC key data", &attr,
                                             data_length);
                 return status;
             }
