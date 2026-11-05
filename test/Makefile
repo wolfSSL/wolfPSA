@@ -2,6 +2,11 @@ WOLFPSA_PATH ?= ..
 WOLFSSL_PATH ?= $(WOLFPSA_PATH)/../wolfssl
 WOLFPSA_ABS := $(abspath $(WOLFPSA_PATH))
 BUILD_DIR ?= build
+WOLFPSA_BUILD_DIR := $(WOLFPSA_ABS)/$(BUILD_DIR)
+ifneq ($(filter /%,$(BUILD_DIR)),)
+WOLFPSA_BUILD_DIR := $(BUILD_DIR)
+endif
+PSA_CONFIG := $(WOLFPSA_BUILD_DIR)/include/crypto_config_generated.h
 
 WOLFSSL_CANDIDATE_DIRS := \
 	$(WOLFSSL_PATH)/build \
@@ -56,7 +61,7 @@ ifneq ($(WOLFSSL_BUILD_DIR),)
 CPPFLAGS += -I$(WOLFSSL_BUILD_DIR)
 endif
 CPPFLAGS += -I$(WOLFPSA_PATH) -I$(WOLFPSA_PATH)/wolfpsa
-CPPFLAGS += -I$(WOLFPSA_PATH)/$(BUILD_DIR)/include
+CPPFLAGS += -I$(WOLFPSA_BUILD_DIR)/include
 CPPFLAGS += -I$(WOLFPSA_PATH)/src
 CPPFLAGS += -I$(WOLFPSA_PATH)/test/psa_server
 
@@ -148,8 +153,8 @@ PSA_DES3_STACK_SCRUB_TEST_OBJS = psa_server/psa_des3_stack_scrub_test.o
 PSA_ECC_BIT_INFERENCE_TEST_OBJS = psa_server/psa_ecc_bit_inference_test.o
 PSA_ECC_CURVE_ID_TEST_OBJS = psa_server/psa_ecc_curve_id_test.o
 PSA_RANDOM_SIZE_TEST_OBJS = psa_server/psa_random_size_test.o
-PSA_ECC_CURVE_ID_TEST_DEPS = $(WOLFPSA_PATH)/$(BUILD_DIR)/obj/psa_asymmetric.o \
-	$(WOLFPSA_PATH)/$(BUILD_DIR)/obj/psa_pq.o
+PSA_ECC_CURVE_ID_TEST_DEPS = $(WOLFPSA_BUILD_DIR)/obj/psa_asymmetric.o \
+	$(WOLFPSA_BUILD_DIR)/obj/psa_pq.o
 PSA_RSA_PSS_TEST_OBJS = psa_server/psa_rsa_pss_interop_test.o
 
 .PHONY: all clean rebuild-wolfssl-psa require-wolfssl-lib FORCE
@@ -197,6 +202,9 @@ psa_ecc_verify_curve_test psa_ecc_ecdh_curve_test psa_ecc_curve_caps_test: \
 $(PSA_REGRESSION_TESTS) $(PSA_TF_PSA_TESTS): %: require-wolfssl-lib \
 		psa_server/%.o
 	$(CC) $(CFLAGS) -o $@ psa_server/$@.o $(LDFLAGS) $(LDLIBS) $(RPATH_WOLFPSA) $(RPATH_WOLFSSL)
+
+# Its expectations come from the library's PSA_WANT_* macros
+psa_server/psa_want_surface_test.o: $(wildcard $(PSA_CONFIG))
 
 ifdef WOLFSSL_HAS_PSA_TLS
 psa_tls_server: psa_server/psa_tls_server.o
@@ -307,7 +315,7 @@ rebuild-wolfssl-psa: $(WOLFPSA_PATH)/libwolfpsa.so
 		--with-psa-lib-name=wolfpsa \
 		CFLAGS="-O2 $(DEBUG_FLAGS) $(SANITIZE_FLAGS)" \
 		CPPFLAGS="-DWOLFSSL_PSA_NO_RNG -DWOLFSSL_PSA_NO_HASH -DWOLFSSL_PSA_NO_AES \
-			-I$(WOLFPSA_ABS)/$(BUILD_DIR)/include" \
+			-I$(WOLFPSA_BUILD_DIR)/include" \
 		LDFLAGS="$(SANITIZE_FLAGS) -Wl,-rpath,$(WOLFPSA_ABS) -Wl,-rpath-link,$(WOLFPSA_ABS)"
 	$(MAKE) -C "$(WOLFSSL_PATH)" CFLAGS="-O2 $(DEBUG_FLAGS) $(SANITIZE_FLAGS)" LDFLAGS="$(SANITIZE_FLAGS) -Wl,-rpath,$(WOLFPSA_ABS) -Wl,-rpath-link,$(WOLFPSA_ABS)" src/libwolfssl.la
 

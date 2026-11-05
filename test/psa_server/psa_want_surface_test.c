@@ -224,9 +224,10 @@ int main(void)
     const psa_key_type_t ed =
         PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_TWISTED_EDWARDS);
     const psa_algorithm_t ecdsaAlg = PSA_ALG_ECDSA(PSA_ALG_SHA_256);
+    const int sha256 = IS_DEFINED(PSA_WANT_ALG_SHA_256);
     const int ecdh = IS_DEFINED(PSA_WANT_ALG_ECDH) &&
         IS_DEFINED(PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE);
-    const int ecdsa = IS_DEFINED(PSA_WANT_ALG_ECDSA) &&
+    const int ecdsa = sha256 && IS_DEFINED(PSA_WANT_ALG_ECDSA) &&
         IS_DEFINED(PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE);
     const int ecdsaAny = IS_DEFINED(PSA_WANT_ALG_ECDSA_ANY) &&
         IS_DEFINED(PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE);
@@ -284,7 +285,7 @@ int main(void)
             IS_DEFINED(MBEDTLS_CHACHAPOLY_C) },
         { "HMAC-SHA-256", PSA_KEY_TYPE_HMAC, 256,
             PSA_ALG_HMAC(PSA_ALG_SHA_256),
-            IS_DEFINED(PSA_WANT_KEY_TYPE_HMAC) &&
+            sha256 && IS_DEFINED(PSA_WANT_KEY_TYPE_HMAC) &&
                 IS_DEFINED(PSA_WANT_ALG_HMAC), NOT_CHECKED },
         { "ML-KEM-1024 export", PSA_KEY_TYPE_ML_KEM_KEY_PAIR, 1024,
             PSA_ALG_ML_KEM, FAMILY_WANT(IS_DEFINED(PSA_WANT_KEY_TYPE_ML_KEM)),
@@ -294,7 +295,7 @@ int main(void)
             NOT_CHECKED },
         { "RSA-2048 PKCS#1 v1.5", PSA_KEY_TYPE_RSA_KEY_PAIR, 2048,
             PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256),
-            rsaGen && IS_DEFINED(PSA_WANT_ALG_RSA_PKCS1V15_SIGN),
+            sha256 && rsaGen && IS_DEFINED(PSA_WANT_ALG_RSA_PKCS1V15_SIGN),
             NOT_CHECKED },
         { "RSA-2048 PKCS#1 v1.5 raw", PSA_KEY_TYPE_RSA_KEY_PAIR, 2048,
             PSA_ALG_RSA_PKCS1V15_SIGN_RAW,
@@ -302,7 +303,7 @@ int main(void)
             NOT_CHECKED },
         { "RSA-2048 PSS any salt", PSA_KEY_TYPE_RSA_KEY_PAIR, 2048,
             PSA_ALG_RSA_PSS_ANY_SALT(PSA_ALG_SHA_256),
-            rsaGen && IS_DEFINED(PSA_WANT_ALG_RSA_PSS_ANY_SALT),
+            sha256 && rsaGen && IS_DEFINED(PSA_WANT_ALG_RSA_PSS_ANY_SALT),
             NOT_CHECKED },
     };
     size_t i;

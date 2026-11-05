@@ -147,12 +147,11 @@ $(PSA_CONFIG): FORCE
 	$(PYTHON) tools/gen-crypto-config.py $@ "$(CC)" \
 		tools/psa_want_probe.c $(CPPFLAGS) $(CFLAGS)
 
-$(OBJ) $(OBJ_PIC): $(PSA_CONFIG)
+$(OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ) $(WOLFCRYPT_OBJ_PIC): $(PSA_CONFIG)
 
 FORCE:
 
-# Check the PSA_WANT_* surface of this build against its static library
-want-surface-test: $(LIBNAME)
+want-surface-test: $(LIBNAME) $(SHLIBNAME)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(BUILD_DIR)/psa_want_surface_test \
 		test/psa_server/psa_want_surface_test.c $(LIBNAME) $(LDFLAGS) \
 		-lpthread -lm
