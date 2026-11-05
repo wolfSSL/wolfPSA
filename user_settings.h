@@ -96,7 +96,8 @@
  * emit the payload from psa_aead_update() instead of buffering it all for
  * finish(). */
 #define WOLFSSL_AESGCM_STREAM
-/* PSA allows 4 and 8 byte GCM tags; wolfCrypt's default minimum is 12 */
+/* PSA allows 4 and 8 byte GCM tags; wolfCrypt's default minimum is 12.
+ * Applies to all GCM/GMAC callers. PSA key policy must allow short tags. */
 #ifndef WOLFSSL_MIN_AUTH_TAG_SZ
 #define WOLFSSL_MIN_AUTH_TAG_SZ 4
 #endif
