@@ -75,7 +75,7 @@ void psa_pake_cs_set_key_confirmation(psa_pake_cipher_suite_t *cipher_suite,
 psa_status_t psa_pake_get_shared_key(psa_pake_operation_t *operation, const psa_key_attributes_t *attributes, psa_key_id_t *key) {
     (void)operation;
     (void)attributes;
-    (void)key;
+    wolfpsa_clear_key_id(key);
     return wolfPSA_StubNotSupported();
 }
 
@@ -92,7 +92,7 @@ psa_status_t psa_pake_output(psa_pake_operation_t *operation, psa_pake_step_t st
     (void)step;
     (void)output;
     (void)output_size;
-    (void)output_length;
+    wolfpsa_clear_length(output_length);
     return wolfPSA_StubNotSupported();
 }
 
@@ -139,7 +139,7 @@ psa_status_t psa_attach_key(const psa_key_attributes_t *attributes,
     (void)attributes;
     (void)label;
     (void)label_length;
-    (void)key;
+    wolfpsa_clear_key_id(key);
     return wolfPSA_StubNotSupported();
 }
 
@@ -152,7 +152,7 @@ psa_status_t psa_hash_suspend(psa_hash_operation_t *operation,
     (void)operation;
     (void)hash_state;
     (void)hash_state_size;
-    (void)hash_state_length;
+    wolfpsa_clear_length(hash_state_length);
     return wolfPSA_StubNotSupported();
 }
 
@@ -204,7 +204,7 @@ psa_status_t psa_sign_hash_complete(
     (void)operation;
     (void)signature;
     (void)signature_size;
-    (void)signature_length;
+    wolfpsa_clear_length(signature_length);
     return wolfPSA_StubNotSupported();
 }
 
@@ -281,7 +281,7 @@ psa_status_t psa_key_agreement_iop_complete(
     psa_key_agreement_iop_t *operation,
     psa_key_id_t *key) {
     (void)operation;
-    (void)key;
+    wolfpsa_clear_key_id(key);
     return wolfPSA_StubNotSupported();
 }
 
@@ -313,7 +313,7 @@ psa_status_t psa_generate_key_iop_complete(
     psa_generate_key_iop_t *operation,
     psa_key_id_t *key) {
     (void)operation;
-    (void)key;
+    wolfpsa_clear_key_id(key);
     return wolfPSA_StubNotSupported();
 }
 
@@ -349,7 +349,7 @@ psa_status_t psa_export_public_key_iop_complete(
     (void)operation;
     (void)data;
     (void)data_size;
-    (void)data_length;
+    wolfpsa_clear_length(data_length);
     return wolfPSA_StubNotSupported();
 }
 

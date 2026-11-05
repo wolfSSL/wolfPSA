@@ -186,6 +186,33 @@ static void check_multipart(void)
                                       sizeof(in)));
 }
 
+/* Unsupported APIs */
+static void check_stubs(void)
+{
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_pake_operation_t pake = PSA_PAKE_OPERATION_INIT;
+    psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
+    psa_sign_hash_interruptible_operation_t sign =
+        PSA_SIGN_HASH_INTERRUPTIBLE_OPERATION_INIT;
+    psa_key_agreement_iop_t agree = PSA_KEY_AGREEMENT_IOP_INIT;
+    psa_generate_key_iop_t gen = PSA_GENERATE_KEY_IOP_INIT;
+    psa_export_public_key_iop_t exp = PSA_EXPORT_PUBLIC_KEY_IOP_INIT;
+    uint8_t out[64];
+    psa_key_id_t key;
+    size_t len;
+
+    CHECK_KEY(key, psa_pake_get_shared_key(&pake, &attrs, &key));
+    CHECK_LENGTH(len, psa_pake_output(&pake, PSA_PAKE_STEP_KEY_SHARE, out,
+                                      sizeof(out), &len));
+    CHECK_KEY(key, psa_attach_key(&attrs, NULL, 0, &key));
+    CHECK_LENGTH(len, psa_hash_suspend(&hash, out, sizeof(out), &len));
+    CHECK_LENGTH(len, psa_sign_hash_complete(&sign, out, sizeof(out), &len));
+    CHECK_KEY(key, psa_key_agreement_iop_complete(&agree, &key));
+    CHECK_KEY(key, psa_generate_key_iop_complete(&gen, &key));
+    CHECK_LENGTH(len, psa_export_public_key_iop_complete(&exp, out,
+                                                         sizeof(out), &len));
+}
+
 int main(void)
 {
     if (psa_crypto_init() != PSA_SUCCESS) {
@@ -196,6 +223,7 @@ int main(void)
     check_keys();
     check_lengths();
     check_multipart();
+    check_stubs();
 
     if (failures == 0) {
         printf("reset outputs tests: all passed\n");
