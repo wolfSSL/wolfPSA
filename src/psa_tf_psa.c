@@ -34,6 +34,11 @@
 #include <wolfssl/wolfcrypt/memory.h>
 #include <wolfpsa/psa_engine.h>
 
+/* The generated crypto config must match the build's NO_FILESYSTEM */
+#if defined(MBEDTLS_FS_IO) == defined(NO_FILESYSTEM)
+    #error "MBEDTLS_FS_IO must be defined exactly when NO_FILESYSTEM is not"
+#endif
+
 void mbedtls_psa_crypto_free(void)
 {
     wolfPSA_CryptoCleanup();

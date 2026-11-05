@@ -85,3 +85,4 @@ test/psa_copy_key_cross_lifetime_test
 build-test/out/
 test/psa_zero_capacity_buffer_test
 test/psa_tf_psa_extra_test
+test/psa_want_surface_test

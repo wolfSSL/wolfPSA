@@ -65,6 +65,11 @@ jobs:
           ./test/psa_ecc_verify_curve_test
           ./test/psa_ecc_ecdh_curve_test
 
+      - name: Run the PSA_WANT surface test
+        run: |
+          make want-surface-test \
+            USER_SETTINGS_PATH="${GITHUB_WORKSPACE}/build-ecc-var"
+
   test-psa-api:
     runs-on: ubuntu-latest
     strategy:

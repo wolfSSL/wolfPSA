@@ -35,7 +35,7 @@ if(CONFIG_WOLFPSA)
   # wolfPSA exposes as the PSA API exactly the crypto that the user's wolfCrypt
   # configuration enabled (and that wolfPSA implements). We derive the
   # consumer-visible PSA_WANT_ surface from the ACTUAL compiled config by
-  # preprocessing zephyr/gen/psa_want_probe.c and generating
+  # preprocessing tools/psa_want_probe.c and generating
   # crypto_config_zephyr.h, which <psa/crypto.h> -> crypto_config.h includes.
   # Generated at CONFIGURE time (autoconf.h already exists) so it is present
   # before any TU that includes <psa/crypto.h> compiles.
@@ -53,13 +53,14 @@ if(CONFIG_WOLFPSA)
 
   set(WOLFPSA_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/wolfpsa_gen)
   set(WOLFPSA_GEN_HDR ${WOLFPSA_GEN_DIR}/crypto_config_zephyr.h)
-  set(WOLFPSA_PROBE   ${WOLFPSA_DIR}/zephyr/gen/psa_want_probe.c)
-  set(WOLFPSA_GEN_PY  ${WOLFPSA_DIR}/zephyr/gen/gen-crypto-config.py)
+  set(WOLFPSA_PROBE   ${WOLFPSA_DIR}/tools/psa_want_probe.c)
+  set(WOLFPSA_GEN_PY  ${WOLFPSA_DIR}/tools/gen-crypto-config.py)
   file(MAKE_DIRECTORY ${WOLFPSA_GEN_DIR})
 
+  # __ASSEMBLER__: settings.h then skips the Zephyr kernel headers
   set(_wolfpsa_probe_flags
-    -D__ZEPHYR__=1 -DWOLFSSL_USER_SETTINGS -DWOLFSSL_ZEPHYR
-    -I${WOLFPSA_DIR} -I${WOLFPSA_DIR}/wolfpsa
+    -D__ZEPHYR__=1 -D__ASSEMBLER__ -DWOLFSSL_USER_SETTINGS -DWOLFSSL_ZEPHYR
+    -I${_wolfssl_mod_dir} -I${WOLFPSA_DIR} -I${WOLFPSA_DIR}/wolfpsa
     -I${_wolfssl_mod_dir}/zephyr
     -imacros ${_wolfpsa_autoconf})
   # If the user supplied their own wolfCrypt config, the probe must see it too.

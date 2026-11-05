@@ -82,7 +82,8 @@ WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/
 WOLFSSL_CPPFLAGS ?= -DWOLFSSL_USER_SETTINGS
 
 CPPFLAGS += -I$(WOLFSSL_PATH) -I$(USER_SETTINGS_PATH) \
-	-I$(CURDIR) -I$(CURDIR)/wolfpsa -I$(CURDIR)/src $(WOLFSSL_CPPFLAGS)
+	-I$(CURDIR) -I$(CURDIR)/wolfpsa -I$(CURDIR)/src -I$(BUILD_DIR)/include \
+	$(WOLFSSL_CPPFLAGS)
 ifneq ($(strip $(PSA_INCLUDE)),)
 CPPFLAGS += -I$(PSA_INCLUDE)
 endif
@@ -118,7 +119,8 @@ CFLAGS += --coverage
 LDFLAGS += --coverage
 endif
 
-.PHONY: all clean psa-objects unit-run run-tests cov covclean
+.PHONY: all clean psa-objects unit-run run-tests cov covclean \
+	want-surface-test
 
 all: $(LIBNAME) $(SHLIBNAME)
 
@@ -134,6 +136,26 @@ $(LIBNAME): $(OBJ) $(WOLFCRYPT_OBJ)
 
 $(SHLIBNAME): $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) $(EXPORT_MAP)
 	$(CC) -shared -Wl,--version-script,$(EXPORT_MAP) -Wl,-Bsymbolic-functions -o $@ $(filter-out $(EXPORT_MAP),$^) $(LDFLAGS)
+
+# Build the PSA_WANT_* macros based on what the wolfCrypt build supports.
+# Consumers of <psa/crypto.h> add $(BUILD_DIR)/include to the include path.
+PSA_CONFIG := $(BUILD_DIR)/include/crypto_config_generated.h
+PYTHON ?= python3
+
+$(PSA_CONFIG): FORCE
+	@mkdir -p $(dir $@)
+	$(PYTHON) tools/gen-crypto-config.py $@ "$(CC)" \
+		tools/psa_want_probe.c $(CPPFLAGS) $(CFLAGS)
+
+$(OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ) $(WOLFCRYPT_OBJ_PIC): $(PSA_CONFIG)
+
+FORCE:
+
+want-surface-test: $(LIBNAME) $(SHLIBNAME)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(BUILD_DIR)/psa_want_surface_test \
+		test/psa_server/psa_want_surface_test.c $(LIBNAME) $(LDFLAGS) \
+		-lpthread -lm
+	$(BUILD_DIR)/psa_want_surface_test
 
 $(OBJDIR)/%.o: src/%.c
 	@mkdir -p $(OBJDIR)
@@ -210,6 +232,7 @@ UNIT_TESTS := psa_api_test \
 	psa_import_zero_length_test \
 	psa_copy_key_cross_lifetime_test \
 	psa_zero_capacity_buffer_test \
+	psa_want_surface_test \
 	psa_tf_psa_extra_test
 
 # Run the unit test loop from the repo root (psa_rsa_pss_interop_test reads

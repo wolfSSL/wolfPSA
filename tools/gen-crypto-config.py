@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+#
+# Copyright (C) 2026 wolfSSL Inc.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Generate the PSA_WANT_ header (crypto_config_zephyr.h for Zephyr,
+# crypto_config_generated.h for the Makefile) from the ACTUAL compiled wolfCrypt
+# configuration, by preprocessing psa_want_probe.c with the same flags as the
+# rest of the build. The result is the consumer-visible PSA_WANT_ surface:
+# exactly the algorithm families wolfCrypt has enabled AND wolfPSA implements.
+# It also has the TF-PSA-Crypto options the build supports, such as
+# MBEDTLS_FS_IO.
+#
+# Python (not shell) to fit the Zephyr build ecosystem, invoked via CMake's
+# PYTHON_EXECUTABLE from wolfPSA's zephyr/CMakeLists.txt, and by the Makefile.
+#
+# Usage:
+#   gen-crypto-config.py <out-header> <cc> <probe.c> [preprocessor flags...]
+#
+# <cc> is a path, or a command with arguments such as "ccache gcc". The
+# preprocessor flags must reproduce the build's wolfCrypt config -- for
+# Zephyr at minimum -DWOLFSSL_USER_SETTINGS -DWOLFSSL_ZEPHYR, the
+# wolfssl/wolfpsa include dirs, any -DWOLFSSL_SETTINGS_FILE, and -imacros
+# <autoconf.h>; for the Makefile build, its CPPFLAGS and CFLAGS. The header is
+# written only when its content changes.
+
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+HEADER = """\
+/* {name}
+ *
+ * Copyright (C) 2026 wolfSSL Inc.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * GENERATED at build time by tools/gen-crypto-config.py from the compiled
+ * wolfCrypt configuration -- DO NOT EDIT and do not check in. It defines the
+ * consumer-visible PSA_WANT_ surface (what wolfPSA exposes as the PSA API),
+ * derived from the wolfCrypt features actually enabled in this build intersected
+ * with what wolfPSA implements. wolfpsa/psa/crypto.h -> crypto_config.h includes
+ * it, so PSA sizing macros (crypto_sizes.h) and consumer PSA_WANT_-gated code
+ * track the real build, as do the MBEDTLS_ options it defines.
+ */
+
+#ifndef {guard}
+#define {guard}
+
+"""
+
+FOOTER = "\n#endif /* {guard} */\n"
+
+EMIT_TAG = "__WPSA_EMIT__"
+WANT_RE = re.compile(r"PSA_WANT_[A-Z0-9_]+")
+# TF-PSA-Crypto options, defined without a value as in TF-PSA
+OPTION_RE = re.compile(r"MBEDTLS_[A-Z0-9_]+")
+
+
+def main(argv):
+    if len(argv) < 4:
+        sys.stderr.write(
+            "usage: gen-crypto-config.py <out> <cc> <probe.c> [flags...]\n")
+        return 2
+
+    out_path, probe = argv[1], argv[3]
+    cc = [argv[2]] if os.path.isfile(argv[2]) else shlex.split(argv[2])
+    flags = argv[4:]
+
+    try:
+        preprocessed = subprocess.run(
+            [*cc, "-E", "-P", *flags, probe],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True).stdout
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write(exc.stderr or "")
+        sys.stderr.write("gen-crypto-config.py: preprocessing the probe failed\n")
+        return 1
+
+    # Collect symbols from the surviving __WPSA_EMIT__ lines only.
+    emitted = [line for line in preprocessed.splitlines() if EMIT_TAG in line]
+    wants = sorted({
+        match.group(0)
+        for line in emitted
+        for match in WANT_RE.finditer(line)
+    })
+    options = sorted({
+        match.group(0)
+        for line in emitted
+        for match in OPTION_RE.finditer(line)
+    })
+
+    if not wants:
+        sys.stderr.write(
+            "gen-crypto-config.py: probe produced no PSA_WANT symbols\n")
+        return 1
+
+    name = os.path.basename(out_path)
+    guard = "WOLFPSA_" + re.sub(r"[^A-Z0-9]", "_", name.upper())
+    text = (HEADER.format(name=name, guard=guard) +
+            "".join("#define {} 1\n".format(want) for want in wants) +
+            "".join("#define {}\n".format(option) for option in options) +
+            FOOTER.format(guard=guard))
+
+    # Unchanged content keeps its timestamp, so nothing rebuilds
+    try:
+        with open(out_path) as out_file:
+            if out_file.read() == text:
+                return 0
+    except OSError:
+        pass
+    # Replace atomically, so a parallel compile never reads a partial header
+    tmp_path = out_path + ".tmp"
+    with open(tmp_path, "w") as out_file:
+        out_file.write(text)
+    os.replace(tmp_path, out_path)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

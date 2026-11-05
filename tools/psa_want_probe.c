@@ -23,22 +23,22 @@
  * NOT a compiled translation unit. This file is *preprocessed* at build time
  * (gcc -E -P) with the same wolfCrypt configuration as the rest of the build,
  * and gen-crypto-config.py extracts the surviving `__WPSA_EMIT__<symbol>`
- * lines to generate wolfpsa/psa/crypto_config_zephyr.h -- the consumer-visible
+ * lines to generate wolfpsa/psa/crypto_config_zephyr.h (Zephyr) or
+ * crypto_config_generated.h (Makefile) -- the consumer-visible
  * PSA_WANT_ surface. Each block below maps an enabled wolfCrypt feature to the
  * PSA_WANT_ symbol(s) wolfPSA exposes for it, so the advertised PSA surface is
  * exactly "what wolfCrypt compiled" intersected with "what wolfPSA implements".
  *
  * Excluded on purpose (wolfPSA has no PSA binding): finite-field DH, PAKE,
- * Camellia, ARIA, ECC Brainpool/Koblitz. Keep this in sync with src/ when a
- * feature graduates.
+ * Camellia, ARIA. Keep this in sync with src/ when a feature graduates.
  */
 
-/* Pull in the effective wolfCrypt feature configuration (the module's
- * user_settings.h + wolfPSA baseline). We include user_settings.h directly
- * rather than <wolfssl/wolfcrypt/settings.h> so this probe preprocesses without
- * dragging in the Zephyr kernel headers settings.h pulls under WOLFSSL_ZEPHYR;
- * every feature macro this probe tests is materialized by user_settings.h. */
-#include "user_settings.h"
+/* The wolfCrypt configuration as src/ sees it. The Zephyr build defines
+ * __ASSEMBLER__ so settings.h skips the Zephyr kernel headers. */
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif /* HAVE_CONFIG_H */
+#include <wolfssl/wolfcrypt/settings.h>
 
 /* ----- Hashes ----- */
 #if !defined(NO_SHA)
@@ -127,40 +127,81 @@ __WPSA_EMIT__PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_BASIC
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_IMPORT
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_EXPORT
 __WPSA_EMIT__PSA_WANT_ALG_RSA_PKCS1V15_SIGN
+__WPSA_EMIT__PSA_WANT_ALG_RSA_PKCS1V15_SIGN_RAW
 __WPSA_EMIT__PSA_WANT_ALG_RSA_PKCS1V15_CRYPT
 #if defined(WOLFSSL_KEY_GEN)
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_GENERATE
 #endif
 #if defined(WC_RSA_PSS)
 __WPSA_EMIT__PSA_WANT_ALG_RSA_PSS
+#if defined(WOLFSSL_PSS_SALT_LEN_DISCOVER)
+__WPSA_EMIT__PSA_WANT_ALG_RSA_PSS_ANY_SALT
+#endif
 #endif
 #if defined(WOLFSSL_RSA_OAEP) || defined(WC_RSA_OAEP)
 __WPSA_EMIT__PSA_WANT_ALG_RSA_OAEP
 #endif
 #endif /* !NO_RSA */
 
-/* ----- ECC (secp r1) ----- */
-#if defined(HAVE_ECC)
+/* ----- ECC key types, for every curve family ----- */
+#if defined(HAVE_ECC) || defined(HAVE_CURVE25519) || defined(HAVE_CURVE448) || \
+    defined(HAVE_ED25519) || defined(HAVE_ED448)
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_PUBLIC_KEY
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_BASIC
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_IMPORT
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_EXPORT
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE
+#endif
+#if defined(HAVE_ECC) || defined(HAVE_CURVE25519) || defined(HAVE_CURVE448)
+__WPSA_EMIT__PSA_WANT_ALG_ECDH
+#endif
+
+/* ----- ECC (secp, Koblitz, Brainpool) ----- */
+#if defined(HAVE_ECC)
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_DERIVE
 __WPSA_EMIT__PSA_WANT_ALG_ECDSA
-__WPSA_EMIT__PSA_WANT_ALG_ECDH
+__WPSA_EMIT__PSA_WANT_ALG_ECDSA_ANY
 #if defined(WOLFSSL_ECDSA_DETERMINISTIC_K)
 __WPSA_EMIT__PSA_WANT_ALG_DETERMINISTIC_ECDSA
 #endif
-#if !defined(NO_ECC256)
+/* The curve sizes as wolfCrypt's ecc.c enables them */
+#if (!defined(NO_ECC256) || defined(HAVE_ALL_CURVES)) && ECC_MIN_KEY_SZ <= 256
+#define WPSA_ECC256
+#endif
+#if (defined(HAVE_ECC384) || defined(HAVE_ALL_CURVES)) && ECC_MIN_KEY_SZ <= 384
+#define WPSA_ECC384
+#endif
+#if (defined(HAVE_ECC512) || defined(HAVE_ALL_CURVES)) && ECC_MIN_KEY_SZ <= 512
+#define WPSA_ECC512
+#endif
+#if (defined(HAVE_ECC521) || defined(HAVE_ALL_CURVES)) && ECC_MIN_KEY_SZ <= 521
+#define WPSA_ECC521
+#endif
+#if !defined(NO_ECC_SECP)
+#if defined(WPSA_ECC256)
 __WPSA_EMIT__PSA_WANT_ECC_SECP_R1_256
 #endif
-#if defined(HAVE_ECC384)
+#if defined(WPSA_ECC384)
 __WPSA_EMIT__PSA_WANT_ECC_SECP_R1_384
 #endif
-#if defined(HAVE_ECC521)
+#if defined(WPSA_ECC521)
 __WPSA_EMIT__PSA_WANT_ECC_SECP_R1_521
 #endif
+#endif /* !NO_ECC_SECP */
+#if defined(HAVE_ECC_KOBLITZ) && defined(WPSA_ECC256)
+__WPSA_EMIT__PSA_WANT_ECC_SECP_K1_256
+#endif
+#if defined(HAVE_ECC_BRAINPOOL)
+#if defined(WPSA_ECC256)
+__WPSA_EMIT__PSA_WANT_ECC_BRAINPOOL_P_R1_256
+#endif
+#if defined(WPSA_ECC384)
+__WPSA_EMIT__PSA_WANT_ECC_BRAINPOOL_P_R1_384
+#endif
+#if defined(WPSA_ECC512)
+__WPSA_EMIT__PSA_WANT_ECC_BRAINPOOL_P_R1_512
+#endif
+#endif /* HAVE_ECC_BRAINPOOL */
 #endif /* HAVE_ECC */
 
 /* ----- Montgomery curves ----- */
@@ -169,6 +210,19 @@ __WPSA_EMIT__PSA_WANT_ECC_MONTGOMERY_255
 #endif
 #if defined(HAVE_CURVE448)
 __WPSA_EMIT__PSA_WANT_ECC_MONTGOMERY_448
+#endif
+
+/* ----- Edwards curves ----- */
+#if defined(HAVE_ED25519)
+__WPSA_EMIT__PSA_WANT_ECC_TWISTED_EDWARDS_255
+__WPSA_EMIT__PSA_WANT_ALG_ED25519PH
+#endif
+#if defined(HAVE_ED448)
+__WPSA_EMIT__PSA_WANT_ECC_TWISTED_EDWARDS_448
+__WPSA_EMIT__PSA_WANT_ALG_ED448PH
+#endif
+#if defined(HAVE_ED25519) || defined(HAVE_ED448)
+__WPSA_EMIT__PSA_WANT_ALG_PURE_EDDSA
 #endif
 
 /* ----- KDFs ----- */
@@ -202,4 +256,14 @@ __WPSA_EMIT__PSA_WANT_KEY_TYPE_ML_KEM
 #endif
 #if defined(WOLFSSL_HAVE_MLDSA)
 __WPSA_EMIT__PSA_WANT_KEY_TYPE_ML_DSA
+#endif
+
+/* ----- TF-PSA-Crypto options ----- */
+#if !defined(NO_FILESYSTEM)
+__WPSA_EMIT__MBEDTLS_FS_IO
+#endif
+/* The PSA RNG, wolfCrypt's DRBG. No public API in TF-PSA-Crypto 1.x. */
+#if !defined(WC_NO_RNG)
+__WPSA_EMIT__MBEDTLS_ENTROPY_C
+__WPSA_EMIT__MBEDTLS_CTR_DRBG_C
 #endif
