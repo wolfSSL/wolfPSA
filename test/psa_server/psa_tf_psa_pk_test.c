@@ -47,7 +47,9 @@ static const struct {
     { CERT("server-keyEnc.pem"), INVALID },
     { CERT("server-keyPkcs8Enc.pem"), INVALID },
     { CERT("server-cert.pem"), INVALID },
-    { CERT("missing.key"), MBEDTLS_ERR_PK_FILE_IO_ERROR }
+    { CERT("missing.key"), MBEDTLS_ERR_PK_FILE_IO_ERROR },
+    /* On Linux, this file reports a larger size than it reads */
+    { "/sys/devices/system/cpu/online", MBEDTLS_ERR_PK_FILE_IO_ERROR }
 };
 
 static const struct {

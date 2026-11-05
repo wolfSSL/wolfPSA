@@ -80,6 +80,16 @@ enum {
     PK_TYPE_ECC = 2
 };
 
+/* MEMORY_E becomes PSA_ERROR_INSUFFICIENT_MEMORY, other errors become err */
+static int PkRet(int wcRet, int err)
+{
+    if (wcRet == 0) {
+        return 0;
+    }
+    return (wcRet == WC_NO_ERR_TRACE(MEMORY_E)) ?
+        PSA_ERROR_INSUFFICIENT_MEMORY : err;
+}
+
 /* An RSA or EC private key, traditional or PKCS #8. *type becomes PK_TYPE_*
  * when it is not NULL. */
 static int PkCheckKey(const byte* der, word32 len, int* type)
@@ -100,22 +110,24 @@ static int PkCheckKey(const byte* der, word32 len, int* type)
         return PSA_ERROR_INSUFFICIENT_MEMORY;
     }
     idx = 0;
-    if (wc_RsaPrivateKeyDecode(der, &idx, rsa, len) == 0) {
+    ret = PkRet(wc_RsaPrivateKeyDecode(der, &idx, rsa, len),
+        MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
+    if (ret == 0) {
         found = PK_TYPE_RSA;
-        ret = 0;
     }
     wc_DeleteRsaKey(rsa, &rsa);
 #endif /* !NO_RSA */
 #ifdef HAVE_ECC
-    if (ret != 0) {
+    if (ret == MBEDTLS_ERR_PK_KEY_INVALID_FORMAT) {
         ecc = wc_ecc_key_new(NULL);
         if (ecc == NULL) {
             return PSA_ERROR_INSUFFICIENT_MEMORY;
         }
         idx = 0;
-        if (wc_EccPrivateKeyDecode(der, &idx, ecc, len) == 0) {
+        ret = PkRet(wc_EccPrivateKeyDecode(der, &idx, ecc, len),
+            MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
+        if (ret == 0) {
             found = PK_TYPE_ECC;
-            ret = 0;
         }
         wc_ecc_key_free(ecc);
     }
@@ -166,8 +178,7 @@ int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
         ret = 0;
     }
     else {
-        ret = (ret == WC_NO_ERR_TRACE(MEMORY_E)) ?
-            PSA_ERROR_INSUFFICIENT_MEMORY : MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
+        ret = PkRet(ret, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
     }
 
     if (ret == 0) {
@@ -210,11 +221,14 @@ int mbedtls_pk_parse_keyfile(mbedtls_pk_context* ctx, const char* path,
     size_t len = 0;
     int ret;
 
-    if (wc_FileLoad(path, &buf, &len, NULL) != 0) {
-        return MBEDTLS_ERR_PK_FILE_IO_ERROR;
+    ret = PkRet(wc_FileLoad(path, &buf, &len, NULL),
+        MBEDTLS_ERR_PK_FILE_IO_ERROR);
+    if (ret == 0) {
+        ret = mbedtls_pk_parse_key(ctx, buf, len,
+            (const unsigned char*)password,
+            (password == NULL) ? 0 : XSTRLEN(password));
     }
-    ret = mbedtls_pk_parse_key(ctx, buf, len, (const unsigned char*)password,
-        (password == NULL) ? 0 : XSTRLEN(password));
+    /* wc_FileLoad() can fail with buf allocated */
     mbedtls_platform_zeroize(buf, len);
     XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     return ret;
