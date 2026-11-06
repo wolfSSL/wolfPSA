@@ -29,6 +29,7 @@
 
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/types.h>
+#include <wolfssl/version.h>
 
 #if defined(WOLFSSL_PSA_ENGINE) && !defined(NO_AES)
 
@@ -39,10 +40,11 @@
  *                            at W = 64 down to 1,920 at W = 8
  *   WOLFSSL_AES_TOUCH_LINES  every lookup touches each cache line of the
  *                            table; sizeof(Aes) is unchanged
- *   a hardware AES core      the list below, which compiles no software
- *                            tables. WOLFSSL_AESNI and WOLFSSL_ESP32_CRYPT
- *                            are absent: both keep the T-table core as a
- *                            runtime fallback
+ *   a listed backend         the list below: hardware AES cores, the RISC-V
+ *                            AES instructions and the AArch64 NEON core, none
+ *                            with a table in memory. WOLFSSL_AESNI and
+ *                            WOLFSSL_ESP32_CRYPT are absent: both keep the
+ *                            T-table core as a runtime fallback
  *   WOLFPSA_AES_FAST         waives the check and accepts the T-table core:
  *                            faster, not constant time, not PSA compliant
  */
@@ -51,39 +53,72 @@
  * outside would otherwise satisfy the policy check below on any build. */
 #undef WOLFPSA_AES_HW_BACKEND
 
-#if (defined(WOLFSSL_RISCV_ASM) && \
-     (defined(WOLFSSL_RISCV_SCALAR_CRYPTO_ASM) || \
-      defined(WOLFSSL_RISCV_VECTOR_CRYPTO_ASM))) || \
-    defined(FREESCALE_LTC) || defined(FREESCALE_MMCAU) || \
-    defined(WOLFSSL_SILABS_SE_ACCEL) || defined(WOLFSSL_PSOC6_CRYPTO) || \
-    defined(WOLFSSL_AFALG) || defined(WOLFSSL_DEVCRYPTO_AES) || \
+/* FIPS v2 and v5 have no RISC-V AES, and the older port in v6 runs a branching
+ * GHASH unless its carry-less multiply macros are also set. */
+#undef WOLFPSA_RISCV_CRYPTO_CT
+#if defined(WOLFSSL_RISCV_ASM) && \
+    (defined(WOLFSSL_RISCV_SCALAR_CRYPTO_ASM) || \
+     defined(WOLFSSL_RISCV_VECTOR_CRYPTO_ASM)) && !defined(HAVE_FIPS)
+    #define WOLFPSA_RISCV_CRYPTO_CT
+#endif
+
+/* The AArch64 NEON AES and GHASH keep their tables in registers. wolfSSL 5.9.0
+ * added WOLFSSL_ARMASM_NEON_NO_TABLE_LOOKUP; no FIPS aes.c up to v6 has it. */
+#undef WOLFPSA_ARM64_NEON_CT
+#if defined(WOLFSSL_ARMASM) && defined(__aarch64__) && \
+    !defined(WOLFSSL_ARMASM_NO_NEON) && \
+    defined(WOLFSSL_ARMASM_NEON_NO_TABLE_LOOKUP) && !defined(HAVE_FIPS) && \
+    LIBWOLFSSL_VERSION_HEX >= 0x05009000
+    #define WOLFPSA_ARM64_NEON_CT
+#endif
+
+/* wolfSSL after 5.9.4 (first to define WOLFSSL_AES_TABLE_SECTION) runs this
+ * AES on the C touch-lines core; its GHASH stays on the table assembly. */
+#undef WOLFPSA_ARM32_TOUCH_LINES_CT
+#if defined(WOLFSSL_ARMASM) && !defined(__aarch64__) && \
+    (defined(WOLFSSL_ARMASM_THUMB2) || \
+     defined(WOLFSSL_ARMASM_NO_HW_CRYPTO)) && \
+    defined(WOLFSSL_AES_TOUCH_LINES) && !defined(HAVE_AESGCM) && \
+    !defined(HAVE_FIPS) && (defined(WOLFSSL_AES_TABLE_SECTION) || \
+    LIBWOLFSSL_VERSION_HEX > 0x05009004)
+    #define WOLFPSA_ARM32_TOUCH_LINES_CT
+#endif
+
+/* Grouped by the FIPS aes.c that has them: every version, v5 on, none. */
+#if defined(FREESCALE_LTC) || defined(FREESCALE_MMCAU) || \
     defined(WOLFSSL_PIC32MZ_CRYPT) || defined(WOLFSSL_NRF51_AES) || \
-    defined(WOLFSSL_SCE) || defined(HAVE_COLDFIRE_SEC) || \
-    defined(WOLF_CRYPTO_CB_ONLY_AES)
+    defined(HAVE_COLDFIRE_SEC) || \
+    ((!defined(HAVE_FIPS) || FIPS_VERSION3_GE(5,0,0)) && \
+     (defined(WOLFSSL_SILABS_SE_ACCEL) || defined(WOLFSSL_AFALG) || \
+      defined(WOLFSSL_DEVCRYPTO_AES) || defined(WOLFSSL_SCE))) || \
+    (!defined(HAVE_FIPS) && \
+     (defined(WOLFSSL_PSOC6_CRYPTO) || defined(WOLF_CRYPTO_CB_ONLY_AES))) || \
+    defined(WOLFPSA_RISCV_CRYPTO_CT) || defined(WOLFPSA_ARM64_NEON_CT)
     #define WOLFPSA_AES_HW_BACKEND
 #endif
 
-/* The RISC-V crypto extensions run all of GCM in assembly, never the C GHASH. */
+/* These run GHASH in assembly, except GHASH() under GCM_SMALL on AArch64,
+ * which keeps the branching C GMULT. */
 #undef WOLFPSA_GHASH_HW_BACKEND
-#if defined(WOLFSSL_RISCV_ASM) && \
-    (defined(WOLFSSL_RISCV_SCALAR_CRYPTO_ASM) || \
-     defined(WOLFSSL_RISCV_VECTOR_CRYPTO_ASM))
+#if defined(WOLFPSA_RISCV_CRYPTO_CT) || \
+    (defined(WOLFPSA_ARM64_NEON_CT) && !defined(GCM_SMALL))
     #define WOLFPSA_GHASH_HW_BACKEND
 #endif
 
 #ifndef WOLFPSA_AES_FAST
-#if defined(WOLFSSL_ARMASM)
-#error "wolfPSA: the Arm AES assembly falls back to a T-table core and ignores WOLFSSL_AES_TOUCH_LINES. Define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED, to accept it."
+#if defined(WOLFSSL_ARMASM) && !defined(WOLFPSA_ARM64_NEON_CT) && \
+    !defined(WOLFPSA_ARM32_TOUCH_LINES_CT)
+#error "wolfPSA: the Arm AES assembly is not constant time: it falls back to T-table lookups, whose timing depends on the key and data. Outside FIPS, define WOLFSSL_ARMASM_NEON_NO_TABLE_LOOKUP on AArch64 with NEON on (wolfSSL 5.9.0 or later), or WOLFSSL_AES_TOUCH_LINES on 32-bit Thumb-2 or WOLFSSL_ARMASM_NO_HW_CRYPTO without AES-GCM (wolfSSL after 5.9.4); or define WOLFPSA_AES_FAST to trade the timing leak for speed."
 #elif defined(WOLFSSL_PPC64_ASM) || defined(WOLFSSL_PPC32_ASM)
-#error "wolfPSA: the PowerPC AES assembly falls back to a T-table core and ignores WOLFSSL_AES_TOUCH_LINES. Define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED, to accept it."
-#elif defined(WOLFSSL_RISCV_ASM) && !defined(WOLFPSA_AES_HW_BACKEND)
-#error "wolfPSA: the RISC-V assembly without the scalar or vector crypto extension uses a T-table AES and a branching GHASH. Define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED, to accept it."
+#error "wolfPSA: the PowerPC AES assembly is not constant time: it falls back to T-table lookups, whose timing depends on the key and data. Define WOLFPSA_AES_FAST to trade the timing leak for speed."
+#elif defined(WOLFSSL_RISCV_ASM) && !defined(WOLFPSA_RISCV_CRYPTO_CT)
+#error "wolfPSA: the RISC-V assembly is not constant time without the scalar or vector crypto extension, or in a FIPS module: it uses a T-table AES or a GHASH that branches on the key. Outside FIPS, define WOLFSSL_RISCV_SCALAR_CRYPTO_ASM or WOLFSSL_RISCV_VECTOR_CRYPTO_ASM if the CPU has one; or define WOLFPSA_AES_FAST to trade the timing leak for speed."
 #elif defined(HAVE_FIPS) && FIPS_VERSION3_LT(6,0,0) && \
     !defined(WOLFPSA_AES_HW_BACKEND)
-#error "wolfPSA: FIPS modules before v6 have neither WC_AES_BITSLICED nor WOLFSSL_AES_TOUCH_LINES. Define WOLFPSA_AES_FAST, without either of them, to accept the T-table core."
+#error "wolfPSA: AES in FIPS modules before v6 is not constant time: they have neither WC_AES_BITSLICED nor WOLFSSL_AES_TOUCH_LINES. Use a hardware AES backend, or define WOLFPSA_AES_FAST to trade the timing leak for speed."
 #elif !defined(WC_AES_BITSLICED) && !defined(WOLFSSL_AES_TOUCH_LINES) && \
     !defined(WOLFPSA_AES_HW_BACKEND)
-#error "wolfPSA: AES backend is not constant time. Select WC_AES_BITSLICED or WOLFSSL_AES_TOUCH_LINES, or define WOLFPSA_AES_FAST to accept the T-table core."
+#error "wolfPSA: the AES backend is not constant time: the T-table core's timing depends on the key and data. Select WC_AES_BITSLICED (constant time, larger Aes) or WOLFSSL_AES_TOUCH_LINES (constant time, slower), or define WOLFPSA_AES_FAST to trade the timing leak for speed."
 #endif
 
 /* Only the 64-bit GHASH built with no GCM method set is masked; FIPS v5 masks
@@ -91,14 +126,14 @@
 #if defined(HAVE_AESGCM) && !defined(WOLFPSA_GHASH_HW_BACKEND)
 #if defined(GCM_SMALL) || defined(GCM_WORD32) || defined(GCM_TABLE) || \
     defined(GCM_TABLE_4BIT) || defined(AES_GCM_GMULT_NCT)
-#error "wolfPSA: GHASH is not constant time. Leave the GCM method unset and AES_GCM_GMULT_NCT undefined for the masked multiply (an LTC part without its GCM engine sets GCM_TABLE itself), or define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED."
+#error "wolfPSA: GHASH is not constant time: GCM_SMALL and GCM_WORD32 branch on the hash key, and the GCM tables and AES_GCM_GMULT_NCT load from secret-indexed memory. Leave the GCM method unset and AES_GCM_GMULT_NCT undefined for the masked multiply (an LTC part without its GCM engine sets GCM_TABLE itself), or define WOLFPSA_AES_FAST to trade the timing leak for speed."
 #elif !defined(WORD64_AVAILABLE)
-#error "wolfPSA: the masked GHASH needs a 64-bit type, and WORD64_AVAILABLE is off (NO_64BIT, or a 16-bit CPU). Remove NO_64BIT, or define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED, to accept the branching one."
+#error "wolfPSA: GHASH is not constant time without a 64-bit type: WORD64_AVAILABLE is off (NO_64BIT, or a 16-bit CPU), so wolfCrypt uses a multiply that branches on the hash key. Remove NO_64BIT, or define WOLFPSA_AES_FAST to trade the timing leak for speed."
 #elif defined(HAVE_FIPS) && FIPS_VERSION3_LT(5,0,0)
-#error "wolfPSA: FIPS v2 has no constant-time GHASH. Define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED, to accept it."
+#error "wolfPSA: GHASH in FIPS v2 is not constant time. Define WOLFPSA_AES_FAST to trade the timing leak for speed."
 #elif defined(HAVE_FIPS) && FIPS_VERSION3_LT(6,0,0) && \
     !defined(AES_GCM_GMULT_CT)
-#error "wolfPSA: FIPS v5 masks GHASH only under AES_GCM_GMULT_CT. Define it, or define WOLFPSA_AES_FAST, without WOLFSSL_AES_TOUCH_LINES or WC_AES_BITSLICED."
+#error "wolfPSA: GHASH in FIPS v5 is constant time only under AES_GCM_GMULT_CT. Define it, or define WOLFPSA_AES_FAST to trade the timing leak for speed."
 #endif
 #endif /* HAVE_AESGCM && !WOLFPSA_GHASH_HW_BACKEND */
 #endif /* !WOLFPSA_AES_FAST */
