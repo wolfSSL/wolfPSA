@@ -155,7 +155,7 @@
 #define NO_DH
 /* Mbed TLS accepts NULL parameters after an ECDSA signature OID */
 #define WOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED
-/* For MBEDTLS_X509_BADCERT_MISSING, see src/mbedtls_compat.c */
+/* For the verify callback, see MbedVerifyCb() in src/mbedtls_compat.c */
 #define WOLFSSL_ALWAYS_VERIFY_CB
 /* mbedtls_ssl_conf_ciphersuites() takes cipher suite IDs */
 #define WOLFSSL_SET_CIPHER_BYTES

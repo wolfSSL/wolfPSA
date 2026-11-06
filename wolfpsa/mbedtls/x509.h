@@ -54,6 +54,7 @@ typedef mbedtls_asn1_buf mbedtls_x509_buf;
 #define MBEDTLS_ERR_X509_CERT_VERIFY_FAILED  -0x2700
 #define MBEDTLS_ERR_X509_BAD_INPUT_DATA      -0x2800
 #define MBEDTLS_ERR_X509_FILE_IO_ERROR       -0x2900
+#define MBEDTLS_ERR_X509_FATAL_ERROR         -0x3000
 #define MBEDTLS_ERR_X509_ALLOC_FAILED        -141
 
 #endif /* MBEDTLS_X509_H */
