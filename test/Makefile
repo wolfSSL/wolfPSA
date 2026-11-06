@@ -57,6 +57,10 @@ USER_SETTINGS_PATH ?= $(WOLFPSA_PATH)
 WOLFSSL_CPPFLAGS ?= -DWOLFSSL_USER_SETTINGS
 
 CPPFLAGS += -DHAVE_CONFIG_H -DWOLFSSL_HAVE_PSA -DHAVE_PK_CALLBACKS
+# Mirrors the library's ENROLLMENT_ALG=1, which psa_api_test checks
+ifeq ($(ENROLLMENT_ALG),1)
+CPPFLAGS += -DWOLFPSA_ENROLLMENT_ALG
+endif
 CPPFLAGS += -I$(WOLFSSL_PATH) -I$(WOLFSSL_PATH)/wolfssl
 ifneq ($(WOLFSSL_BUILD_DIR),)
 CPPFLAGS += -I$(WOLFSSL_BUILD_DIR)
@@ -228,21 +232,27 @@ psa_tls_client:
 # user_settings.h with that knob enabled instead of the shared libwolfpsa.
 CRYPTOCB_BUILD_DIR := $(abspath .)/build-cryptocb$(if $(SANITIZE_FLAGS),-asan)
 CRYPTOCB_LIB := $(CRYPTOCB_BUILD_DIR)/libwolfpsa-cryptocb.a
-CRYPTOCB_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLF_CRYPTO_CB \
-	-I$(abspath $(WOLFSSL_PATH)) -I$(WOLFPSA_ABS) -I$(WOLFPSA_ABS)/wolfpsa \
-	-I$(WOLFPSA_ABS)/src -I$(CRYPTOCB_BUILD_DIR)/include
+VARIANT_INC := -I$(abspath $(WOLFSSL_PATH)) -I$(WOLFPSA_ABS) \
+	-I$(WOLFPSA_ABS)/wolfpsa -I$(WOLFPSA_ABS)/src
+CRYPTOCB_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLF_CRYPTO_CB $(VARIANT_INC) \
+	-I$(CRYPTOCB_BUILD_DIR)/include
 
 # FORCE, because only the sub-make knows whether a library source changed.
 # Without it make treats the existing archive as permanently up to date and
 # the test relinks against a stale copy of the code it is meant to guard.
 $(CRYPTOCB_LIB): FORCE
+	$(call variant_lib,$(CRYPTOCB_BUILD_DIR),-DWOLF_CRYPTO_CB)
+
+# Build a library variant: $(1) is its build dir, $(2) its extra defines
+define variant_lib
 	$(MAKE) -C $(WOLFPSA_PATH) $@ \
 		LIBNAME=$@ \
-		BUILD_DIR=$(CRYPTOCB_BUILD_DIR) \
+		BUILD_DIR=$(1) \
 		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
-		WOLFSSL_CPPFLAGS="-DWOLFSSL_USER_SETTINGS -DWOLF_CRYPTO_CB" \
+		WOLFSSL_CPPFLAGS="-DWOLFSSL_USER_SETTINGS $(2)" \
 		CFLAGS="$(CFLAGS)" \
 		LDFLAGS="$(SANITIZE_FLAGS)"
+endef
 
 FORCE:
 
@@ -256,6 +266,20 @@ psa_devid_cryptocb_test: psa_server/psa_devid_cryptocb_test.c $(CRYPTOCB_LIB) FO
 # same WOLF_CRYPTO_CB library build as the devId test above.
 psa_kdf_zeroize_output_test: psa_server/psa_kdf_zeroize_output_test.c $(CRYPTOCB_LIB) FORCE
 	$(CC) $(CRYPTOCB_CPPFLAGS) $(CFLAGS) -o $@ $< $(CRYPTOCB_LIB) \
+		$(SANITIZE_FLAGS) -lpthread -lm
+
+# The enrollment algorithm is opt-in, so its test has a library built with it
+ENROLL_BUILD_DIR := $(abspath .)/build-enroll$(if $(SANITIZE_FLAGS),-asan)
+ENROLL_LIB := $(ENROLL_BUILD_DIR)/libwolfpsa-enroll.a
+ENROLL_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLFPSA_ENROLLMENT_ALG \
+	$(VARIANT_INC) -I$(ENROLL_BUILD_DIR)/include
+
+$(ENROLL_LIB): FORCE
+	$(call variant_lib,$(ENROLL_BUILD_DIR),-DWOLFPSA_ENROLLMENT_ALG)
+
+psa_enrollment_alg_test: psa_server/psa_enrollment_alg_test.c $(ENROLL_LIB) \
+		FORCE
+	$(CC) $(ENROLL_CPPFLAGS) $(CFLAGS) -o $@ $< $(ENROLL_LIB) \
 		$(SANITIZE_FLAGS) -lpthread -lm
 
 # psa_import_key_probe_test ships its own wolfPSA_Store_* backend: the POSIX
@@ -335,5 +359,7 @@ clean:
 	rm -f psa_server/*.o
 	rm -rf $(abspath .)/build-cryptocb $(abspath .)/build-cryptocb-asan
 	rm -rf $(abspath .)/build-probe $(abspath .)/build-probe-asan
+	rm -rf $(abspath .)/build-enroll $(abspath .)/build-enroll-asan
 	rm -f $(BINARIES) psa_devid_cryptocb_test psa_kdf_zeroize_output_test *.o *.log
+	rm -f psa_enrollment_alg_test
 	rm -f psa_server/*.gcda psa_server/*.gcno

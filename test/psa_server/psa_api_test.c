@@ -865,12 +865,18 @@ cleanup:
     return ret;
 }
 
+/* alg2 needs WOLFPSA_ENROLLMENT_ALG and a volatile key */
 static int test_secondary_algorithm_is_not_supported(void)
 {
     static const uint8_t aes_key[16] = {
         0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,
         0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c
     };
+#ifdef WOLFPSA_ENROLLMENT_ALG
+    const psa_status_t volatile_st = PSA_SUCCESS;
+#else
+    const psa_status_t volatile_st = PSA_ERROR_NOT_SUPPORTED;
+#endif /* WOLFPSA_ENROLLMENT_ALG */
     psa_key_attributes_t attrs = psa_key_attributes_init();
     psa_key_id_t key_id = PSA_KEY_ID_NULL;
     psa_status_t st;
@@ -879,32 +885,34 @@ static int test_secondary_algorithm_is_not_supported(void)
     psa_set_key_bits(&attrs, 128);
     psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT);
     psa_set_key_algorithm(&attrs, PSA_ALG_CBC_NO_PADDING);
-    attrs.policy.alg2 = PSA_ALG_CTR;
+    psa_set_key_enrollment_algorithm(&attrs, PSA_ALG_CTR);
 
     st = psa_import_key(&attrs, aes_key, sizeof(aes_key), &key_id);
+    if (check_true(st == volatile_st, "psa_import_key volatile alg2") !=
+        TEST_OK) {
+        return TEST_FAIL;
+    }
+    (void)psa_destroy_key(key_id);
+    key_id = PSA_KEY_ID_NULL;
+
+    psa_set_key_id(&attrs, PSA_KEY_ID_USER_MIN + 2407u);
+    st = psa_import_key(&attrs, aes_key, sizeof(aes_key), &key_id);
     if (check_true(st == PSA_ERROR_NOT_SUPPORTED,
-                   "psa_import_key rejects unsupported secondary algorithm policy") != TEST_OK) {
+                   "psa_import_key rejects persistent alg2") != TEST_OK) {
         return TEST_FAIL;
     }
     if (check_true(key_id == PSA_KEY_ID_NULL,
-                   "psa_import_key leaves key id null when alg2 is unsupported") != TEST_OK) {
+                   "import leaves id null (persistent alg2)") != TEST_OK) {
         return TEST_FAIL;
     }
-
-    psa_reset_key_attributes(&attrs);
-    psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
-    psa_set_key_bits(&attrs, 128);
-    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT);
-    psa_set_key_algorithm(&attrs, PSA_ALG_CBC_NO_PADDING);
-    attrs.policy.alg2 = PSA_ALG_CTR;
 
     st = psa_generate_key(&attrs, &key_id);
     if (check_true(st == PSA_ERROR_NOT_SUPPORTED,
-                   "psa_generate_key rejects unsupported secondary algorithm policy") != TEST_OK) {
+                   "psa_generate_key rejects persistent alg2") != TEST_OK) {
         return TEST_FAIL;
     }
     if (check_true(key_id == PSA_KEY_ID_NULL,
-                   "psa_generate_key leaves key id null when alg2 is unsupported") != TEST_OK) {
+                   "generate leaves id null (persistent alg2)") != TEST_OK) {
         return TEST_FAIL;
     }
 

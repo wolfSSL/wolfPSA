@@ -76,6 +76,14 @@ config WOLFPSA_AES_FAST
 	  channel is out of scope - a part with no data cache, or an attacker with
 	  no way to measure it.
 
+config WOLFPSA_ENROLLMENT_ALG
+	bool "Mbed TLS enrollment algorithm on volatile keys"
+	help
+	  Define WOLFPSA_ENROLLMENT_ALG: a volatile key may have a second
+	  permitted algorithm, set with psa_set_key_enrollment_algorithm(), as
+	  in Mbed TLS. Using one key with two algorithms is not recommended, so
+	  enable this only for code that sets one, such as hostap.
+
 config WOLFPSA_THREAD_SAFE
 	bool "Serialize wolfPSA shared state with a global mutex"
 	default y

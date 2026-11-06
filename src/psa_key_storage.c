@@ -1052,6 +1052,8 @@ static psa_status_t psa_key_attributes_deserialize(
     XMEMCPY(&attributes->policy.alg, buffer,
             sizeof(psa_algorithm_t));
     buffer += sizeof(psa_algorithm_t);
+    /* Persistent keys have no enrollment algorithm */
+    attributes->policy.alg2 = PSA_ALG_NONE;
 
     XMEMCPY(&attributes->lifetime, buffer, sizeof(psa_key_lifetime_t));
 
@@ -1172,6 +1174,7 @@ psa_status_t psa_import_key(
     size_t buffer_size;
     size_t attr_length;
     int ret = 0;
+    int alg2_ok = 0;
     void* store = NULL;
     psa_key_attributes_t attr;
 
@@ -1215,8 +1218,12 @@ psa_status_t psa_import_key(
         return PSA_ERROR_NOT_SUPPORTED;
     }
 
-    if (attr.policy.alg2 != PSA_ALG_NONE) {
-        wolfpsa_debug_import_reason("unsupported secondary algorithm", &attr,
+#ifdef WOLFPSA_ENROLLMENT_ALG
+    /* The persistent key format has no field for the enrollment algorithm */
+    alg2_ok = PSA_KEY_LIFETIME_IS_VOLATILE(attr.lifetime);
+#endif /* WOLFPSA_ENROLLMENT_ALG */
+    if (attr.policy.alg2 != PSA_ALG_NONE && !alg2_ok) {
+        wolfpsa_debug_import_reason("unsupported enrollment algorithm", &attr,
                                     data_length);
         return PSA_ERROR_NOT_SUPPORTED;
     }
@@ -2654,6 +2661,18 @@ static int wolfpsa_alg_intersect(psa_algorithm_t src_alg,
     return ok;
 }
 
+/* As wolfpsa_alg_intersect(), but alg2 unset on either side is dropped */
+static int wolfpsa_alg2_intersect(psa_algorithm_t src_alg,
+                                  psa_algorithm_t dst_alg,
+                                  psa_algorithm_t* alg)
+{
+    if (src_alg == PSA_ALG_NONE || dst_alg == PSA_ALG_NONE) {
+        *alg = PSA_ALG_NONE;
+        return 1;
+    }
+    return wolfpsa_alg_intersect(src_alg, dst_alg, alg);
+}
+
 /* Copy a key in the PSA key storage */
 psa_status_t psa_copy_key(
     psa_key_id_t source_key,
@@ -2672,6 +2691,7 @@ psa_status_t psa_copy_key(
     psa_key_attributes_t src_attr = PSA_KEY_ATTRIBUTES_INIT;
     psa_key_attributes_t dst_attr;
     psa_algorithm_t copy_alg = PSA_ALG_NONE;
+    psa_algorithm_t copy_alg2 = PSA_ALG_NONE;
 
     wolfpsa_clear_key_id(target_key);
     /* Check parameters */
@@ -2712,7 +2732,10 @@ psa_status_t psa_copy_key(
             }
 
             if (!wolfpsa_alg_intersect(psa_get_key_algorithm(&vol_attr),
-                                       attributes->policy.alg, &copy_alg)) {
+                                       attributes->policy.alg, &copy_alg) ||
+                !wolfpsa_alg2_intersect(vol_attr.policy.alg2,
+                                        attributes->policy.alg2,
+                                        &copy_alg2)) {
                 wolfpsa_forcezero_free_key_data(key_data, key_data_length);
                 return PSA_ERROR_INVALID_ARGUMENT;
             }
@@ -2728,6 +2751,7 @@ psa_status_t psa_copy_key(
             dst_attr.policy.usage = psa_get_key_usage_flags(&vol_attr) &
                                     psa_get_key_usage_flags(&dst_attr);
             dst_attr.policy.alg = copy_alg;
+            dst_attr.policy.alg2 = copy_alg2;
 
             status = psa_import_key(&dst_attr, key_data,
                                     key_data_length, target_key);
@@ -2783,7 +2807,9 @@ psa_status_t psa_copy_key(
     }
 
     if (!wolfpsa_alg_intersect(psa_get_key_algorithm(&src_attr),
-                               attributes->policy.alg, &copy_alg)) {
+                               attributes->policy.alg, &copy_alg) ||
+        !wolfpsa_alg2_intersect(src_attr.policy.alg2, attributes->policy.alg2,
+                                &copy_alg2)) {
         wolfPSA_Store_Close(store);
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -2799,6 +2825,7 @@ psa_status_t psa_copy_key(
     dst_attr.policy.usage = psa_get_key_usage_flags(&src_attr) &
                             psa_get_key_usage_flags(&dst_attr);
     dst_attr.policy.alg = copy_alg;
+    dst_attr.policy.alg2 = copy_alg2;
 
     XMEMCPY(&key_data_length, header + attr_length, sizeof(size_t));
     status = wolfpsa_validate_stored_key_data_length(key_data_length);
@@ -2828,6 +2855,32 @@ psa_status_t psa_copy_key(
     return status;
 }
 
+/* Exact match, or the ANY_HASH wildcard of a hash-and-sign family */
+static int wolfpsa_policy_alg_permits(psa_algorithm_t key_alg,
+                                      psa_algorithm_t alg)
+{
+    if (key_alg == PSA_ALG_NONE) {
+        return 0;
+    }
+    if (key_alg == alg) {
+        return 1;
+    }
+    return PSA_ALG_IS_SIGN_HASH(alg) &&
+           PSA_ALG_SIGN_GET_HASH(key_alg) == PSA_ALG_ANY_HASH &&
+           PSA_ALG_SIGN_GET_HASH(alg) != PSA_ALG_ANY_HASH &&
+           (key_alg & ~PSA_ALG_HASH_MASK) == (alg & ~PSA_ALG_HASH_MASK);
+}
+
+/* Whether the permitted algorithm or the enrollment algorithm allows alg */
+int wolfpsa_key_permits_alg(const psa_key_attributes_t* attributes,
+                            psa_algorithm_t alg)
+{
+    return wolfpsa_policy_alg_permits(psa_get_key_algorithm(attributes),
+                                      alg) ||
+           wolfpsa_policy_alg_permits(
+               psa_get_key_enrollment_algorithm(attributes), alg);
+}
+
 /* Check whether a key supports a given algorithm and usage combination.
  *
  * PSA Crypto API 1.4 semantics:
@@ -2845,7 +2898,6 @@ psa_status_t psa_check_key_usage(psa_key_id_t key,
     psa_status_t status;
     psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
     psa_key_usage_t key_usage;
-    psa_algorithm_t key_alg;
 
     wolfpsa_trace("psa_check_key_usage(key=%u alg=0x%08x usage=0x%08x)",
                   (unsigned)key, (unsigned)alg, (unsigned)usage);
@@ -2861,35 +2913,9 @@ psa_status_t psa_check_key_usage(psa_key_id_t key,
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    if (alg != PSA_ALG_NONE) {
-        key_alg = psa_get_key_algorithm(&attributes);
-
-        /* A key with no permitted algorithm cannot be used for any
-         * cryptographic operation. */
-        if (key_alg == PSA_ALG_NONE) {
-            psa_reset_key_attributes(&attributes);
-            return PSA_ERROR_NOT_PERMITTED;
-        }
-
-        /* Exact match is always accepted. Otherwise apply the ANY_HASH
-         * wildcard rule: a sign-hash policy using PSA_ALG_ANY_HASH authorises
-         * any concrete hash-and-sign algorithm of the same base family. */
-        if (key_alg != alg) {
-            int alg_ok = 0;
-
-            if (PSA_ALG_IS_SIGN_HASH(alg) &&
-                PSA_ALG_SIGN_GET_HASH(key_alg) == PSA_ALG_ANY_HASH &&
-                PSA_ALG_SIGN_GET_HASH(alg) != PSA_ALG_ANY_HASH &&
-                ((key_alg & ~PSA_ALG_HASH_MASK) == (alg & ~PSA_ALG_HASH_MASK)))
-            {
-                alg_ok = 1;
-            }
-
-            if (!alg_ok) {
-                psa_reset_key_attributes(&attributes);
-                return PSA_ERROR_NOT_PERMITTED;
-            }
-        }
+    if (alg != PSA_ALG_NONE && !wolfpsa_key_permits_alg(&attributes, alg)) {
+        psa_reset_key_attributes(&attributes);
+        return PSA_ERROR_NOT_PERMITTED;
     }
 
     psa_reset_key_attributes(&attributes);

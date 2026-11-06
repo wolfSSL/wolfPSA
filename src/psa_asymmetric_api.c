@@ -260,6 +260,19 @@ static int wolfpsa_sign_alg_permitted(psa_algorithm_t key_alg,
     return 0;
 }
 
+static int wolfpsa_asymmetric_alg_permitted(psa_algorithm_t key_alg,
+                                            psa_algorithm_t alg,
+                                            psa_key_usage_t usage)
+{
+    if (key_alg == PSA_ALG_NONE) {
+        return 0;
+    }
+    if (PSA_ALG_IS_KEY_AGREEMENT(alg) && PSA_ALG_IS_KEY_AGREEMENT(key_alg)) {
+        return wolfpsa_key_agreement_alg_permitted(key_alg, alg);
+    }
+    return wolfpsa_sign_alg_permitted(key_alg, alg, usage);
+}
+
 static psa_status_t wolfpsa_asymmetric_check_key(psa_key_id_t key,
                                                  psa_key_usage_t usage,
                                                  psa_algorithm_t alg,
@@ -269,7 +282,6 @@ static psa_status_t wolfpsa_asymmetric_check_key(psa_key_id_t key,
 {
     psa_status_t status;
     psa_key_usage_t key_usage;
-    psa_algorithm_t key_alg;
 
     status = wolfpsa_get_key_data(key, attributes, key_data, key_data_length);
     if (status != PSA_SUCCESS) {
@@ -284,24 +296,10 @@ static psa_status_t wolfpsa_asymmetric_check_key(psa_key_id_t key,
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    key_alg = psa_get_key_algorithm(attributes);
-    if (key_alg == PSA_ALG_NONE) {
-        wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
-        *key_data = NULL;
-        *key_data_length = 0;
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-
-    /* Algorithm match checks */
-    if (PSA_ALG_IS_KEY_AGREEMENT(alg) && PSA_ALG_IS_KEY_AGREEMENT(key_alg)) {
-        if (!wolfpsa_key_agreement_alg_permitted(key_alg, alg)) {
-            wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
-            *key_data = NULL;
-            *key_data_length = 0;
-            return PSA_ERROR_NOT_PERMITTED;
-        }
-    }
-    else if (!wolfpsa_sign_alg_permitted(key_alg, alg, usage)) {
+    if (!wolfpsa_asymmetric_alg_permitted(psa_get_key_algorithm(attributes),
+                                          alg, usage) &&
+        !wolfpsa_asymmetric_alg_permitted(
+            psa_get_key_enrollment_algorithm(attributes), alg, usage)) {
         wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
         *key_data = NULL;
         *key_data_length = 0;

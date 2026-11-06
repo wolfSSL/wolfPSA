@@ -886,6 +886,20 @@ static int wolfpsa_kdf_key_type_ok(psa_algorithm_t alg,
     return 0;
 }
 
+/* Whether a key with permitted algorithm key_alg can be input to ctx */
+static int wolfpsa_kdf_key_alg_permitted(const wolfpsa_kdf_ctx_t *ctx,
+                                         psa_algorithm_t key_alg)
+{
+    if (key_alg == PSA_ALG_NONE) {
+        return 0;
+    }
+    if (ctx->is_key_agreement) {
+        return PSA_ALG_IS_KEY_AGREEMENT(key_alg) &&
+               PSA_ALG_KEY_AGREEMENT_GET_KDF(key_alg) == ctx->alg;
+    }
+    return key_alg == ctx->alg;
+}
+
 static psa_status_t wolfpsa_kdf_input_key(psa_key_derivation_operation_t *
                                           operation,
                                           psa_key_derivation_step_t step,
@@ -895,7 +909,6 @@ static psa_status_t wolfpsa_kdf_input_key(psa_key_derivation_operation_t *
     psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
     uint8_t *key_data = NULL;
     size_t key_data_length = 0;
-    psa_algorithm_t key_alg;
     psa_status_t status;
 
     if (ctx == NULL) {
@@ -925,21 +938,10 @@ static psa_status_t wolfpsa_kdf_input_key(psa_key_derivation_operation_t *
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    key_alg = psa_get_key_algorithm(&attributes);
-    if (key_alg == PSA_ALG_NONE) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-
-    /* Algorithm match checks */
-    if (ctx->is_key_agreement) {
-        if (!PSA_ALG_IS_KEY_AGREEMENT(key_alg) ||
-            PSA_ALG_KEY_AGREEMENT_GET_KDF(key_alg) != ctx->alg) {
-            wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-            return PSA_ERROR_NOT_PERMITTED;
-        }
-    }
-    else if (key_alg != ctx->alg) {
+    if (!wolfpsa_kdf_key_alg_permitted(ctx,
+                                       psa_get_key_algorithm(&attributes)) &&
+        !wolfpsa_kdf_key_alg_permitted(
+            ctx, psa_get_key_enrollment_algorithm(&attributes))) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_NOT_PERMITTED;
     }

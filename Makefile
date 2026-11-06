@@ -105,6 +105,10 @@ endif
 ifeq ($(AES_FAST),1)
 CPPFLAGS += -DWOLFPSA_AES_FAST
 endif
+# ENROLLMENT_ALG=1 allows the Mbed TLS enrollment algorithm on volatile keys
+ifeq ($(ENROLLMENT_ALG),1)
+CPPFLAGS += -DWOLFPSA_ENROLLMENT_ALG
+endif
 CFLAGS += $(DEBUG_FLAGS) $(SANITIZE_FLAGS)
 LDFLAGS += $(SANITIZE_FLAGS)
 
@@ -229,6 +233,7 @@ UNIT_TESTS := psa_api_test \
 	psa_store_read_open_test \
 	psa_store_dir_validation_test \
 	psa_devid_cryptocb_test \
+	psa_enrollment_alg_test \
 	psa_kdf_zeroize_output_test \
 	psa_import_zero_length_test \
 	psa_import_key_data_test \

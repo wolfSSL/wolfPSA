@@ -89,7 +89,6 @@ psa_status_t psa_encapsulate(psa_key_id_t key,
     psa_key_type_t key_type;
     size_t key_bits;
     psa_key_usage_t key_usage;
-    psa_algorithm_t key_alg;
     psa_status_t status;
     uint8_t ss[WOLFPSA_MLKEM_SS_SIZE];
     /* Staging buffer: ciphertext is written here before the output key is
@@ -129,7 +128,6 @@ psa_status_t psa_encapsulate(psa_key_id_t key,
     key_type  = psa_get_key_type(&key_attr);
     key_bits  = psa_get_key_bits(&key_attr);
     key_usage = psa_get_key_usage_flags(&key_attr);
-    key_alg   = psa_get_key_algorithm(&key_attr);
 
     if (key_type != PSA_KEY_TYPE_ML_KEM_KEY_PAIR &&
         key_type != PSA_KEY_TYPE_ML_KEM_PUBLIC_KEY) {
@@ -142,11 +140,7 @@ psa_status_t psa_encapsulate(psa_key_id_t key,
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    if (key_alg != alg && key_alg != PSA_ALG_NONE) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-    if (key_alg == PSA_ALG_NONE) {
+    if (!wolfpsa_key_permits_alg(&key_attr, alg)) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_NOT_PERMITTED;
     }
@@ -207,7 +201,6 @@ psa_status_t psa_decapsulate(psa_key_id_t key,
     psa_key_type_t key_type;
     size_t key_bits;
     psa_key_usage_t key_usage;
-    psa_algorithm_t key_alg;
     psa_status_t status;
     uint8_t ss[WOLFPSA_MLKEM_SS_SIZE];
 
@@ -239,7 +232,6 @@ psa_status_t psa_decapsulate(psa_key_id_t key,
     key_type  = psa_get_key_type(&key_attr);
     key_bits  = psa_get_key_bits(&key_attr);
     key_usage = psa_get_key_usage_flags(&key_attr);
-    key_alg   = psa_get_key_algorithm(&key_attr);
 
     /* Decapsulate requires the key pair (private key). */
     if (key_type != PSA_KEY_TYPE_ML_KEM_KEY_PAIR) {
@@ -252,11 +244,7 @@ psa_status_t psa_decapsulate(psa_key_id_t key,
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    if (key_alg != alg && key_alg != PSA_ALG_NONE) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-    if (key_alg == PSA_ALG_NONE) {
+    if (!wolfpsa_key_permits_alg(&key_attr, alg)) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_NOT_PERMITTED;
     }
