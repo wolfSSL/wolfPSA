@@ -48,6 +48,8 @@ typedef struct wolfpsa_aead_ctx {
     size_t plaintext_expected;
     size_t tag_length;
     int lengths_set;
+    int ad_started;
+    int body_started;
 
     /* Streaming state. Used when psa_aead_update() is called with a non-NULL
      * output: the payload is emitted from update() and only the tag (or, for

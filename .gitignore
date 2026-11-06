@@ -38,6 +38,7 @@ test/psa_reset_outputs_test
 test/psa_cipher_overlap_test
 test/psa_copy_key_narrowing_test
 test/psa_des3_pkcs7_test
+test/psa_aead_call_order_test
 test/psa_ecc_curve_caps_test
 test/psa_ecc_ecdh_curve_test
 test/psa_ecc_sig_len_test

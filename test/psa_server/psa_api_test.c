@@ -3281,7 +3281,7 @@ static int test_aead_generate_nonce(void)
     key_id = 0;
 
 #ifdef HAVE_AESCCM
-    /* (4) CCM requires psa_aead_set_lengths before a nonce can be generated. */
+    /* (4) CCM generates a nonce before psa_aead_set_lengths. */
     {
         psa_key_attributes_t ccm_attrs = psa_key_attributes_init();
         psa_key_id_t ccm_key_id = 0;
@@ -3301,8 +3301,8 @@ static int test_aead_generate_nonce(void)
             return TEST_FAIL;
         }
         st = psa_aead_generate_nonce(&op, nonce, sizeof(nonce), &nonce_len);
-        if (check_true(st == PSA_ERROR_BAD_STATE,
-                       "generate_nonce CCM without set_lengths rejected") != TEST_OK) {
+        if (check_status(st, "generate_nonce CCM before set_lengths")
+                       != TEST_OK) {
             (void)psa_aead_abort(&op);
             (void)psa_destroy_key(ccm_key_id);
             return TEST_FAIL;
@@ -3589,7 +3589,7 @@ static int test_aead_multipart_length_overflow_rejected(void)
     psa_key_attributes_t attrs = psa_key_attributes_init();
     psa_aead_operation_t op = psa_aead_operation_init();
     wolfpsa_aead_ctx_t *ctx;
-    int ret = TEST_OK;
+    int ret = TEST_FAIL;
     psa_status_t st;
 
     psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
@@ -3602,7 +3602,7 @@ static int test_aead_multipart_length_overflow_rejected(void)
 
     st = psa_aead_encrypt_setup(&op, key_id, PSA_ALG_GCM);
     if (check_status(st, "psa_aead_encrypt_setup") != TEST_OK) goto cleanup;
-    st = psa_aead_set_lengths(&op, SIZE_MAX, SIZE_MAX);
+    st = psa_aead_set_lengths(&op, 0, 0);
     if (check_status(st, "psa_aead_set_lengths") != TEST_OK) goto cleanup;
     st = psa_aead_set_nonce(&op, nonce, sizeof(nonce));
     if (check_status(st, "psa_aead_set_nonce") != TEST_OK) goto cleanup;
@@ -3618,7 +3618,7 @@ static int test_aead_multipart_length_overflow_rejected(void)
 
     st = psa_aead_encrypt_setup(&op, key_id, PSA_ALG_GCM);
     if (check_status(st, "psa_aead_encrypt_setup(plaintext)") != TEST_OK) goto cleanup;
-    st = psa_aead_set_lengths(&op, 0, SIZE_MAX);
+    st = psa_aead_set_lengths(&op, 0, 0);
     if (check_status(st, "psa_aead_set_lengths(plaintext)") != TEST_OK) goto cleanup;
     st = psa_aead_set_nonce(&op, nonce, sizeof(nonce));
     if (check_status(st, "psa_aead_set_nonce(plaintext)") != TEST_OK) goto cleanup;
@@ -3631,6 +3631,7 @@ static int test_aead_multipart_length_overflow_rejected(void)
         ret = TEST_FAIL;
         goto cleanup;
     }
+    ret = TEST_OK;
 
 cleanup:
     psa_aead_abort(&op);

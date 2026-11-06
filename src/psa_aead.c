@@ -138,6 +138,59 @@ static size_t wolfpsa_aead_tag_length(psa_algorithm_t alg)
     return PSA_ALG_AEAD_GET_TAG_LENGTH(alg);
 }
 
+/* CCM puts the lengths in its first block, so it needs them before data */
+static int wolfpsa_aead_lengths_missing(const wolfpsa_aead_ctx_t *ctx)
+{
+    return PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM) && !ctx->lengths_set;
+}
+
+/* SP 800-38D and RFC 8439 limits */
+static const struct {
+    psa_algorithm_t alg;
+    uint64_t max_ad;
+    uint64_t max_plaintext;
+} wolfpsa_aead_limits[] = {
+    { PSA_ALG_GCM, (1ULL << 61) - 1, 0xFFFFFFFE0ULL },
+    { PSA_ALG_CHACHA20_POLY1305, UINT64_MAX, (uint64_t)UINT32_MAX * 64 },
+};
+
+/* A zero nonce_length means the nonce is not set yet */
+static psa_status_t wolfpsa_aead_check_lengths(psa_algorithm_t alg,
+                                               size_t nonce_length,
+                                               size_t ad_length,
+                                               size_t plaintext_length)
+{
+    size_t i;
+    size_t len_size;
+
+    /* CCM encodes the plaintext length in the 15 - nonce_length bytes */
+    if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM) && nonce_length != 0) {
+        len_size = 15 - nonce_length;
+        if (len_size < sizeof(uint64_t) &&
+            ((uint64_t)plaintext_length >> (8 * len_size)) != 0) {
+            return PSA_ERROR_INVALID_ARGUMENT;
+        }
+    }
+
+    for (i = 0; i < sizeof(wolfpsa_aead_limits) /
+                    sizeof(wolfpsa_aead_limits[0]); i++) {
+        if (PSA_ALG_AEAD_EQUAL(alg, wolfpsa_aead_limits[i].alg) &&
+            ((uint64_t)ad_length > wolfpsa_aead_limits[i].max_ad ||
+             (uint64_t)plaintext_length >
+             wolfpsa_aead_limits[i].max_plaintext)) {
+            return PSA_ERROR_INVALID_ARGUMENT;
+        }
+    }
+
+    /* AAD, and GCM and ChaCha20-Poly1305 data, have 32-bit lengths here */
+    if (wolfpsa_check_word32_length(ad_length) != PSA_SUCCESS ||
+        (!PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM) &&
+         wolfpsa_check_word32_length(plaintext_length) != PSA_SUCCESS)) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    return PSA_SUCCESS;
+}
+
 #ifdef HAVE_AESGCM
 static psa_status_t wolfpsa_aead_gcm_check_tag_size(size_t tag_length)
 {
@@ -412,15 +465,21 @@ psa_status_t psa_aead_set_lengths(psa_aead_operation_t *operation,
                                   size_t plaintext_length)
 {
     wolfpsa_aead_ctx_t *ctx = wolfpsa_aead_get_ctx(operation);
+    psa_status_t status = PSA_SUCCESS;
 
     if (ctx == NULL) {
         return PSA_ERROR_BAD_STATE;
     }
-    if (ctx->lengths_set) {
-        return PSA_ERROR_BAD_STATE;
+    if (ctx->lengths_set || ctx->ad_started || ctx->body_started) {
+        status = PSA_ERROR_BAD_STATE;
     }
-    if (ctx->nonce_length != 0 || ctx->aad_length != 0 || ctx->input_length != 0) {
-        return PSA_ERROR_BAD_STATE;
+    else {
+        status = wolfpsa_aead_check_lengths(ctx->alg, ctx->nonce_length,
+                                            ad_length, plaintext_length);
+    }
+    if (status != PSA_SUCCESS) {
+        psa_aead_abort(operation);
+        return status;
     }
 
     ctx->ad_expected = ad_length;
@@ -434,6 +493,7 @@ psa_status_t psa_aead_set_nonce(psa_aead_operation_t *operation,
                                 size_t nonce_length)
 {
     wolfpsa_aead_ctx_t *ctx = wolfpsa_aead_get_ctx(operation);
+    psa_status_t status;
     size_t expected;
 
     if (ctx == NULL) {
@@ -443,10 +503,6 @@ psa_status_t psa_aead_set_nonce(psa_aead_operation_t *operation,
         return PSA_ERROR_INVALID_ARGUMENT;
     }
     if (ctx->nonce_length != 0) {
-        return PSA_ERROR_BAD_STATE;
-    }
-
-    if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM) && !ctx->lengths_set) {
         return PSA_ERROR_BAD_STATE;
     }
 
@@ -471,6 +527,14 @@ psa_status_t psa_aead_set_nonce(psa_aead_operation_t *operation,
         expected = PSA_AEAD_NONCE_LENGTH(ctx->key_type, ctx->alg);
         if (expected == 0 || nonce_length != expected) {
             return PSA_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    if (ctx->lengths_set) {
+        status = wolfpsa_aead_check_lengths(ctx->alg, nonce_length,
+                                            ctx->ad_expected,
+                                            ctx->plaintext_expected);
+        if (status != PSA_SUCCESS) {
+            return status;
         }
     }
 
@@ -503,9 +567,6 @@ psa_status_t psa_aead_generate_nonce(psa_aead_operation_t *operation,
     if (ctx->nonce_length != 0) {
         return PSA_ERROR_BAD_STATE;
     }
-    if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM) && !ctx->lengths_set) {
-        return PSA_ERROR_BAD_STATE;
-    }
 
     expected = PSA_AEAD_NONCE_LENGTH(ctx->key_type, ctx->alg);
     if (expected == 0 || nonce_size < expected) {
@@ -536,7 +597,7 @@ psa_status_t psa_aead_update_ad(psa_aead_operation_t *operation,
     if (ctx == NULL) {
         return PSA_ERROR_BAD_STATE;
     }
-    if (ctx->streaming) {
+    if (ctx->body_started) {
         /* The AAD is fed to the streaming primitive in one shot on the first
          * data update: AAD appended after that would never be authenticated.
          * The PSA Crypto API forbids the sequence anyway -- all AAD must be
@@ -545,11 +606,12 @@ psa_status_t psa_aead_update_ad(psa_aead_operation_t *operation,
         psa_aead_abort(operation);
         return status;
     }
-    if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM) && !ctx->lengths_set) {
+    if (ctx->nonce_length == 0 || wolfpsa_aead_lengths_missing(ctx)) {
         return PSA_ERROR_BAD_STATE;
     }
-    if (ctx->nonce_length == 0) {
-        return PSA_ERROR_BAD_STATE;
+    if (input_length == 0) {
+        ctx->ad_started = 1;
+        return PSA_SUCCESS;
     }
     if (ctx->lengths_set &&
         (input_length > SIZE_MAX - ctx->aad_length ||
@@ -569,7 +631,10 @@ psa_status_t psa_aead_update_ad(psa_aead_operation_t *operation,
     }
 
     status = wolfpsa_aead_append(&ctx->aad, &ctx->aad_length, input, input_length);
-    if (status != PSA_SUCCESS) {
+    if (status == PSA_SUCCESS) {
+        ctx->ad_started = 1;
+    }
+    else {
         psa_aead_abort(operation);
     }
     return status;
@@ -1029,7 +1094,7 @@ psa_status_t psa_aead_update(psa_aead_operation_t *operation,
     (void)output;
     (void)output_size;
 
-    if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM) && !ctx->lengths_set) {
+    if (wolfpsa_aead_lengths_missing(ctx)) {
         return PSA_ERROR_BAD_STATE;
     }
     if (ctx->nonce_length == 0) {
@@ -1052,6 +1117,8 @@ psa_status_t psa_aead_update(psa_aead_operation_t *operation,
         psa_aead_abort(operation);
         return status;
     }
+    /* Any failure from here on aborts the operation */
+    ctx->body_started = 1;
     if (input_length == 0) {
         return PSA_SUCCESS;
     }
@@ -1132,7 +1199,7 @@ static psa_status_t wolfpsa_aead_encrypt_final(wolfpsa_aead_ctx_t *ctx,
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    if (ctx->nonce_length == 0) {
+    if (ctx->nonce_length == 0 || wolfpsa_aead_lengths_missing(ctx)) {
         return PSA_ERROR_BAD_STATE;
     }
 
@@ -1309,7 +1376,7 @@ static psa_status_t wolfpsa_aead_decrypt_final(wolfpsa_aead_ctx_t *ctx,
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    if (ctx->nonce_length == 0) {
+    if (ctx->nonce_length == 0 || wolfpsa_aead_lengths_missing(ctx)) {
         return PSA_ERROR_BAD_STATE;
     }
 
