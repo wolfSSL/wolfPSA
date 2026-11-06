@@ -55,8 +55,10 @@
 typedef struct mbedtls_pk_context {
     unsigned char* der;
     size_t der_len;
+    int type;
 } mbedtls_pk_context;
 
+/* The supported subset of MBEDTLS_PK_C and MBEDTLS_PK_PARSE_C */
 void mbedtls_pk_init(mbedtls_pk_context* ctx);
 void mbedtls_pk_free(mbedtls_pk_context* ctx);
 int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,

@@ -40,11 +40,18 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfpsa/psa_engine.h>
+#include "psa_lock.h"
 
 /* The generated crypto config must match the build's NO_FILESYSTEM */
 #if defined(MBEDTLS_FS_IO) == defined(NO_FILESYSTEM)
     #error "MBEDTLS_FS_IO must be defined exactly when NO_FILESYSTEM is not"
-#endif
+#endif /* defined(MBEDTLS_FS_IO) == defined(NO_FILESYSTEM) */
+
+/* MBEDTLS_THREADING_C promises a key store safe to use from any thread */
+#if defined(MBEDTLS_THREADING_C) && \
+        (!defined(WOLFPSA_THREAD_SAFE) || defined(SINGLE_THREADED))
+    #error "MBEDTLS_THREADING_C needs WOLFPSA_THREAD_SAFE, not SINGLE_THREADED"
+#endif /* MBEDTLS_THREADING_C && (!WOLFPSA_THREAD_SAFE || SINGLE_THREADED) */
 
 void mbedtls_psa_crypto_free(void)
 {
@@ -90,12 +97,19 @@ static int PkRet(int wcRet, int err)
         PSA_ERROR_INSUFFICIENT_MEMORY : err;
 }
 
-/* An RSA or EC private key, traditional or PKCS #8. *type becomes PK_TYPE_*
- * when it is not NULL. */
+/* A decoded key must fill the buffer */
+static int PkDecodeRet(int wcRet, word32 idx, word32 len)
+{
+    if (wcRet == 0 && idx != len) {
+        return MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
+    }
+    return PkRet(wcRet, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
+}
+
+/* An RSA or EC private key, traditional or PKCS #8. *type becomes PK_TYPE_*. */
 static int PkCheckKey(const byte* der, word32 len, int* type)
 {
     int ret = MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
-    int found = PK_TYPE_NONE;
     word32 idx;
 #ifndef NO_RSA
     RsaKey* rsa;
@@ -104,16 +118,17 @@ static int PkCheckKey(const byte* der, word32 len, int* type)
     ecc_key* ecc;
 #endif /* HAVE_ECC */
 
+    *type = PK_TYPE_NONE;
 #ifndef NO_RSA
     rsa = wc_NewRsaKey(NULL, INVALID_DEVID, NULL);
     if (rsa == NULL) {
         return PSA_ERROR_INSUFFICIENT_MEMORY;
     }
     idx = 0;
-    ret = PkRet(wc_RsaPrivateKeyDecode(der, &idx, rsa, len),
-        MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
+    ret = wc_RsaPrivateKeyDecode(der, &idx, rsa, len);
+    ret = PkDecodeRet(ret, idx, len);
     if (ret == 0) {
-        found = PK_TYPE_RSA;
+        *type = PK_TYPE_RSA;
     }
     wc_DeleteRsaKey(rsa, &rsa);
 #endif /* !NO_RSA */
@@ -124,21 +139,40 @@ static int PkCheckKey(const byte* der, word32 len, int* type)
             return PSA_ERROR_INSUFFICIENT_MEMORY;
         }
         idx = 0;
-        ret = PkRet(wc_EccPrivateKeyDecode(der, &idx, ecc, len),
-            MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
+        ret = wc_EccPrivateKeyDecode(der, &idx, ecc, len);
+        ret = PkDecodeRet(ret, idx, len);
         if (ret == 0) {
-            found = PK_TYPE_ECC;
+            *type = PK_TYPE_ECC;
         }
         wc_ecc_key_free(ecc);
     }
 #endif /* HAVE_ECC */
-    if (type != NULL) {
-        *type = found;
-    }
     (void)der;
     (void)len;
     (void)idx;
     return ret;
+}
+
+/* A PEM key encrypted with a password, PKCS #8 or traditional */
+static int PkIsEncrypted(const unsigned char* key, size_t keylen)
+{
+    static const char* const marks[] = {
+        "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+        "Proc-Type: 4,ENCRYPTED"
+    };
+    size_t markLen;
+    size_t i;
+    size_t j;
+
+    for (i = 0; i < sizeof(marks) / sizeof(marks[0]); i++) {
+        markLen = XSTRLEN(marks[i]);
+        for (j = 0; j + markLen <= keylen; j++) {
+            if (XMEMCMP(key + j, marks[i], markLen) == 0) {
+                return 1;
+            }
+        }
+    }
+    return 0;
 }
 
 /* PEM or DER. Encrypted keys are not supported, so pwd is not used. */
@@ -156,6 +190,9 @@ int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
     }
     if (keylen == 0) {
         return MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
+    }
+    if (PkIsEncrypted(key, keylen)) {
+        return MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
     }
 
     /* Big enough for the DER of a PEM key */
@@ -182,7 +219,7 @@ int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
     }
 
     if (ret == 0) {
-        ret = PkCheckKey(ctx->der, (word32)ctx->der_len, NULL);
+        ret = PkCheckKey(ctx->der, (word32)ctx->der_len, &ctx->type);
     }
     if (ret != 0) {
         mbedtls_pk_free(ctx);
@@ -190,27 +227,47 @@ int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
     return ret;
 }
 
-/* The key pair signs and verifies; an RSA key also encrypts and decrypts */
+/* The policy TF-PSA-Crypto gives the PSA key of a parsed private key */
+static const struct {
+    int type;
+    psa_key_usage_t usage;
+    psa_algorithm_t alg;
+} pkPolicy[] = {
+    { PK_TYPE_RSA, PSA_KEY_USAGE_SIGN_HASH,
+        PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_RSA, PSA_KEY_USAGE_SIGN_HASH,
+        PSA_ALG_RSA_PSS(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_RSA, PSA_KEY_USAGE_VERIFY_HASH,
+        PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_RSA, PSA_KEY_USAGE_VERIFY_HASH,
+        PSA_ALG_RSA_PSS(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_ECC, PSA_KEY_USAGE_SIGN_HASH,
+        MBEDTLS_PK_ALG_ECDSA(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_ECC, PSA_KEY_USAGE_DERIVE_PUBLIC, PSA_ALG_ECDH }
+};
+
+/* alg is policyAlg, or policyAlg with its PSA_ALG_ANY_HASH set to a hash */
+static int PkAlgMatches(psa_algorithm_t alg, psa_algorithm_t policyAlg)
+{
+    return alg == policyAlg || (PSA_ALG_IS_SIGN_HASH(alg) &&
+        (alg & ~PSA_ALG_HASH_MASK) == (policyAlg & ~PSA_ALG_HASH_MASK));
+}
+
 int mbedtls_pk_can_do_psa(const mbedtls_pk_context* pk, psa_algorithm_t alg,
     psa_key_usage_t usage)
 {
-    const int sign = (usage == PSA_KEY_USAGE_SIGN_HASH ||
-        usage == PSA_KEY_USAGE_VERIFY_HASH);
-    const int crypt = (usage == PSA_KEY_USAGE_ENCRYPT ||
-        usage == PSA_KEY_USAGE_DECRYPT);
-    int type = PK_TYPE_NONE;
+    size_t i;
 
-    if (pk == NULL || pk->der == NULL ||
-            PkCheckKey(pk->der, (word32)pk->der_len, &type) != 0) {
+    if (pk == NULL) {
         return 0;
     }
-    if (type == PK_TYPE_RSA) {
-        return (sign && (PSA_ALG_IS_RSA_PKCS1V15_SIGN(alg) ||
-            PSA_ALG_IS_RSA_PSS(alg))) ||
-            (crypt && (alg == PSA_ALG_RSA_PKCS1V15_CRYPT ||
-            PSA_ALG_IS_RSA_OAEP(alg)));
+    for (i = 0; i < sizeof(pkPolicy) / sizeof(pkPolicy[0]); i++) {
+        if (pkPolicy[i].type == pk->type && pkPolicy[i].usage == usage &&
+                PkAlgMatches(alg, pkPolicy[i].alg)) {
+            return 1;
+        }
     }
-    return type == PK_TYPE_ECC && sign && PSA_ALG_IS_ECDSA(alg);
+    return 0;
 }
 
 #if defined(MBEDTLS_FS_IO)

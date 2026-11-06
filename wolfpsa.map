@@ -2,11 +2,7 @@ WOLFPSA_1.0 {
     global:
         mbedtls_condition_variable_*;
         mbedtls_mutex_*;
-        mbedtls_pk_can_do_psa;
-        mbedtls_pk_free;
-        mbedtls_pk_init;
-        mbedtls_pk_parse_key;
-        mbedtls_pk_parse_keyfile;
+        mbedtls_pk_*;
         mbedtls_platform_zeroize;
         mbedtls_psa_crypto_free;
         psa_aead_abort;

@@ -30,6 +30,7 @@
 #define RSA_KEY CERT("server-key.pem")
 #define EC_KEY CERT("ecc-key.pem")
 #define INVALID MBEDTLS_ERR_PK_KEY_INVALID_FORMAT
+#define ENCRYPTED MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE
 
 static const struct {
     const char* file;
@@ -44,8 +45,8 @@ static const struct {
     { CERT("ecc-keyPkcs8.pem"), 0 },
     { CERT("ecc-keyPkcs8.der"), 0 },
     { CERT("ca-ecc384-key.pem"), 0 },
-    { CERT("server-keyEnc.pem"), INVALID },
-    { CERT("server-keyPkcs8Enc.pem"), INVALID },
+    { CERT("server-keyEnc.pem"), ENCRYPTED },
+    { CERT("server-keyPkcs8Enc.pem"), ENCRYPTED },
     { CERT("server-cert.pem"), INVALID },
     { CERT("missing.key"), MBEDTLS_ERR_PK_FILE_IO_ERROR },
     /* On Linux, this file reports a larger size than it reads */
@@ -61,15 +62,23 @@ static const struct {
     { RSA_KEY, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256),
         PSA_KEY_USAGE_SIGN_HASH, 1 },
     { RSA_KEY, PSA_ALG_RSA_PSS(PSA_ALG_SHA_256), PSA_KEY_USAGE_VERIFY_HASH, 1 },
-    { RSA_KEY, PSA_ALG_RSA_OAEP(PSA_ALG_SHA_256), PSA_KEY_USAGE_DECRYPT, 1 },
-    { RSA_KEY, PSA_ALG_RSA_PKCS1V15_CRYPT, PSA_KEY_USAGE_ENCRYPT, 1 },
+    { RSA_KEY, PSA_ALG_RSA_OAEP(PSA_ALG_SHA_256), PSA_KEY_USAGE_DECRYPT, 0 },
+    { RSA_KEY, PSA_ALG_RSA_PKCS1V15_CRYPT, PSA_KEY_USAGE_ENCRYPT, 0 },
     { RSA_KEY, PSA_ALG_RSA_PSS(PSA_ALG_SHA_256), PSA_KEY_USAGE_DECRYPT, 0 },
     { RSA_KEY, PSA_ALG_ECDSA(PSA_ALG_SHA_256), PSA_KEY_USAGE_SIGN_HASH, 0 },
-    { EC_KEY, PSA_ALG_ECDSA(PSA_ALG_SHA_256), PSA_KEY_USAGE_SIGN_HASH, 1 },
-    { EC_KEY, PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_SHA_256),
-        PSA_KEY_USAGE_VERIFY_HASH, 1 },
+    { EC_KEY, MBEDTLS_PK_ALG_ECDSA(PSA_ALG_SHA_256),
+        PSA_KEY_USAGE_SIGN_HASH, 1 },
+    { EC_KEY, MBEDTLS_PK_ALG_ECDSA(PSA_ALG_SHA_256),
+        PSA_KEY_USAGE_VERIFY_HASH, 0 },
     { EC_KEY, PSA_ALG_ECDSA(PSA_ALG_SHA_256), PSA_KEY_USAGE_ENCRYPT, 0 },
-    { EC_KEY, PSA_ALG_RSA_PSS(PSA_ALG_SHA_256), PSA_KEY_USAGE_SIGN_HASH, 0 }
+    { EC_KEY, PSA_ALG_RSA_PSS(PSA_ALG_SHA_256), PSA_KEY_USAGE_SIGN_HASH, 0 },
+    { EC_KEY, PSA_ALG_ECDH, PSA_KEY_USAGE_DERIVE_PUBLIC, 1 }
+};
+
+/* DER keys, read into a buffer with a byte after the key */
+static const char* const derFiles[] = {
+    CERT("server-key.der"),
+    CERT("ecc-key.der")
 };
 
 static int fails;
@@ -112,6 +121,32 @@ static void CanDo(void)
     }
 }
 
+static void TrailingData(void)
+{
+    unsigned char buf[4096];
+    mbedtls_pk_context pk;
+    char name[32];
+    FILE* f;
+    size_t len;
+    size_t i;
+
+    for (i = 0; i < sizeof(derFiles) / sizeof(derFiles[0]); i++) {
+        (void)snprintf(name, sizeof(name), "trailing data case %u",
+            (unsigned)i);
+        len = 0;
+        f = fopen(derFiles[i], "rb");
+        if (f != NULL) {
+            len = fread(buf, 1, sizeof(buf) - 1, f);
+            (void)fclose(f);
+        }
+        buf[len] = 0;
+        mbedtls_pk_init(&pk);
+        Check(len > 0 && mbedtls_pk_parse_key(&pk, buf, len + 1, NULL, 0) ==
+            INVALID, name);
+        mbedtls_pk_free(&pk);
+    }
+}
+
 /* An empty buffer, a second key into one context, NULL and empty contexts */
 static void BadInput(void)
 {
@@ -143,6 +178,7 @@ int main(void)
     }
     Parse();
     CanDo();
+    TrailingData();
     BadInput();
     mbedtls_psa_crypto_free();
     return (fails == 0) ? 0 : 1;

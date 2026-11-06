@@ -12,7 +12,7 @@ wolfPSA is a PSA Crypto **engine** that implements the PSA Crypto API on
   from wolfPSA sources plus the required wolfCrypt objects.
 - TF-PSA-Crypto's `mbedtls/pk.h` for private keys: `mbedtls_pk_init`, `free`,
   `parse_key`, `parse_keyfile` and `can_do_psa`. The context has the key's
-  DER and nothing else. RSA and EC keys, PEM or DER, traditional or PKCS #8.
+  DER and type. RSA and EC keys, PEM or DER, traditional or PKCS #8.
   Encrypted keys and EC keys with a compressed public key are not supported.
 
 ## Repository layout

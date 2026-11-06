@@ -247,7 +247,8 @@ CRYPTOCB_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLF_CRYPTO_CB $(VARIANT_INC) \
 $(CRYPTOCB_LIB): FORCE
 	$(call variant_lib,$(CRYPTOCB_BUILD_DIR),-DWOLF_CRYPTO_CB)
 
-# Build a library variant: $(1) is its build dir, $(2) its extra defines
+# Build a library variant: $(1) is its build dir, $(2) its extra defines and
+# $(3) its extra make variables
 define variant_lib
 	$(MAKE) -C $(WOLFPSA_PATH) $@ \
 		LIBNAME=$@ \
@@ -255,7 +256,7 @@ define variant_lib
 		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
 		WOLFSSL_CPPFLAGS="-DWOLFSSL_USER_SETTINGS $(2)" \
 		CFLAGS="$(CFLAGS)" \
-		LDFLAGS="$(SANITIZE_FLAGS)"
+		LDFLAGS="$(SANITIZE_FLAGS)" $(3)
 endef
 
 FORCE:
@@ -332,7 +333,7 @@ THREADS_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DMBEDTLS_THREADING_C \
 	$(VARIANT_INC) -I$(THREADS_BUILD_DIR)/include
 
 $(THREADS_LIB): FORCE
-	$(call variant_lib,$(THREADS_BUILD_DIR),-DMBEDTLS_THREADING_C)
+	$(call variant_lib,$(THREADS_BUILD_DIR),,MBEDTLS_THREADING_C=1)
 
 psa_tf_psa_threading_test: psa_server/psa_tf_psa_threading_test.c \
 		$(THREADS_LIB) FORCE
