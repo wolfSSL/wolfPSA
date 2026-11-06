@@ -68,9 +68,13 @@ while IFS='|' read -r name app mode extra; do
         rc=1
         continue
     fi
-    # native_sim block-buffers piped stdout; stdbuf forces line buffering so the
-    # (kernel-idle-looping) sample still flushes before the timeout kill.
-    timeout 120 stdbuf -oL -eL "${bdir}/zephyr/zephyr.exe" > "${bdir}.run.log" 2>&1
+    # Samples idle after main() returns; --no-rt skips that idle time, so
+    # stop_at ends the run almost immediately instead of waiting on timeout.
+    run_args=""
+    [ "${mode}" = sample ] && run_args="--no-rt --stop_at=60"
+    # native_sim block-buffers piped stdout; stdbuf forces line buffering.
+    timeout 120 stdbuf -oL -eL "${bdir}/zephyr/zephyr.exe" ${run_args} \
+        > "${bdir}.run.log" 2>&1
     if [ "${mode}" = ztest ]; then
         if grep -q "PROJECT EXECUTION SUCCESSFUL" "${bdir}.run.log" && \
            ! grep -q "PROJECT EXECUTION FAILED" "${bdir}.run.log"; then
