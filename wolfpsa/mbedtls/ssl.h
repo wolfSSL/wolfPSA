@@ -57,6 +57,7 @@
 #define MBEDTLS_ERR_SSL_CONN_EOF             -0x7280
 #define MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE -0x7480
 #define MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY    -0x7880
+#define MBEDTLS_ERR_SSL_BAD_CERTIFICATE      -0x7A00
 #define MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET -0x7B00
 #define MBEDTLS_ERR_SSL_HW_ACCEL_FAILED      -0x7F80
 #define MBEDTLS_ERR_SSL_BAD_INPUT_DATA       -135
@@ -72,6 +73,8 @@ typedef enum {
 struct WOLFSSL_CTX;
 struct WOLFSSL;
 struct WOLFSSL_SESSION;
+/* The peer's chain while it is verified, in src/mbedtls_compat.c */
+struct MbedChain;
 
 typedef int mbedtls_ssl_send_t(void* ctx, const unsigned char* buf,
     size_t len);
@@ -87,7 +90,7 @@ typedef struct mbedtls_ssl_config {
     mbedtls_ssl_protocol_version min_tls_version;
     mbedtls_ssl_protocol_version max_tls_version;
     const int* ciphersuites; /* the application's, NULL for the default */
-    /* Kept, not called yet */
+    mbedtls_x509_crt* ca_chain; /* the application's */
     int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*);
     void* p_vrfy;
 } mbedtls_ssl_config;
@@ -105,9 +108,14 @@ typedef struct mbedtls_ssl_context {
     mbedtls_ssl_send_t* f_send;
     mbedtls_ssl_recv_t* f_recv;
     mbedtls_ssl_recv_timeout_t* f_recv_timeout;
+    /* Used in place of the config's when set */
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*);
+    void* p_vrfy;
     int authmode;
     uint32_t verify_flags; /* MBEDTLS_X509_BADCERT_* from the handshake */
+    int verify_ret; /* the verify callback's error */
     int peer_cert; /* the peer sent a certificate */
+    struct MbedChain* chain;
 } mbedtls_ssl_context;
 
 void mbedtls_ssl_config_init(mbedtls_ssl_config* conf);
@@ -142,6 +150,8 @@ int mbedtls_ssl_session_reset(mbedtls_ssl_context* ssl);
 void mbedtls_ssl_set_bio(mbedtls_ssl_context* ssl, void* p_bio,
     mbedtls_ssl_send_t* f_send, mbedtls_ssl_recv_t* f_recv,
     mbedtls_ssl_recv_timeout_t* f_recv_timeout);
+void mbedtls_ssl_set_verify(mbedtls_ssl_context* ssl,
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*), void* p_vrfy);
 int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname);
 int mbedtls_ssl_handshake(mbedtls_ssl_context* ssl);
 uint32_t mbedtls_ssl_get_verify_result(const mbedtls_ssl_context* ssl);

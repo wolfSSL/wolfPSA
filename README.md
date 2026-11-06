@@ -120,9 +120,9 @@ Mapped so far:
 - net: init, connect, bind, accept, close, free, recv, send, usleep
 - x509_crt: init, free, parse, parse_der, parse_file
 - ssl_config: init, free, defaults; ssl_conf: authmode, ca_chain, own_cert,
-  dbg
-- ssl: init, free, setup, session_reset, set_bio, set_hostname, handshake,
-  get_verify_result, get_ciphersuite, read, write, close_notify
+  verify, dbg
+- ssl: init, free, setup, session_reset, set_bio, set_verify, set_hostname,
+  handshake, get_verify_result, get_ciphersuite, read, write, close_notify
 - pk, with or without the option: init, free, parse_key, parse_keyfile
 - threading, with `MBEDTLS_THREADING_C=1`, with or without the option: mutex
   init, free, lock, unlock; condition_variable init, free, signal, broadcast,
@@ -160,8 +160,18 @@ Known differences from Mbed TLS:
 - With `VERIFY_OPTIONAL`, a resumed session reports
   `MBEDTLS_X509_BADCERT_MISSING`, where Mbed TLS keeps the result of the
   first handshake.
-- With `VERIFY_REQUIRED`, wolfSSL stops at the first failed check, so
-  `mbedtls_ssl_get_verify_result` can report fewer flags than Mbed TLS.
+- The verify flags come from wolfSSL, which reports one failure from each
+  certificate's signature and date checks, and one from the later checks of
+  the peer's own, such as the host name. So the verify callback and
+  `mbedtls_ssl_get_verify_result` can report fewer flags than Mbed TLS: an
+  untrusted certificate that has also expired is only `NOT_TRUSTED`.
+- The verify callback gets the certificates the peer sent, in that order,
+  then above them the CA from the CA list that issued the last one. Mbed TLS
+  builds the chain itself, and leaves out a certificate the peer sent once
+  it reaches a CA from the list.
+- wolfSSL keeps the intermediate CAs of a chain that verifies, for the
+  config's later handshakes. A peer that then leaves them out still
+  verifies, where Mbed TLS reports `NOT_TRUSTED`.
 - `mbedtls_ssl_conf_dbg` is accepted and ignored.
 - No global mutexes such as `mbedtls_threading_gmtime_mutex`.
 
