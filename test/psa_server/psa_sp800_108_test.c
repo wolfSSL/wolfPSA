@@ -720,21 +720,34 @@ static int test_hmac_output_key(void)
     psa_algorithm_t alg = PSA_ALG_SP800_108_COUNTER_HMAC(PSA_ALG_SHA_256);
     psa_key_derivation_operation_t op = psa_key_derivation_operation_init();
     psa_key_attributes_t out_attrs = psa_key_attributes_init();
+    psa_key_attributes_t key_attrs = psa_key_attributes_init();
+    psa_key_id_t kid = PSA_KEY_ID_NULL;
     psa_key_id_t derived_key = PSA_KEY_ID_NULL;
     psa_status_t st;
 
+    psa_set_key_type(&key_attrs, PSA_KEY_TYPE_DERIVE);
+    psa_set_key_usage_flags(&key_attrs, PSA_KEY_USAGE_DERIVE);
+    psa_set_key_algorithm(&key_attrs, alg);
+    st = psa_import_key(&key_attrs, g_hmac_secret, sizeof(g_hmac_secret), &kid);
+    if (expect_status("tc6 import DERIVE key", st, PSA_SUCCESS) != 0) return 1;
+
     st = psa_key_derivation_setup(&op, alg);
-    if (expect_status("tc6 setup", st, PSA_SUCCESS) != 0) return 1;
+    if (expect_status("tc6 setup", st, PSA_SUCCESS) != 0) {
+        psa_destroy_key(kid);
+        return 1;
+    }
 
     st = psa_key_derivation_set_capacity(&op, 16u);
     if (expect_status("tc6 set_capacity", st, PSA_SUCCESS) != 0) {
+        psa_destroy_key(kid);
         psa_key_derivation_abort(&op);
         return 1;
     }
 
-    st = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SECRET,
-                                        g_hmac_secret, sizeof(g_hmac_secret));
-    if (expect_status("tc6 input SECRET", st, PSA_SUCCESS) != 0) {
+    st = psa_key_derivation_input_key(&op, PSA_KEY_DERIVATION_INPUT_SECRET,
+                                      kid);
+    psa_destroy_key(kid);
+    if (expect_status("tc6 input_key SECRET", st, PSA_SUCCESS) != 0) {
         psa_key_derivation_abort(&op);
         return 1;
     }

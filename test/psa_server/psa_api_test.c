@@ -566,6 +566,66 @@ static int test_cmac(void)
     return TEST_OK;
 }
 
+#ifdef WOLFSSL_SHA3
+/* HMAC with SHA3, key 32 bytes of 0xaa, message "abc" */
+static int test_hmac_sha3(void)
+{
+    static const uint8_t exp_256[] = {
+        0xa9,0x86,0x41,0x9a,0x16,0x2b,0x6d,0x47,
+        0x31,0xa8,0xe9,0x6e,0x44,0xa2,0xc6,0xe7,
+        0x84,0xd5,0x01,0x37,0x90,0x7b,0x45,0x7c,
+        0x9f,0xb7,0x7c,0x62,0x70,0x5d,0xc4,0xd9,
+    };
+    static const uint8_t exp_512[] = {
+        0x2c,0xef,0x45,0xb6,0x95,0x0e,0x41,0xa7,
+        0x0b,0xc8,0x5c,0xb4,0x31,0xb2,0x16,0x1d,
+        0x47,0xc9,0xe2,0x93,0x21,0x87,0xfa,0x15,
+        0xd8,0x0e,0x3b,0x7a,0xf1,0xda,0x38,0xaa,
+        0x8f,0xe8,0x23,0xa7,0x2e,0xfd,0x7e,0x53,
+        0x6e,0x52,0x36,0xa5,0xb0,0x79,0x84,0x18,
+        0xd8,0xc8,0xf0,0x8b,0x0d,0xe5,0xfc,0x26,
+        0x28,0x67,0xbb,0x37,0x52,0xb6,0x48,0x2d,
+    };
+    static const struct {
+        psa_algorithm_t alg;
+        const uint8_t *mac;
+        size_t mac_len;
+    } cases[] = {
+        { PSA_ALG_HMAC(PSA_ALG_SHA3_256), exp_256, sizeof(exp_256) },
+        { PSA_ALG_HMAC(PSA_ALG_SHA3_512), exp_512, sizeof(exp_512) },
+    };
+    uint8_t key[32];
+    uint8_t out[PSA_MAC_MAX_SIZE];
+    size_t out_len = 0;
+    size_t i;
+    psa_key_id_t key_id = 0;
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_status_t st;
+    int ret = TEST_OK;
+
+    memset(key, 0xaa, sizeof(key));
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_HMAC);
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_SIGN_MESSAGE);
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]) && ret == TEST_OK; i++) {
+        psa_set_key_algorithm(&attrs, cases[i].alg);
+        st = psa_import_key(&attrs, key, sizeof(key), &key_id);
+        if (check_status(st, "psa_import_key(HMAC SHA3)") != TEST_OK)
+            return TEST_FAIL;
+        st = psa_mac_compute(key_id, cases[i].alg, (const uint8_t *)"abc", 3,
+                             out, sizeof(out), &out_len);
+        if (check_status(st, "psa_mac_compute(HMAC SHA3)") != TEST_OK ||
+            check_true(out_len == cases[i].mac_len,
+                       "HMAC SHA3 length") != TEST_OK ||
+            check_buf_eq("HMAC SHA3", out, cases[i].mac,
+                         cases[i].mac_len) != TEST_OK) {
+            ret = TEST_FAIL;
+        }
+        (void)psa_destroy_key(key_id);
+    }
+    return ret;
+}
+#endif /* WOLFSSL_SHA3 */
+
 static int test_mac_verify_finish_accepts_longer_at_least_length_mac(void)
 {
     static const uint8_t key[] = {
@@ -1033,11 +1093,6 @@ static int test_cipher_generate_iv(void)
     if (check_status(st, "psa_cipher_generate_iv") != TEST_OK) goto cleanup;
     if (check_true(iv1_len == 16, "psa_cipher_generate_iv length") != TEST_OK) goto cleanup;
 
-    /* (c) a second generate on the same operation must be rejected. */
-    st = psa_cipher_generate_iv(&op, iv2, sizeof(iv2), &iv2_len);
-    if (check_true(st == PSA_ERROR_BAD_STATE,
-                   "psa_cipher_generate_iv rejects re-generation") != TEST_OK) goto cleanup;
-
     st = psa_cipher_update(&op, plaintext, sizeof(plaintext), enc, sizeof(enc), &enc_len);
     if (check_status(st, "psa_cipher_update(gen_iv)") != TEST_OK) goto cleanup;
     st = psa_cipher_finish(&op, enc + enc_len, sizeof(enc) - enc_len, &enc_finish);
@@ -1066,6 +1121,12 @@ static int test_cipher_generate_iv(void)
     if (check_status(st, "psa_cipher_generate_iv(2)") != TEST_OK) goto cleanup;
     if (check_true(memcmp(iv1, iv2, sizeof(iv1)) != 0,
                    "psa_cipher_generate_iv produces fresh randomness") != TEST_OK) goto cleanup;
+
+    /* (c) a second generate on the same operation must be rejected. */
+    st = psa_cipher_generate_iv(&op, iv2, sizeof(iv2), &iv2_len);
+    if (check_true(st == PSA_ERROR_BAD_STATE,
+                   "psa_cipher_generate_iv rejects re-generation") != TEST_OK)
+        goto cleanup;
     (void)psa_cipher_abort(&op);
 
     /* (b) decrypt-direction operations must reject IV generation. */
@@ -1094,6 +1155,85 @@ cleanup:
     }
     return ret;
 }
+
+#ifdef HAVE_AES_ECB
+/* ECB takes no IV; the failed call aborts, so setup works again */
+static int test_cipher_ecb_iv(void)
+{
+    static const uint8_t key[16] = {
+        0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,
+        0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c
+    };
+    uint8_t iv[16] = {0};
+    size_t iv_len = 0;
+    psa_key_id_t key_id = 0;
+    psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_cipher_operation_t op = psa_cipher_operation_init();
+    psa_status_t st;
+    int ret = TEST_FAIL;
+
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attrs, 128);
+    psa_set_key_usage_flags(&attrs,
+                            PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attrs, PSA_ALG_ECB_NO_PADDING);
+
+    st = psa_import_key(&attrs, key, sizeof(key), &key_id);
+    if (check_status(st, "psa_import_key(ecb_iv)") != TEST_OK) goto cleanup;
+
+    st = psa_cipher_encrypt_setup(&op, key_id, PSA_ALG_ECB_NO_PADDING);
+    if (check_status(st, "psa_cipher_encrypt_setup(ecb_iv)") != TEST_OK)
+        goto cleanup;
+    st = psa_cipher_set_iv(&op, iv, sizeof(iv));
+    if (check_true(st == PSA_ERROR_BAD_STATE,
+                   "psa_cipher_set_iv rejects ECB") != TEST_OK) goto cleanup;
+
+    st = psa_cipher_decrypt_setup(&op, key_id, PSA_ALG_ECB_NO_PADDING);
+    if (check_status(st, "psa_cipher_decrypt_setup(ecb_iv)") != TEST_OK)
+        goto cleanup;
+    st = psa_cipher_generate_iv(&op, iv, sizeof(iv), &iv_len);
+    if (check_true(st == PSA_ERROR_BAD_STATE,
+                   "psa_cipher_generate_iv rejects decrypt") != TEST_OK)
+        goto cleanup;
+
+    st = psa_cipher_encrypt_setup(&op, key_id, PSA_ALG_ECB_NO_PADDING);
+    if (check_status(st, "psa_cipher_encrypt_setup(ecb_iv 2)") != TEST_OK)
+        goto cleanup;
+    st = psa_cipher_generate_iv(&op, iv, sizeof(iv), &iv_len);
+    if (check_true(st == PSA_ERROR_BAD_STATE,
+                   "psa_cipher_generate_iv rejects ECB") != TEST_OK)
+        goto cleanup;
+
+    st = psa_cipher_encrypt_setup(&op, key_id, PSA_ALG_ECB_NO_PADDING);
+    if (check_status(st, "psa_cipher_encrypt_setup(ecb_iv 3)") != TEST_OK)
+        goto cleanup;
+    st = psa_cipher_set_iv(&op, NULL, 0);
+    if (check_true(st == PSA_ERROR_BAD_STATE,
+                   "psa_cipher_set_iv rejects ECB NULL IV") != TEST_OK)
+        goto cleanup;
+
+    st = psa_cipher_encrypt_setup(&op, key_id, PSA_ALG_ECB_NO_PADDING);
+    if (check_status(st, "psa_cipher_encrypt_setup(ecb_iv 4)") != TEST_OK)
+        goto cleanup;
+    st = psa_cipher_generate_iv(&op, NULL, sizeof(iv), &iv_len);
+    if (check_true(st == PSA_ERROR_BAD_STATE,
+                   "psa_cipher_generate_iv rejects ECB NULL IV") != TEST_OK)
+        goto cleanup;
+
+    st = psa_cipher_encrypt_setup(&op, key_id, PSA_ALG_ECB_NO_PADDING);
+    if (check_status(st, "psa_cipher_encrypt_setup(ecb_iv 5)") != TEST_OK)
+        goto cleanup;
+
+    ret = TEST_OK;
+
+cleanup:
+    (void)psa_cipher_abort(&op);
+    if (key_id != 0) {
+        (void)psa_destroy_key(key_id);
+    }
+    return ret;
+}
+#endif /* HAVE_AES_ECB */
 
 static int test_cipher_rejects_algorithm_mismatch(void)
 {
@@ -4414,6 +4554,19 @@ static int test_asym_ecc(void)
 /* F-3176: exercise high-level psa_key_agreement validation and dispatch. */
 static int test_psa_key_agreement(void)
 {
+    static const struct {
+        psa_key_type_t type;
+        psa_key_usage_t usage;
+        psa_algorithm_t alg;
+    } raw_outputs[] = {
+        { PSA_KEY_TYPE_DERIVE, PSA_KEY_USAGE_DERIVE,
+          PSA_ALG_HKDF(PSA_ALG_SHA_256) },
+        { PSA_KEY_TYPE_HMAC, PSA_KEY_USAGE_SIGN_MESSAGE,
+          PSA_ALG_HMAC(PSA_ALG_SHA_256) },
+        { PSA_KEY_TYPE_PASSWORD, PSA_KEY_USAGE_DERIVE,
+          PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256) },
+    };
+    size_t i;
     uint8_t peer_pub[128];
     uint8_t exported[32];
     size_t peer_pub_len = 0;
@@ -4441,19 +4594,24 @@ static int test_psa_key_agreement(void)
     if (check_status(st, "psa_export_public_key(psa_key_agreement peer)") != TEST_OK)
         goto cleanup;
 
-    psa_set_key_type(&out_attrs, PSA_KEY_TYPE_DERIVE);
-    psa_set_key_bits(&out_attrs, 256);
-    psa_set_key_usage_flags(&out_attrs, PSA_KEY_USAGE_DERIVE);
-    psa_set_key_algorithm(&out_attrs, PSA_ALG_HKDF(PSA_ALG_SHA_256));
+    for (i = 0; i < sizeof(raw_outputs) / sizeof(raw_outputs[0]); i++) {
+        psa_reset_key_attributes(&out_attrs);
+        psa_set_key_type(&out_attrs, raw_outputs[i].type);
+        psa_set_key_bits(&out_attrs, 256);
+        psa_set_key_usage_flags(&out_attrs, raw_outputs[i].usage);
+        psa_set_key_algorithm(&out_attrs, raw_outputs[i].alg);
 
-    st = psa_key_agreement(private_key, peer_pub, peer_pub_len, PSA_ALG_ECDH,
-                           &out_attrs, &agreed_key);
-    if (check_status(st, "psa_key_agreement raw ECDH to DERIVE key") != TEST_OK)
-        goto cleanup;
-    st = psa_destroy_key(agreed_key);
-    if (check_status(st, "psa_destroy_key(raw agreement output)") != TEST_OK)
-        goto cleanup;
-    agreed_key = PSA_KEY_ID_NULL;
+        st = psa_key_agreement(private_key, peer_pub, peer_pub_len,
+                               PSA_ALG_ECDH, &out_attrs, &agreed_key);
+        if (check_status(st, "psa_key_agreement raw ECDH output type") !=
+                TEST_OK)
+            goto cleanup;
+        st = psa_destroy_key(agreed_key);
+        if (check_status(st, "psa_destroy_key(raw agreement output)") !=
+                TEST_OK)
+            goto cleanup;
+        agreed_key = PSA_KEY_ID_NULL;
+    }
 
     psa_reset_key_attributes(&out_attrs);
     psa_set_key_type(&out_attrs, PSA_KEY_TYPE_AES);
@@ -7298,7 +7456,7 @@ static int test_kdf_input_key_policy(void)
     op = psa_key_derivation_operation_init();
 
     psa_reset_key_attributes(&attrs);
-    psa_set_key_type(&attrs, PSA_KEY_TYPE_DERIVE);
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_RAW_DATA);
     psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE);
     psa_set_key_algorithm(&attrs, PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256));
     st = psa_import_key(&attrs, secret, sizeof(secret), &wrong_pbkdf2_key);
@@ -7313,7 +7471,7 @@ static int test_kdf_input_key_policy(void)
     st = psa_key_derivation_input_key(&op, PSA_KEY_DERIVATION_INPUT_PASSWORD,
                                       wrong_pbkdf2_key);
     if (check_true(st == PSA_ERROR_INVALID_ARGUMENT,
-                   "psa_key_derivation_input_key rejects non-PASSWORD PBKDF2 key type") != TEST_OK) {
+                   "input_key rejects RAW_DATA PBKDF2 password") != TEST_OK) {
         goto cleanup;
     }
 
@@ -8908,12 +9066,24 @@ int main(int argc, char** argv)
             return TEST_FAIL;
         }
     }
+#ifdef WOLFSSL_SHA3
+    if (only == NULL || strcmp(only, "hmac_sha3") == 0) {
+        if (run_named_test("hmac_sha3", test_hmac_sha3) == TEST_FAIL)
+            return TEST_FAIL;
+    }
+#endif /* WOLFSSL_SHA3 */
     if (only == NULL || strcmp(only, "cipher_cbc") == 0) {
         if (run_named_test("cipher_cbc", test_cipher_cbc) == TEST_FAIL) return TEST_FAIL;
     }
     if (only == NULL || strcmp(only, "cipher_generate_iv") == 0) {
         if (run_named_test("cipher_generate_iv", test_cipher_generate_iv) == TEST_FAIL) return TEST_FAIL;
     }
+#ifdef HAVE_AES_ECB
+    if (only == NULL || strcmp(only, "cipher_ecb_iv") == 0) {
+        if (run_named_test("cipher_ecb_iv", test_cipher_ecb_iv) == TEST_FAIL)
+            return TEST_FAIL;
+    }
+#endif /* HAVE_AES_ECB */
     if (only == NULL || strcmp(only, "cipher_algorithm_mismatch") == 0) {
         if (run_named_test("cipher_algorithm_mismatch",
                            test_cipher_rejects_algorithm_mismatch) == TEST_FAIL) {

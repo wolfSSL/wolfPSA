@@ -585,9 +585,9 @@ psa_status_t psa_cipher_decrypt_setup(psa_cipher_operation_t *operation,
     return PSA_SUCCESS;
 }
 
-psa_status_t psa_cipher_set_iv(psa_cipher_operation_t *operation,
-                              const uint8_t *iv,
-                              size_t iv_length)
+static psa_status_t wolfpsa_cipher_set_iv(psa_cipher_operation_t *operation,
+                                          const uint8_t *iv,
+                                          size_t iv_length)
 {
     wolfpsa_cipher_ctx_t *ctx = wolfpsa_cipher_get_ctx(operation);
     int ret;
@@ -599,18 +599,11 @@ psa_status_t psa_cipher_set_iv(psa_cipher_operation_t *operation,
         return PSA_ERROR_BAD_STATE;
     }
     ctx->iv_attempted = 1;
+    if (wolfpsa_cipher_iv_length(ctx->alg, ctx->key_type) == 0) {
+        return PSA_ERROR_BAD_STATE;
+    }
     if (iv == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
-    }
-
-    if (ctx->alg != PSA_ALG_CBC_NO_PADDING &&
-        ctx->alg != PSA_ALG_CBC_PKCS7 &&
-        ctx->alg != PSA_ALG_CTR &&
-        ctx->alg != PSA_ALG_CFB &&
-        ctx->alg != PSA_ALG_OFB &&
-        ctx->alg != PSA_ALG_STREAM_CIPHER &&
-        ctx->alg != PSA_ALG_CCM_STAR_NO_TAG) {
-        return PSA_ERROR_NOT_SUPPORTED;
     }
 
     if (ctx->alg == PSA_ALG_STREAM_CIPHER) {
@@ -672,10 +665,21 @@ psa_status_t psa_cipher_set_iv(psa_cipher_operation_t *operation,
     return PSA_SUCCESS;
 }
 
-psa_status_t psa_cipher_generate_iv(psa_cipher_operation_t *operation,
-                                   uint8_t *iv,
-                                   size_t iv_size,
-                                   size_t *iv_length)
+psa_status_t psa_cipher_set_iv(psa_cipher_operation_t *operation,
+                              const uint8_t *iv,
+                              size_t iv_length)
+{
+    psa_status_t status = wolfpsa_cipher_set_iv(operation, iv, iv_length);
+
+    if (status != PSA_SUCCESS) {
+        return wolfpsa_cipher_fail(operation, status);
+    }
+    return status;
+}
+
+static psa_status_t wolfpsa_cipher_generate_iv(
+    psa_cipher_operation_t *operation, uint8_t *iv, size_t iv_size,
+    size_t *iv_length)
 {
     psa_status_t status;
     wolfpsa_cipher_ctx_t *ctx = wolfpsa_cipher_get_ctx(operation);
@@ -691,16 +695,16 @@ psa_status_t psa_cipher_generate_iv(psa_cipher_operation_t *operation,
     if (ctx->direction != AES_ENCRYPTION) {
         return PSA_ERROR_BAD_STATE;
     }
+    expected_len = wolfpsa_cipher_iv_length(ctx->alg, ctx->key_type);
+    if (expected_len == 0) {
+        return PSA_ERROR_BAD_STATE;
+    }
     /* A NULL iv pointer is only an error when the caller declared a
      * nonzero capacity; (NULL, 0) must reach the size check below. */
     if (iv_length == NULL || (iv == NULL && iv_size != 0)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    expected_len = wolfpsa_cipher_iv_length(ctx->alg, ctx->key_type);
-    if (expected_len == 0) {
-        return PSA_ERROR_NOT_SUPPORTED;
-    }
     if (iv_size < expected_len) {
         return PSA_ERROR_BUFFER_TOO_SMALL;
     }
@@ -710,13 +714,27 @@ psa_status_t psa_cipher_generate_iv(psa_cipher_operation_t *operation,
         return status;
     }
 
-    status = psa_cipher_set_iv(operation, iv, expected_len);
+    status = wolfpsa_cipher_set_iv(operation, iv, expected_len);
     if (status != PSA_SUCCESS) {
         return status;
     }
 
     *iv_length = expected_len;
     return PSA_SUCCESS;
+}
+
+psa_status_t psa_cipher_generate_iv(psa_cipher_operation_t *operation,
+                                   uint8_t *iv,
+                                   size_t iv_size,
+                                   size_t *iv_length)
+{
+    psa_status_t status = wolfpsa_cipher_generate_iv(operation, iv, iv_size,
+                                                     iv_length);
+
+    if (status != PSA_SUCCESS) {
+        return wolfpsa_cipher_fail(operation, status);
+    }
+    return status;
 }
 
 psa_status_t psa_cipher_update(psa_cipher_operation_t *operation,

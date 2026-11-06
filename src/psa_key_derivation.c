@@ -85,6 +85,7 @@ typedef struct wolfpsa_kdf_ctx {
     int is_key_agreement;
     int is_raw_kdf;
     int output_started;
+    int can_output_key;
     /* PSA: once a call on the operation fails, the operation is in an error
      * state and only psa_key_derivation_abort() may follow. */
     int error_state;
@@ -108,6 +109,22 @@ typedef struct wolfpsa_kdf_ctx {
 #define WOLFPSA_KDF_STEP_PASSWORD      (1u << 6)
 #define WOLFPSA_KDF_STEP_COST          (1u << 7)
 #define WOLFPSA_KDF_STEP_CONTEXT       (1u << 8)
+
+/* Key types psa_key_derivation_input_key() accepts for each step */
+static const struct {
+    psa_key_derivation_step_t step;
+    psa_key_type_t type;
+} wolfpsa_kdf_key_inputs[] = {
+    { PSA_KEY_DERIVATION_INPUT_SECRET,       PSA_KEY_TYPE_DERIVE },
+    { PSA_KEY_DERIVATION_INPUT_OTHER_SECRET, PSA_KEY_TYPE_DERIVE },
+    { PSA_KEY_DERIVATION_INPUT_PASSWORD,     PSA_KEY_TYPE_PASSWORD },
+    { PSA_KEY_DERIVATION_INPUT_PASSWORD,     PSA_KEY_TYPE_DERIVE },
+    { PSA_KEY_DERIVATION_INPUT_SALT,         PSA_KEY_TYPE_RAW_DATA },
+    { PSA_KEY_DERIVATION_INPUT_INFO,         PSA_KEY_TYPE_RAW_DATA },
+    { PSA_KEY_DERIVATION_INPUT_LABEL,        PSA_KEY_TYPE_RAW_DATA },
+    { PSA_KEY_DERIVATION_INPUT_CONTEXT,      PSA_KEY_TYPE_RAW_DATA },
+    { PSA_KEY_DERIVATION_INPUT_SEED,         PSA_KEY_TYPE_RAW_DATA },
+};
 
 /* Upper bound on how much of a bounded-capacity derivation is pre-computed
  * and cached on the first output_bytes() call.  HKDF's default capacity is at
@@ -844,6 +861,31 @@ psa_status_t psa_key_derivation_input_integer(psa_key_derivation_operation_t *
                             wolfpsa_kdf_input_integer(operation, step, value));
 }
 
+static int wolfpsa_kdf_key_type_ok(psa_algorithm_t alg,
+                                   psa_key_derivation_step_t step,
+                                   psa_key_type_t type)
+{
+    size_t i;
+
+    /* SP 800-108 also takes the MAC key itself as the secret */
+    if (step == PSA_KEY_DERIVATION_INPUT_SECRET &&
+        ((type == PSA_KEY_TYPE_HMAC &&
+          PSA_ALG_IS_SP800_108_COUNTER_HMAC(alg)) ||
+         (type == PSA_KEY_TYPE_AES &&
+          alg == PSA_ALG_SP800_108_COUNTER_CMAC))) {
+        return 1;
+    }
+
+    for (i = 0; i < sizeof(wolfpsa_kdf_key_inputs) /
+                    sizeof(wolfpsa_kdf_key_inputs[0]); i++) {
+        if (wolfpsa_kdf_key_inputs[i].step == step &&
+            wolfpsa_kdf_key_inputs[i].type == type) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static psa_status_t wolfpsa_kdf_input_key(psa_key_derivation_operation_t *
                                           operation,
                                           psa_key_derivation_step_t step,
@@ -877,40 +919,8 @@ static psa_status_t wolfpsa_kdf_input_key(psa_key_derivation_operation_t *
         return PSA_ERROR_NOT_PERMITTED;
     }
 
-    if (PSA_ALG_IS_PBKDF2(ctx->alg)) {
-        if (step != PSA_KEY_DERIVATION_INPUT_PASSWORD ||
-            psa_get_key_type(&attributes) != PSA_KEY_TYPE_PASSWORD) {
-            wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-            return PSA_ERROR_INVALID_ARGUMENT;
-        }
-    }
-    else if (step == PSA_KEY_DERIVATION_INPUT_SECRET ||
-               step == PSA_KEY_DERIVATION_INPUT_OTHER_SECRET) {
-        psa_key_type_t key_type = psa_get_key_type(&attributes);
-        int compatible = 0;
-
-        /* A generic DERIVE key is valid for any KDF. The SP800-108
-         * backends also take a key of the underlying MAC type, whose
-         * material is the raw MAC key: HMAC keys for the HMAC variant
-         * and AES keys for the CMAC variant. */
-        if (key_type == PSA_KEY_TYPE_DERIVE) {
-            compatible = 1;
-        }
-        else if (key_type == PSA_KEY_TYPE_HMAC &&
-                   PSA_ALG_IS_SP800_108_COUNTER_HMAC(ctx->alg)) {
-            compatible = 1;
-        }
-        else if (key_type == PSA_KEY_TYPE_AES &&
-                   ctx->alg == PSA_ALG_SP800_108_COUNTER_CMAC) {
-            compatible = 1;
-        }
-
-        if (!compatible) {
-            wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-            return PSA_ERROR_INVALID_ARGUMENT;
-        }
-    }
-    else {
+    if (!wolfpsa_kdf_key_type_ok(ctx->alg, step,
+                                 psa_get_key_type(&attributes))) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -937,6 +947,14 @@ static psa_status_t wolfpsa_kdf_input_key(psa_key_derivation_operation_t *
     status = wolfpsa_kdf_input_bytes(operation, step,
                                      key_data, key_data_length);
     wolfpsa_forcezero_free_key_data(key_data, key_data_length);
+
+    /* Only a secret or password from a DERIVE key permits output_key */
+    if (status == PSA_SUCCESS &&
+        (psa_get_key_usage_flags(&attributes) & PSA_KEY_USAGE_DERIVE) &&
+        (step == PSA_KEY_DERIVATION_INPUT_SECRET ||
+         step == PSA_KEY_DERIVATION_INPUT_PASSWORD)) {
+        ctx->can_output_key = 1;
+    }
     return status;
 }
 
@@ -1015,6 +1033,9 @@ static psa_status_t wolfpsa_kdf_key_agreement(psa_key_derivation_operation_t *
         peer_key, peer_key_length, secret, secret_len, &output_len);
     if (status == PSA_SUCCESS) {
         status = wolfpsa_kdf_input_bytes(operation, step, secret, output_len);
+    }
+    if (status == PSA_SUCCESS && step == PSA_KEY_DERIVATION_INPUT_SECRET) {
+        ctx->can_output_key = 1;
     }
 
     wc_ForceZero(secret, secret_len);
@@ -2018,6 +2039,7 @@ static psa_status_t wolfpsa_kdf_output_key(const psa_key_attributes_t *
                                            operation,
                                            psa_key_id_t *key)
 {
+    wolfpsa_kdf_ctx_t *ctx = wolfpsa_kdf_get_ctx(operation);
     size_t key_len;
     uint8_t *buffer;
     psa_status_t status;
@@ -2026,12 +2048,16 @@ static psa_status_t wolfpsa_kdf_output_key(const psa_key_attributes_t *
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    if (!PSA_KEY_TYPE_IS_UNSTRUCTURED(attributes->type)) {
+    key_len = PSA_BITS_TO_BYTES(attributes->bits);
+    if (key_len == 0) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    key_len = PSA_BITS_TO_BYTES(attributes->bits);
-    if (key_len == 0) {
+    if (!ctx->can_output_key) {
+        return PSA_ERROR_NOT_PERMITTED;
+    }
+
+    if (!PSA_KEY_TYPE_IS_UNSTRUCTURED(attributes->type)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 

@@ -110,8 +110,8 @@ static int test_not_supported_stubs(void)
 
     st = psa_sign_hash_complete(&sign_op, dummy_sig_out, sizeof(dummy_sig_out),
                                 &dummy_sig_len);
-    if (expect_status("psa_sign_hash_complete NOT_SUPPORTED", st,
-                      PSA_ERROR_NOT_SUPPORTED) != 0) {
+    if (expect_status("psa_sign_hash_complete BAD_STATE", st,
+                      PSA_ERROR_BAD_STATE) != 0) {
         return 1;
     }
 
@@ -124,8 +124,8 @@ static int test_not_supported_stubs(void)
     }
 
     st = psa_verify_hash_complete(&verify_op);
-    if (expect_status("psa_verify_hash_complete NOT_SUPPORTED", st,
-                      PSA_ERROR_NOT_SUPPORTED) != 0) {
+    if (expect_status("psa_verify_hash_complete BAD_STATE", st,
+                      PSA_ERROR_BAD_STATE) != 0) {
         return 1;
     }
 
@@ -136,15 +136,35 @@ static int test_not_supported_stubs(void)
         return 1;
     }
 
+    st = psa_key_agreement_iop_complete(&ka_op, &key);
+    if (expect_status("psa_key_agreement_iop_complete BAD_STATE", st,
+                      PSA_ERROR_BAD_STATE) != 0) {
+        return 1;
+    }
+
     st = psa_generate_key_iop_setup(&gk_op, &attrs);
     if (expect_status("psa_generate_key_iop_setup NOT_SUPPORTED", st,
                       PSA_ERROR_NOT_SUPPORTED) != 0) {
         return 1;
     }
 
+    st = psa_generate_key_iop_complete(&gk_op, &key);
+    if (expect_status("psa_generate_key_iop_complete BAD_STATE", st,
+                      PSA_ERROR_BAD_STATE) != 0) {
+        return 1;
+    }
+
     st = psa_export_public_key_iop_setup(&epk_op, 0);
     if (expect_status("psa_export_public_key_iop_setup NOT_SUPPORTED", st,
                       PSA_ERROR_NOT_SUPPORTED) != 0) {
+        return 1;
+    }
+
+    st = psa_export_public_key_iop_complete(&epk_op, dummy_sig_out,
+                                            sizeof(dummy_sig_out),
+                                            &dummy_sig_len);
+    if (expect_status("psa_export_public_key_iop_complete BAD_STATE", st,
+                      PSA_ERROR_BAD_STATE) != 0) {
         return 1;
     }
 
@@ -159,7 +179,9 @@ static int test_interruptible_abort_stubs(void)
         PSA_SIGN_HASH_INTERRUPTIBLE_OPERATION_INIT;
     psa_verify_hash_interruptible_operation_t verify_op =
         PSA_VERIFY_HASH_INTERRUPTIBLE_OPERATION_INIT;
+    psa_key_agreement_iop_t ka_op = PSA_KEY_AGREEMENT_IOP_INIT;
     psa_generate_key_iop_t gk_op = PSA_GENERATE_KEY_IOP_INIT;
+    psa_export_public_key_iop_t epk_op = PSA_EXPORT_PUBLIC_KEY_IOP_INIT;
     psa_status_t st;
     uint32_t n;
 
@@ -171,9 +193,19 @@ static int test_interruptible_abort_stubs(void)
     if (expect_status("psa_verify_hash_abort", st, PSA_SUCCESS) != 0)
         return 1;
 
+    st = psa_key_agreement_iop_abort(&ka_op);
+    if (expect_status("psa_key_agreement_iop_abort", st, PSA_SUCCESS) != 0)
+        return 1;
+
     st = psa_generate_key_iop_abort(&gk_op);
     if (expect_status("psa_generate_key_iop_abort", st, PSA_SUCCESS) != 0)
         return 1;
+
+    st = psa_export_public_key_iop_abort(&epk_op);
+    if (expect_status("psa_export_public_key_iop_abort", st,
+                      PSA_SUCCESS) != 0) {
+        return 1;
+    }
 
     n = psa_sign_hash_get_num_ops(&sign_op);
     if (n != 0) {
@@ -256,8 +288,18 @@ static int test_key_derivation_output_key_custom(void)
     psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
     psa_custom_key_parameters_t custom = PSA_CUSTOM_KEY_PARAMETERS_INIT;
     psa_key_attributes_t attrs = psa_key_attributes_init();
+    psa_key_attributes_t secret_attrs = psa_key_attributes_init();
+    psa_key_id_t secret_key = 0;
     psa_key_id_t derived_key = 0;
     psa_status_t st;
+
+    psa_set_key_type(&secret_attrs, PSA_KEY_TYPE_DERIVE);
+    psa_set_key_usage_flags(&secret_attrs, PSA_KEY_USAGE_DERIVE);
+    psa_set_key_algorithm(&secret_attrs, PSA_ALG_HKDF(PSA_ALG_SHA_256));
+    st = psa_import_key(&secret_attrs, secret, sizeof(secret) - 1u,
+                        &secret_key);
+    if (expect_status("kdf_output_key_custom: import", st, PSA_SUCCESS) != 0)
+        return 1;
 
     psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
     psa_set_key_bits(&attrs, 128);
@@ -273,8 +315,8 @@ static int test_key_derivation_output_key_custom(void)
     if (expect_status("kdf_output_key_custom: salt", st, PSA_SUCCESS) != 0)
         goto fail;
 
-    st = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SECRET,
-                                        secret, sizeof(secret) - 1u);
+    st = psa_key_derivation_input_key(&op, PSA_KEY_DERIVATION_INPUT_SECRET,
+                                      secret_key);
     if (expect_status("kdf_output_key_custom: secret", st, PSA_SUCCESS) != 0)
         goto fail;
 
@@ -292,10 +334,12 @@ static int test_key_derivation_output_key_custom(void)
 
     (void)psa_key_derivation_abort(&op);
     (void)psa_destroy_key(derived_key);
+    (void)psa_destroy_key(secret_key);
     return 0;
 
 fail:
     (void)psa_key_derivation_abort(&op);
+    (void)psa_destroy_key(secret_key);
     return 1;
 }
 
@@ -1051,12 +1095,51 @@ static int test_default_devid_setter(void)
     return ret;
 }
 
+/* Case 18: the hash of hash-and-sign algorithms; none for ECDSA_ANY, raw */
+static int test_hash_and_sign_macros(void)
+{
+    static const struct {
+        psa_algorithm_t alg;
+        psa_algorithm_t hash;
+    } cases[] = {
+        { PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256), PSA_ALG_SHA_256 },
+        { PSA_ALG_RSA_PSS(PSA_ALG_SHA_384), PSA_ALG_SHA_384 },
+        { PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_SHA_512), PSA_ALG_SHA_512 },
+        { PSA_ALG_ECDSA(PSA_ALG_ANY_HASH), PSA_ALG_ANY_HASH },
+        { PSA_ALG_ED25519PH, PSA_ALG_SHA_512 },
+        { PSA_ALG_HASH_ML_DSA(PSA_ALG_SHA_256), PSA_ALG_SHA_256 },
+        { PSA_ALG_DETERMINISTIC_HASH_ML_DSA(PSA_ALG_SHA_384),
+          PSA_ALG_SHA_384 },
+        { PSA_ALG_ECDSA_ANY, PSA_ALG_NONE },
+        { PSA_ALG_RSA_PKCS1V15_SIGN_RAW, PSA_ALG_NONE },
+        { PSA_ALG_PURE_EDDSA, PSA_ALG_NONE },
+        { PSA_ALG_ML_DSA, PSA_ALG_NONE },
+        { PSA_ALG_SHA_256, PSA_ALG_NONE },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        if (PSA_ALG_IS_HASH_AND_SIGN(cases[i].alg) !=
+                (cases[i].hash != PSA_ALG_NONE) ||
+            PSA_ALG_SIGN_GET_HASH(cases[i].alg) != cases[i].hash) {
+            printf("FAIL hash-and-sign alg=0x%08x hash=0x%08x\n",
+                   (unsigned)cases[i].alg,
+                   (unsigned)PSA_ALG_SIGN_GET_HASH(cases[i].alg));
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int main(void)
 {
     psa_status_t st;
 
     /* Case 1: pre-init BAD_STATE (before psa_crypto_init) */
     if (test_pre_init_bad_state() != 0)
+        return 1;
+
+    if (test_interruptible_abort_stubs() != 0)
         return 1;
 
     st = psa_crypto_init();
@@ -1127,6 +1210,10 @@ int main(void)
 
     /* Case 17: the default devId setter agrees with the build */
     if (test_default_devid_setter() != 0)
+        return 1;
+
+    /* Case 18: PSA_ALG_IS_HASH_AND_SIGN and PSA_ALG_SIGN_GET_HASH */
+    if (test_hash_and_sign_macros() != 0)
         return 1;
 
     printf("PSA 1.4 misc test: OK\n");

@@ -183,6 +183,8 @@ uint32_t psa_interruptible_get_max_ops(void) {
     return (uint32_t)WOLFSSL_ATOMIC_LOAD(wolfPSA_interruptible_max_ops);
 }
 
+/* Interruptible setup never succeeds, so no operation is ever active. */
+
 /* --- Interruptible sign/verify hash --- */
 
 psa_status_t psa_sign_hash_start(
@@ -205,15 +207,12 @@ psa_status_t psa_sign_hash_complete(
     (void)signature;
     (void)signature_size;
     wolfpsa_clear_length(signature_length);
-    return wolfPSA_StubNotSupported();
+    return PSA_ERROR_BAD_STATE;
 }
 
 psa_status_t psa_sign_hash_abort(
     psa_sign_hash_interruptible_operation_t *operation) {
     (void)operation;
-    if (!wolfPSA_CryptoIsInitialized()) {
-        return PSA_ERROR_BAD_STATE;
-    }
     return PSA_SUCCESS;
 }
 
@@ -241,15 +240,12 @@ psa_status_t psa_verify_hash_start(
 psa_status_t psa_verify_hash_complete(
     psa_verify_hash_interruptible_operation_t *operation) {
     (void)operation;
-    return wolfPSA_StubNotSupported();
+    return PSA_ERROR_BAD_STATE;
 }
 
 psa_status_t psa_verify_hash_abort(
     psa_verify_hash_interruptible_operation_t *operation) {
     (void)operation;
-    if (!wolfPSA_CryptoIsInitialized()) {
-        return PSA_ERROR_BAD_STATE;
-    }
     return PSA_SUCCESS;
 }
 
@@ -282,15 +278,12 @@ psa_status_t psa_key_agreement_iop_complete(
     psa_key_id_t *key) {
     (void)operation;
     wolfpsa_clear_key_id(key);
-    return wolfPSA_StubNotSupported();
+    return PSA_ERROR_BAD_STATE;
 }
 
 psa_status_t psa_key_agreement_iop_abort(
     psa_key_agreement_iop_t *operation) {
     (void)operation;
-    if (!wolfPSA_CryptoIsInitialized()) {
-        return PSA_ERROR_BAD_STATE;
-    }
     return PSA_SUCCESS;
 }
 
@@ -314,15 +307,12 @@ psa_status_t psa_generate_key_iop_complete(
     psa_key_id_t *key) {
     (void)operation;
     wolfpsa_clear_key_id(key);
-    return wolfPSA_StubNotSupported();
+    return PSA_ERROR_BAD_STATE;
 }
 
 psa_status_t psa_generate_key_iop_abort(
     psa_generate_key_iop_t *operation) {
     (void)operation;
-    if (!wolfPSA_CryptoIsInitialized()) {
-        return PSA_ERROR_BAD_STATE;
-    }
     return PSA_SUCCESS;
 }
 
@@ -350,15 +340,12 @@ psa_status_t psa_export_public_key_iop_complete(
     (void)data;
     (void)data_size;
     wolfpsa_clear_length(data_length);
-    return wolfPSA_StubNotSupported();
+    return PSA_ERROR_BAD_STATE;
 }
 
 psa_status_t psa_export_public_key_iop_abort(
     psa_export_public_key_iop_t *operation) {
     (void)operation;
-    if (!wolfPSA_CryptoIsInitialized()) {
-        return PSA_ERROR_BAD_STATE;
-    }
     return PSA_SUCCESS;
 }
 

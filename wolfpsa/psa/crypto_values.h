@@ -635,8 +635,7 @@
 
 
 #define PSA_ALG_IS_HASH_AND_SIGN(alg)                                   \
-    (PSA_ALG_IS_RSA_PSS(alg) || PSA_ALG_IS_RSA_PKCS1V15_SIGN(alg) ||   \
-     PSA_ALG_IS_ECDSA(alg) || PSA_ALG_IS_HASH_EDDSA(alg))
+    (PSA_ALG_IS_SIGN_HASH(alg) && ((alg) & PSA_ALG_HASH_MASK) != 0)
 
 
 #define PSA_ALG_SIGN_GET_HASH(alg)                                     \
