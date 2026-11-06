@@ -4007,99 +4007,6 @@ static int test_aead_gcm_rejects_short_tags(void)
     return ret;
 }
 
-/* A shortened GCM tag round trips, or is NOT_SUPPORTED when below
- * WOLFSSL_MIN_AUTH_TAG_SZ. */
-static int test_aead_gcm_shortened_tags(void)
-{
-    static const uint8_t key[16] = { 0 };
-    static const uint8_t nonce[12] = { 0 };
-    static const uint8_t plaintext[16] = { 0 };
-    /* Ciphertext and full tag, as in test_aead_gcm. */
-    static const uint8_t expected[sizeof(plaintext) + 16] = {
-        0x03,0x88,0xda,0xce,0x60,0xb6,0xa3,0x92,
-        0xf3,0x28,0xc2,0xb9,0x71,0xb2,0xfe,0x78,
-        0xab,0x6e,0x47,0xd4,0x2c,0xec,0x13,0xbd,
-        0xf5,0x3a,0x67,0xb2,0x12,0x57,0xbd,0xdf
-    };
-    static const size_t tag_lengths[] = { 4, 8, 12 };
-    uint8_t out[sizeof(expected)];
-    uint8_t dec[sizeof(plaintext)];
-    size_t out_len;
-    size_t dec_len;
-    size_t tag_len;
-    size_t i;
-    psa_algorithm_t alg;
-    psa_key_id_t key_id = 0;
-    psa_key_attributes_t attrs = psa_key_attributes_init();
-    psa_status_t st;
-    int ret = TEST_OK;
-
-    psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
-    psa_set_key_bits(&attrs, 128);
-    psa_set_key_usage_flags(&attrs,
-                            PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
-    psa_set_key_algorithm(&attrs,
-                          PSA_ALG_AEAD_WITH_AT_LEAST_THIS_LENGTH_TAG(
-                              PSA_ALG_GCM, 4));
-
-    st = psa_import_key(&attrs, key, sizeof(key), &key_id);
-    if (check_status(st, "psa_import_key(GCM shortened tags)") != TEST_OK) {
-        return TEST_FAIL;
-    }
-
-    for (i = 0; i < sizeof(tag_lengths) / sizeof(tag_lengths[0]) &&
-                ret == TEST_OK; i++) {
-        tag_len = tag_lengths[i];
-        alg = PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, tag_len);
-        out_len = 0;
-        dec_len = 0;
-
-        st = psa_aead_encrypt(key_id, alg, nonce, sizeof(nonce), NULL, 0,
-                              plaintext, sizeof(plaintext),
-                              out, sizeof(out), &out_len);
-        if (tag_len < WOLFSSL_MIN_AUTH_TAG_SZ) {
-            ret = check_true(st == PSA_ERROR_NOT_SUPPORTED,
-                             "GCM shortened tag encrypt NOT_SUPPORTED");
-            if (ret == TEST_OK) {
-                st = psa_aead_decrypt(key_id, alg, nonce, sizeof(nonce),
-                                      NULL, 0, expected,
-                                      sizeof(plaintext) + tag_len,
-                                      dec, sizeof(dec), &dec_len);
-                ret = check_true(st == PSA_ERROR_NOT_SUPPORTED,
-                                 "GCM shortened tag decrypt NOT_SUPPORTED");
-            }
-            continue;
-        }
-        if (check_status(st, "psa_aead_encrypt(GCM shortened tag)") !=
-                TEST_OK ||
-            check_true(out_len == sizeof(plaintext) + tag_len,
-                       "GCM shortened tag length") != TEST_OK ||
-            check_buf_eq("GCM shortened tag", out, expected, out_len) !=
-                TEST_OK) {
-            ret = TEST_FAIL;
-            continue;
-        }
-
-        st = psa_aead_decrypt(key_id, alg, nonce, sizeof(nonce), NULL, 0,
-                              out, out_len, dec, sizeof(dec), &dec_len);
-        if (check_status(st, "psa_aead_decrypt(GCM shortened tag)") !=
-                TEST_OK ||
-            check_true(dec_len == sizeof(plaintext),
-                       "GCM shortened tag decrypt length") != TEST_OK ||
-            check_buf_eq("GCM shortened tag decrypt", dec, plaintext,
-                         sizeof(plaintext)) != TEST_OK) {
-            ret = TEST_FAIL;
-        }
-    }
-
-    st = psa_destroy_key(key_id);
-    if (check_status(st, "psa_destroy_key(GCM shortened tags)") != TEST_OK) {
-        return TEST_FAIL;
-    }
-
-    return ret;
-}
-
 /* F-4096: PSA_ALG_AEAD_WITH_AT_LEAST_THIS_LENGTH_TAG is a wildcard policy
  * algorithm and must be rejected by operation setup with
  * PSA_ERROR_INVALID_ARGUMENT, not accepted as a concrete tag length. */
@@ -9259,12 +9166,6 @@ int main(int argc, char** argv)
     if (only == NULL || strcmp(only, "aead_gcm_short_tag") == 0) {
         if (run_named_test("aead_gcm_short_tag",
                            test_aead_gcm_rejects_short_tags) == TEST_FAIL) {
-            return TEST_FAIL;
-        }
-    }
-    if (only == NULL || strcmp(only, "aead_gcm_shortened_tags") == 0) {
-        if (run_named_test("aead_gcm_shortened_tags",
-                           test_aead_gcm_shortened_tags) == TEST_FAIL) {
             return TEST_FAIL;
         }
     }

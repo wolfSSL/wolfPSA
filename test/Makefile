@@ -40,9 +40,10 @@ CFLAGS += --coverage
 LDFLAGS += --coverage
 endif
 
-# The ECC curve regression tests read the library's feature macros
-# (they include <user_settings.h> and branch on HAVE_ECC_KOBLITZ /
-# HAVE_ECC_BRAINPOOL), so only they mirror the library build:
+# The ECC curve and GCM short tag regression tests read the library's
+# feature macros (they include <user_settings.h> and branch on
+# HAVE_ECC_KOBLITZ / HAVE_ECC_BRAINPOOL / WOLFSSL_MIN_AUTH_TAG_SZ), so only
+# they mirror the library build:
 # -DWOLFSSL_USER_SETTINGS plus USER_SETTINGS_PATH, which takes the same
 # value as the library build and by default resolves to the repository
 # root, which ships the baseline user_settings.h. The flag and the
@@ -134,7 +135,8 @@ PSA_REGRESSION_TESTS = psa_aead_multipart_test \
 	psa_import_key_data_test \
 	psa_copy_key_cross_lifetime_test \
 	psa_zero_capacity_buffer_test \
-	psa_want_surface_test
+	psa_want_surface_test \
+	psa_aead_gcm_short_tag_test
 BINARIES += $(PSA_REGRESSION_TESTS)
 
 # TF-PSA-Crypto extension tests, built with the default link recipe.
@@ -194,12 +196,14 @@ psa_rsa_pss_interop_test: require-wolfssl-lib $(PSA_RSA_PSS_TEST_OBJS)
 $(PSA_14_TESTS): %: require-wolfssl-lib psa_server/%.o
 	$(CC) $(CFLAGS) -o $@ psa_server/$@.o $(LDFLAGS) $(LDLIBS) $(RPATH_WOLFPSA) $(RPATH_WOLFSSL)
 
-# Target-specific: only the curve tests compile with the library's
-# user_settings.h (see the comment at USER_SETTINGS_PATH above). The
-# value reaches the psa_server/%.o prerequisite's recipe, which is what
-# needs the flag and the include path.
-psa_ecc_verify_curve_test psa_ecc_ecdh_curve_test psa_ecc_curve_caps_test: \
-	CPPFLAGS += $(WOLFSSL_CPPFLAGS) -I$(USER_SETTINGS_PATH)
+# Target-specific: only the curve and GCM short tag tests compile with the
+# library's user_settings.h (see the comment at USER_SETTINGS_PATH above).
+# The value reaches the psa_server/%.o prerequisite's recipe, which is what
+# needs the flag and the include path. Prepended so USER_SETTINGS_PATH is
+# searched before the repository root, as in the library build.
+psa_ecc_verify_curve_test psa_ecc_ecdh_curve_test psa_ecc_curve_caps_test \
+psa_aead_gcm_short_tag_test: \
+	CPPFLAGS := $(WOLFSSL_CPPFLAGS) -I$(USER_SETTINGS_PATH) $(CPPFLAGS)
 
 $(PSA_REGRESSION_TESTS) $(PSA_TF_PSA_TESTS): %: require-wolfssl-lib \
 		psa_server/%.o

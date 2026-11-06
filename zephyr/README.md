@@ -86,6 +86,12 @@ config, wolfPSA's Kconfig turns both on; a settings file must set them itself:
 - `WC_ALLOW_ECC_ZERO_HASH` when `HAVE_ECC` is on, because
   `psa_sign_hash()`/`psa_verify_hash()` must accept an all-zero digest.
 
+PSA's 4 and 8 byte GCM tags also need `WOLFSSL_MIN_AUTH_TAG_SZ` set to 4, as
+`zephyr/user_settings_example.h` does. The wolfSSL module's default config
+keeps wolfCrypt's minimum of 12, so those tags return
+`PSA_ERROR_NOT_SUPPORTED`. The setting applies to every wolfCrypt GCM/GMAC
+caller in the image, not only PSA.
+
 Beyond those, the structural profile it needs (a Hash-DRBG, and single-threaded
 wolfCrypt on a no-threads kernel) already comes from the wolfSSL module's own
 Kconfig and `user_settings.h` defaults. The wolfSSL module stays
