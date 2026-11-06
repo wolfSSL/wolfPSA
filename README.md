@@ -10,6 +10,10 @@ wolfPSA is a PSA Crypto **engine** that implements the PSA Crypto API on
 - wolfCrypt as the backend crypto provider.
 - The default make target creates a static library (`libwolfpsa.a`) built directly
   from wolfPSA sources plus the required wolfCrypt objects.
+- TF-PSA-Crypto's `mbedtls/pk.h` for private keys: `mbedtls_pk_init`, `free`,
+  `parse_key`, `parse_keyfile` and `can_do_psa`. The context has the key's
+  DER and type. RSA and EC keys, PEM or DER, traditional or PKCS #8.
+  Encrypted keys and EC keys with a compressed public key are not supported.
 
 ## Repository layout
 
@@ -59,6 +63,18 @@ AddressSanitizer build:
 ```
 make ASAN=1
 ```
+
+Thread-safe build, as Mbed TLS with `MBEDTLS_THREADING_C`: wolfCrypt without
+`SINGLE_THREADED`, a mutex around the key store (`WOLFPSA_THREAD_SAFE`, see
+`src/psa_lock.h`) and the TF-PSA-Crypto threading API in
+`mbedtls/threading.h`, on pthreads:
+
+```
+make MBEDTLS_THREADING_C=1
+```
+
+Applications define `MBEDTLS_THREADING_C` too, as in their Mbed TLS
+configuration, and link with `-pthread`.
 
 You can override the wolfSSL source location:
 

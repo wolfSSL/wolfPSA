@@ -110,3 +110,10 @@ jobs:
           make -C test psa_devid_cryptocb_test ASAN=1
           rm -rf .store test/.store
           ./test/psa_devid_cryptocb_test
+
+      # LeakSanitizer checks that failed key file loads free their buffer
+      - name: Run the pk test under AddressSanitizer
+        run: |
+          rm -f test/psa_tf_psa_pk_test test/psa_server/psa_tf_psa_pk_test.o
+          make -C test psa_tf_psa_pk_test ASAN=1
+          ./test/psa_tf_psa_pk_test

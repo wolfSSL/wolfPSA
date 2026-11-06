@@ -92,5 +92,9 @@ test/psa_zero_capacity_buffer_test
 test/psa_aead_gcm_short_tag_test
 test/psa_enrollment_alg_test
 build-test/out/
+test/psa_tf_psa_pk_test
+test/psa_tf_psa_threading_test
+test/build-threads
+test/build-threads-asan
 .cache/
 compile_commands.json

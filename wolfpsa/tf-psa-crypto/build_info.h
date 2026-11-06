@@ -31,6 +31,9 @@
 #define MBEDTLS_PSA_CRYPTO_C
 #define MBEDTLS_PSA_CRYPTO_CLIENT
 /* MBEDTLS_ENTROPY_C and MBEDTLS_CTR_DRBG_C come from crypto_config.h */
+/* mbedtls/pk.h: private keys, PEM or DER */
+#define MBEDTLS_PK_C
+#define MBEDTLS_PK_PARSE_C
 
 #if defined(PSA_WANT_KEY_TYPE_AES)
     #define MBEDTLS_AES_C
@@ -53,5 +56,11 @@
 #if defined(PSA_WANT_ALG_CTR)
     #define MBEDTLS_CIPHER_MODE_CTR
 #endif /* PSA_WANT_ALG_CTR */
+
+/* pthreads, the one implementation of MBEDTLS_THREADING_C */
+#if defined(MBEDTLS_THREADING_C) && !defined(MBEDTLS_THREADING_PTHREAD) && \
+        !defined(__ZEPHYR__)
+    #define MBEDTLS_THREADING_PTHREAD
+#endif /* MBEDTLS_THREADING_C && !MBEDTLS_THREADING_PTHREAD && !__ZEPHYR__ */
 
 #endif /* TF_PSA_CRYPTO_BUILD_INFO_H */

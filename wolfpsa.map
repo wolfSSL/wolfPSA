@@ -1,5 +1,8 @@
 WOLFPSA_1.0 {
     global:
+        mbedtls_condition_variable_*;
+        mbedtls_mutex_*;
+        mbedtls_pk_*;
         mbedtls_platform_zeroize;
         mbedtls_psa_crypto_free;
         psa_aead_abort;
