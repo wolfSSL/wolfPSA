@@ -1,0 +1,35 @@
+name: Mbed TLS compatibility
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # make MBEDTLS_COMPAT=1 mbedtls-compat-test: the Mbed TLS 4.x API on
+  # wolfSSL, tested with Mbed TLS's sample programs and test data. See the
+  # README.
+  mbedtls-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        wolfssl-ref: [ master, v5.9.4-stable ]
+        options: [ "", "MBEDTLS_THREADING_C=1 ASAN=1" ]
+
+    steps:
+      - name: Check out wolfPSA
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake libtool libtool-bin pkg-config python3-jinja2 faketime
+
+      - name: Clone sibling wolfSSL
+        run: git clone --depth 1 --branch ${{ matrix.wolfssl-ref }} https://github.com/wolfSSL/wolfssl ../wolfssl
+
+      - name: Clone sibling Mbed TLS
+        run: git clone --depth 1 --branch mbedtls-4.2.0 --recurse-submodules --shallow-submodules https://github.com/Mbed-TLS/mbedtls ../mbedtls
+
+      - name: Build and run the compatibility tests
+        run: make MBEDTLS_COMPAT=1 ${{ matrix.options }} mbedtls-compat-test

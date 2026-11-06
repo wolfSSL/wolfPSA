@@ -79,6 +79,21 @@ WOLFCRYPT_SRC := \
 WOLFCRYPT_OBJ := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 
+# MBEDTLS_COMPAT=1 adds the Mbed TLS 4.x TLS, X.509 and network API, on
+# wolfSSL's TLS compiled from WOLFSSL_PATH like wolfCrypt.
+# See src/mbedtls_compat.c and src/mbedtls_net.c.
+WOLFSSL_TLS_SRC :=
+ifeq ($(MBEDTLS_COMPAT),1)
+CPPFLAGS += -DWOLFPSA_MBEDTLS_COMPAT
+ENROLLMENT_ALG := 1
+WOLFSSL_TLS_SRC := $(addprefix $(WOLFSSL_PATH)/src/,internal.c keys.c ssl.c \
+	tls.c tls13.c wolfio.c)
+endif
+WOLFSSL_TLS_OBJ := $(patsubst $(WOLFSSL_PATH)/src/%.c,$(OBJDIR)/wolfssl_%.o, \
+	$(WOLFSSL_TLS_SRC))
+WOLFSSL_TLS_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/src/%.c, \
+	$(OBJDIR_PIC)/wolfssl_%.o,$(WOLFSSL_TLS_SRC))
+
 # MBEDTLS_THREADING_C=1 builds a thread safe library, as in Mbed TLS. See
 # user_settings.h. Applications define MBEDTLS_THREADING_C too.
 ifeq ($(MBEDTLS_THREADING_C),1)
@@ -86,8 +101,9 @@ CPPFLAGS += -DMBEDTLS_THREADING_C
 LDFLAGS += -pthread
 endif
 
-# Changing MBEDTLS_THREADING_C rebuilds every object
+# Changing MBEDTLS_COMPAT or MBEDTLS_THREADING_C rebuilds every object
 OPTIONS_STAMP := $(BUILD_DIR)/options_$(if \
+	$(filter 1,$(MBEDTLS_COMPAT)),compat,nocompat)_$(if \
 	$(filter 1,$(MBEDTLS_THREADING_C)),threads,nothreads)
 
 WOLFSSL_CPPFLAGS ?= -DWOLFSSL_USER_SETTINGS
@@ -135,7 +151,7 @@ LDFLAGS += --coverage
 endif
 
 .PHONY: all clean psa-objects unit-run run-tests cov covclean \
-	want-surface-test
+	want-surface-test mbedtls-compat-test
 
 all: $(LIBNAME) $(SHLIBNAME)
 
@@ -145,11 +161,13 @@ all: $(LIBNAME) $(SHLIBNAME)
 # bundled wolfCrypt sources are out of scope.
 psa-objects: $(OBJ)
 
-$(LIBNAME): $(OBJ) $(WOLFCRYPT_OBJ)
+$(LIBNAME): $(OBJ) $(WOLFCRYPT_OBJ) $(WOLFSSL_TLS_OBJ)
+	rm -f $@
 	$(AR) rcs $@ $^
 	$(RANLIB) $@
 
-$(SHLIBNAME): $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) $(EXPORT_MAP)
+$(SHLIBNAME): $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) $(WOLFSSL_TLS_OBJ_PIC) \
+		$(EXPORT_MAP)
 	$(CC) -shared -Wl,--version-script,$(EXPORT_MAP) -Wl,-Bsymbolic-functions -o $@ $(filter-out $(EXPORT_MAP),$^) $(LDFLAGS)
 
 # Build the PSA_WANT_* macros based on what the wolfCrypt build supports.
@@ -172,7 +190,8 @@ want-surface-test: $(LIBNAME) $(SHLIBNAME)
 		-lpthread -lm
 	$(BUILD_DIR)/psa_want_surface_test
 
-$(OBJ) $(WOLFCRYPT_OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC): $(OPTIONS_STAMP)
+$(OBJ) $(WOLFCRYPT_OBJ) $(WOLFSSL_TLS_OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) \
+		$(WOLFSSL_TLS_OBJ_PIC): $(OPTIONS_STAMP)
 
 $(OPTIONS_STAMP):
 	@mkdir -p $(@D)
@@ -192,6 +211,14 @@ $(OBJDIR_PIC)/%.o: src/%.c
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
 
 $(OBJDIR_PIC)/wolfcrypt_%.o: $(WOLFSSL_PATH)/wolfcrypt/src/%.c
+	@mkdir -p $(OBJDIR_PIC)
+	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
+
+$(OBJDIR)/wolfssl_%.o: $(WOLFSSL_PATH)/src/%.c
+	@mkdir -p $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR_PIC)/wolfssl_%.o: $(WOLFSSL_PATH)/src/%.c
 	@mkdir -p $(OBJDIR_PIC)
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
 
@@ -277,6 +304,22 @@ unit-run: all
 	@$(MAKE) -C test $(UNIT_TESTS)
 	@$(MAKE) run-tests
 
+# Mbed TLS repo for running their example programs.
+MBEDTLS_PATH ?= ../mbedtls
+
+ifeq ($(MBEDTLS_COMPAT),1)
+mbedtls-compat-test: $(LIBNAME)
+	$(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
+		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
+		MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH)) \
+		BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
+		PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
+		WOLFPSA_LDFLAGS="$(LDFLAGS)" check
+else
+mbedtls-compat-test:
+	@echo "Run make MBEDTLS_COMPAT=1 mbedtls-compat-test"; exit 1
+endif
+
 # Build everything with gcov instrumentation, run the unit tests, and emit an
 # HTML coverage report for src/*.c (the bundled wolfCrypt sources are
 # excluded by the -f filter). The instrumented objects are dropped once the
@@ -326,5 +369,6 @@ covclean:
 clean:
 	rm -rf $(BUILD_DIR) $(LIBNAME) $(SHLIBNAME)
 
--include $(OBJ:.o=.d) $(WOLFCRYPT_OBJ:.o=.d)
--include $(OBJ_PIC:.o=.d) $(WOLFCRYPT_OBJ_PIC:.o=.d)
+-include $(OBJ:.o=.d) $(WOLFCRYPT_OBJ:.o=.d) $(WOLFSSL_TLS_OBJ:.o=.d)
+-include $(OBJ_PIC:.o=.d) $(WOLFCRYPT_OBJ_PIC:.o=.d) \
+	$(WOLFSSL_TLS_OBJ_PIC:.o=.d)
