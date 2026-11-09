@@ -150,6 +150,8 @@ Known differences from Mbed TLS:
 - `mbedtls_net_accept` is TCP only.
 - `mbedtls_pk_context` has the key's DER and nothing else. Encrypted keys
   and EC keys with a compressed public key are not supported.
+- RSA keys are limited to 3072 bits, so a certificate chain with an RSA-4096
+  CA does not verify.
 - `mbedtls_x509_crt` has one node per certificate, with no parsed fields
   apart from `raw`. Parse errors are `MBEDTLS_ERR_X509_INVALID_FORMAT` or
   `MBEDTLS_ERR_X509_ALLOC_FAILED`.
@@ -162,6 +164,10 @@ Known differences from Mbed TLS:
 - An IP address host name is matched against the certificate's IP address
   SANs only. Mbed TLS also matches a DNS SAN with the same text, or the CN
   of a certificate without SANs.
+- A host name without a dot, such as `router`, fails with
+  `MBEDTLS_ERR_SSL_BAD_INPUT_DATA` from `mbedtls_ssl_set_hostname`, or from
+  `mbedtls_ssl_setup` when set before it. wolfSSL takes only a fully
+  qualified name, an IP address or `localhost`.
 - `mbedtls_ssl_set_hostname(ssl, NULL)` after `mbedtls_ssl_setup` starts a
   new connection, so call it before the handshake.
 - With `VERIFY_OPTIONAL`, a resumed session reports
