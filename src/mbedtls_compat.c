@@ -728,6 +728,7 @@ void mbedtls_ssl_conf_authmode(mbedtls_ssl_config* conf, int authmode)
     if (conf == NULL) {
         return;
     }
+    conf->changes++;
     if (conf->ctx == NULL || authmode < MBEDTLS_SSL_VERIFY_NONE ||
             authmode > MBEDTLS_SSL_VERIFY_REQUIRED) {
         MbedConfErr(conf, MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
@@ -781,6 +782,7 @@ int mbedtls_ssl_config_defaults(mbedtls_ssl_config* conf,
     }
 
     wolfSSL_CTX_free(conf->ctx);
+    conf->changes++;
     conf->err = 0;
     conf->endpoint = endpoint;
     conf->min_tls_version = MBEDTLS_SSL_VERSION_TLS1_2;
@@ -808,6 +810,7 @@ void mbedtls_ssl_conf_ca_chain(mbedtls_ssl_config* conf,
     if (conf == NULL) {
         return;
     }
+    conf->changes++;
 
     if (ret == 0) {
         ret = MbedRet(wolfSSL_CTX_UnloadCAs(conf->ctx),
@@ -847,6 +850,7 @@ int mbedtls_ssl_conf_own_cert(mbedtls_ssl_config* conf,
             own_cert->raw.p == NULL || pk_key == NULL || pk_key->der == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
+    conf->changes++;
 
     for (crt = own_cert; crt != NULL; crt = crt->next) {
         len += crt->raw.len;
@@ -891,6 +895,7 @@ void mbedtls_ssl_conf_min_tls_version(mbedtls_ssl_config* conf,
 
     if (conf != NULL) {
         conf->min_tls_version = tls_version;
+        conf->changes++;
     }
 }
 
@@ -901,6 +906,7 @@ void mbedtls_ssl_conf_max_tls_version(mbedtls_ssl_config* conf,
 
     if (conf != NULL) {
         conf->max_tls_version = tls_version;
+        conf->changes++;
     }
 }
 
@@ -912,6 +918,7 @@ void mbedtls_ssl_conf_ciphersuites(mbedtls_ssl_config* conf,
 
     if (conf != NULL) {
         conf->ciphersuites = ciphersuites;
+        conf->changes++;
     }
 }
 
@@ -923,6 +930,7 @@ void mbedtls_ssl_conf_verify(mbedtls_ssl_config* conf,
     if (conf != NULL) {
         conf->f_vrfy = f_vrfy;
         conf->p_vrfy = p_vrfy;
+        conf->changes++;
     }
 }
 
@@ -1146,9 +1154,10 @@ static int MbedSetSuites(WOLFSSL* ssl, const int* ids)
 }
 
 /* Replaces the WOLFSSL with a new one from the config, with this context's
- * callbacks and host name */
+ * callbacks, host name and session */
 static int MbedSslNew(mbedtls_ssl_context* ssl)
 {
+    WOLFSSL_SESSION* session = NULL;
     int ret;
 
     if (ssl->conf->err != 0) {
@@ -1157,12 +1166,17 @@ static int MbedSslNew(mbedtls_ssl_context* ssl)
     if (ssl->conf->ctx == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
+    if (ssl->session_set) {
+        session = wolfSSL_get1_session(ssl->ssl);
+    }
     MbedChainFree(ssl);
     wolfSSL_free(ssl->ssl);
     ssl->ssl = wolfSSL_new(ssl->conf->ctx);
     if (ssl->ssl == NULL) {
+        wolfSSL_SESSION_free(session);
         return MBEDTLS_ERR_SSL_ALLOC_FAILED;
     }
+    ssl->started = 0;
     ssl->authmode = ssl->conf->authmode;
     ssl->verify_flags = 0;
     ssl->verify_ret = 0;
@@ -1179,6 +1193,14 @@ static int MbedSslNew(mbedtls_ssl_context* ssl)
     if (ret == 0) {
         ret = MbedSetHostname(ssl->ssl, ssl->hostname);
     }
+    if (ret == 0 && session != NULL) {
+        /* One that expired since gets a full handshake, as in Mbed TLS */
+        (void)wolfSSL_set_session(ssl->ssl, session);
+    }
+    wolfSSL_SESSION_free(session);
+    if (ret == 0) {
+        ssl->conf_changes = ssl->conf->changes;
+    }
     return ret;
 }
 
@@ -1193,7 +1215,6 @@ int mbedtls_ssl_setup(mbedtls_ssl_context* ssl, const mbedtls_ssl_config* conf)
     return MbedSslNew(ssl);
 }
 
-/* conf_* calls made since mbedtls_ssl_setup take effect here */
 int mbedtls_ssl_session_reset(mbedtls_ssl_context* ssl)
 {
     WOLFSSL_ENTER("mbedtls_ssl_session_reset");
@@ -1201,6 +1222,8 @@ int mbedtls_ssl_session_reset(mbedtls_ssl_context* ssl)
     if (ssl == NULL || ssl->conf == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
+    /* As in Mbed TLS, the session set before is not used again */
+    ssl->session_set = 0;
     return MbedSslNew(ssl);
 }
 
@@ -1263,19 +1286,28 @@ int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname)
         MbedSslNew(ssl);
 }
 
-/* As in Mbed TLS 4.x, a client that verifies the server needs
- * mbedtls_ssl_set_hostname() first */
-static int MbedSslCheck(const mbedtls_ssl_context* ssl)
+/* Mbed TLS reads the config during the handshake, so conf_* calls made before
+ * it starts apply to it. As in Mbed TLS 4.x, a client that verifies the
+ * server needs mbedtls_ssl_set_hostname() first. */
+static int MbedSslStart(mbedtls_ssl_context* ssl)
 {
+    int ret = 0;
+
     if (ssl == NULL || ssl->conf == NULL || ssl->ssl == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
-    if (ssl->conf->endpoint == MBEDTLS_SSL_IS_CLIENT &&
+    if (!ssl->started && ssl->conf_changes != ssl->conf->changes) {
+        ret = MbedSslNew(ssl);
+    }
+    if (ret == 0 && ssl->conf->endpoint == MBEDTLS_SSL_IS_CLIENT &&
             ssl->authmode == MBEDTLS_SSL_VERIFY_REQUIRED &&
             !ssl->hostname_set) {
-        return MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME;
+        ret = MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME;
     }
-    return 0;
+    if (ret == 0) {
+        ssl->started = 1;
+    }
+    return ret;
 }
 
 int mbedtls_ssl_handshake(mbedtls_ssl_context* ssl)
@@ -1284,7 +1316,7 @@ int mbedtls_ssl_handshake(mbedtls_ssl_context* ssl)
 
     WOLFSSL_ENTER("mbedtls_ssl_handshake");
 
-    ret = MbedSslCheck(ssl);
+    ret = MbedSslStart(ssl);
     if (ret != 0) {
         return ret;
     }
@@ -1382,7 +1414,7 @@ int mbedtls_ssl_read(mbedtls_ssl_context* ssl, unsigned char* buf, size_t len)
 
     WOLFSSL_ENTER("mbedtls_ssl_read");
 
-    ret = MbedSslCheck(ssl);
+    ret = MbedSslStart(ssl);
     if (ret != 0) {
         return ret;
     }
@@ -1402,7 +1434,7 @@ int mbedtls_ssl_write(mbedtls_ssl_context* ssl,
 
     WOLFSSL_ENTER("mbedtls_ssl_write");
 
-    ret = MbedSslCheck(ssl);
+    ret = MbedSslStart(ssl);
     if (ret != 0) {
         return ret;
     }
@@ -1463,14 +1495,20 @@ int mbedtls_ssl_get_session(const mbedtls_ssl_context* ssl,
 int mbedtls_ssl_set_session(mbedtls_ssl_context* ssl,
     const mbedtls_ssl_session* session)
 {
+    int ret;
+
     WOLFSSL_ENTER("mbedtls_ssl_set_session");
 
     if (ssl == NULL || ssl->ssl == NULL || session == NULL ||
             session->session == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
-    return MbedRet(wolfSSL_set_session(ssl->ssl, session->session),
+    ret = MbedRet(wolfSSL_set_session(ssl->ssl, session->session),
         MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+    if (ret == 0) {
+        ssl->session_set = 1;
+    }
+    return ret;
 }
 
 /* Serializing a session needs HAVE_EXT_CACHE */

@@ -32,6 +32,9 @@
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/x509_crt.h>
+#ifdef MBEDTLS_SSL_CACHE_C
+    #include <mbedtls/ssl_cache.h>
+#endif /* MBEDTLS_SSL_CACHE_C */
 
 #define CA_FILE   "test-ca2.crt"
 #define CERT_FILE "server5.crt"
@@ -51,6 +54,8 @@
 #define MAX_CALLS 8
 /* A verify callback's own return code */
 #define VERIFY_CB_ERR -0x1234
+/* TLS_AES_128_GCM_SHA256, which wolfSSL does not pick by default */
+#define SUITE_ID 0x1301
 
 /* Data in one direction. closed is set by the writer. */
 typedef struct {
@@ -619,8 +624,180 @@ static int ReadCloseNotify(void)
     return ok;
 }
 
-/* A conf_* failure after mbedtls_ssl_setup */
-static int ResetConfError(void)
+/* The tests below change the config between mbedtls_ssl_setup and the
+ * handshake, which Mbed TLS reads the config in */
+
+static int ClientCertAfterSetup(void)
+{
+    int s = 0;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            1, HOST_NAME) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_REQUIRED, 0,
+            NULL) == 0 &&
+        mbedtls_ssl_conf_own_cert(&cli.conf, &cert, &key) == 0;
+
+    if (ok) {
+        ok = Handshake(&s) == 0 && s == 0 &&
+            mbedtls_ssl_get_verify_result(&srv.ssl) == 0;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* The client trusts either certificate */
+static int ServerCertReplaced(void)
+{
+    mbedtls_x509_crt cas;
+    Certs both = { &cas, NULL, NULL };
+    int s = 0;
+    int ok;
+
+    mbedtls_x509_crt_init(&cas);
+    ok = mbedtls_x509_crt_parse_file(&cas, CA_FILE) == 0 &&
+        mbedtls_x509_crt_parse_file(&cas, ROOT_FILE) == 0 &&
+        PeerNewCerts(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            &both, 1, HOST_NAME) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0 &&
+        mbedtls_ssl_conf_own_cert(&srv.conf, &chain, &leafKey) == 0;
+
+    if (ok) {
+        ok = Handshake(&s) == 0 && s == 0;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    mbedtls_x509_crt_free(&cas);
+    return ok;
+}
+
+static int SuitesAfterSetup(void)
+{
+    static const int suites[] = { SUITE_ID, 0 };
+    int s = 0;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            1, HOST_NAME) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+
+    if (ok) {
+        mbedtls_ssl_conf_ciphersuites(&cli.conf, suites);
+        ok = Handshake(&s) == 0 && s == 0 &&
+            mbedtls_ssl_get_ciphersuite_id_from_ssl(&cli.ssl) == SUITE_ID;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+static int AuthmodeAfterSetup(void)
+{
+    int s = 0;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            1, HOST_NAME) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+
+    if (ok) {
+        mbedtls_ssl_conf_authmode(&srv.conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+        (void)Handshake(&s);
+        ok = s == MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* A minimum above the maximum fails the handshake */
+static int VersionsAfterSetup(void)
+{
+    int ret = 0;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+        1, HOST_NAME) == 0;
+
+    if (ok) {
+        mbedtls_ssl_conf_min_tls_version(&cli.conf, MBEDTLS_SSL_VERSION_TLS1_3);
+        mbedtls_ssl_conf_max_tls_version(&cli.conf, MBEDTLS_SSL_VERSION_TLS1_2);
+        ret = mbedtls_ssl_handshake(&cli.ssl);
+        ok = ret != 0 && !Waiting(ret);
+    }
+    PeerFree(&cli);
+    return ok;
+}
+
+/* VERIFY_NONE needs no host name */
+static int AuthmodeNoneAfterSetup(void)
+{
+    int s = 0;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            0, NULL) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+
+    if (ok) {
+        mbedtls_ssl_conf_authmode(&cli.conf, MBEDTLS_SSL_VERIFY_NONE);
+        ok = Handshake(&s) == 0 && s == 0;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* A TLS 1.2 session set before a conf_* call, as curl does, is resumed: the
+ * server sends no certificate, so the verify callback is not called */
+static int SessionBeforeConf(void)
+{
+#ifdef MBEDTLS_SSL_CACHE_C
+    mbedtls_ssl_cache_context cache;
+#endif /* MBEDTLS_SSL_CACHE_C */
+    mbedtls_ssl_session session;
+    Verify v;
+    int s = 0;
+    int ok;
+
+#ifdef MBEDTLS_SSL_CACHE_C
+    mbedtls_ssl_cache_init(&cache);
+#endif /* MBEDTLS_SSL_CACHE_C */
+    mbedtls_ssl_session_init(&session);
+    VerifyInit(&v);
+    ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED, 1,
+            HOST_NAME) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+    if (ok) {
+        mbedtls_ssl_conf_max_tls_version(&cli.conf, MBEDTLS_SSL_VERSION_TLS1_2);
+#ifdef MBEDTLS_SSL_CACHE_C
+        mbedtls_ssl_conf_session_cache(&srv.conf, &cache,
+            mbedtls_ssl_cache_get, mbedtls_ssl_cache_set);
+#endif /* MBEDTLS_SSL_CACHE_C */
+        ok = mbedtls_ssl_session_reset(&cli.ssl) == 0 &&
+            mbedtls_ssl_session_reset(&srv.ssl) == 0 &&
+            Handshake(&s) == 0 && s == 0 &&
+            mbedtls_ssl_get_session(&cli.ssl, &session) == 0;
+    }
+    if (ok) {
+        memset(&toClient, 0, sizeof(toClient));
+        memset(&toServer, 0, sizeof(toServer));
+        ok = mbedtls_ssl_session_reset(&cli.ssl) == 0 &&
+            mbedtls_ssl_session_reset(&srv.ssl) == 0 &&
+            mbedtls_ssl_set_session(&cli.ssl, &session) == 0;
+    }
+    if (ok) {
+        mbedtls_ssl_set_verify(&cli.ssl, VerifyCb, &v);
+        mbedtls_ssl_conf_ca_chain(&cli.conf, &ca, NULL);
+        ok = Handshake(&s) == 0 && s == 0 && v.calls == 0;
+    }
+    mbedtls_ssl_session_free(&session);
+    PeerFree(&cli);
+    PeerFree(&srv);
+#ifdef MBEDTLS_SSL_CACHE_C
+    mbedtls_ssl_cache_free(&cache);
+#endif /* MBEDTLS_SSL_CACHE_C */
+    return ok;
+}
+
+/* A conf_* failure after mbedtls_ssl_setup, returned by next */
+static int ConfError(int (*next)(mbedtls_ssl_context*))
 {
     /* Not read: any CRL is refused */
     mbedtls_x509_crl* crl = (mbedtls_x509_crl*)&ca;
@@ -629,11 +806,20 @@ static int ResetConfError(void)
 
     if (ok) {
         mbedtls_ssl_conf_ca_chain(&srv.conf, &ca, crl);
-        ok = mbedtls_ssl_session_reset(&srv.ssl) ==
-            MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+        ok = next(&srv.ssl) == MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
     }
     PeerFree(&srv);
     return ok;
+}
+
+static int ResetConfError(void)
+{
+    return ConfError(mbedtls_ssl_session_reset);
+}
+
+static int HandshakeConfError(void)
+{
+    return ConfError(mbedtls_ssl_handshake);
 }
 
 /* wolfSSL's own code for a key it refuses is not returned */
@@ -699,7 +885,15 @@ static const struct {
     { "zero-length write", WriteZero },
     { "EOF without close_notify", ReadEof },
     { "close_notify", ReadCloseNotify },
+    { "client certificate set after setup", ClientCertAfterSetup },
+    { "server certificate replaced after setup", ServerCertReplaced },
+    { "cipher suites set after setup", SuitesAfterSetup },
+    { "authmode set after setup", AuthmodeAfterSetup },
+    { "bad version range set after setup", VersionsAfterSetup },
+    { "VERIFY_NONE set after setup, no host name", AuthmodeNoneAfterSetup },
+    { "session set before a conf call", SessionBeforeConf },
     { "session reset after a conf error", ResetConfError },
+    { "handshake after a conf error", HandshakeConfError },
     { "own key too small", OwnKeyTooSmall },
     { "accept would block", AcceptWouldBlock }
 };

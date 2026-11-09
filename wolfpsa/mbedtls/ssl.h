@@ -85,6 +85,7 @@ typedef int mbedtls_ssl_recv_timeout_t(void* ctx, unsigned char* buf,
 typedef struct mbedtls_ssl_config {
     struct WOLFSSL_CTX* ctx;
     int err; /* first failed void conf call, returned at setup and reset */
+    unsigned int changes; /* counts conf calls, see MbedSslStart() */
     int authmode;
     int endpoint;
     mbedtls_ssl_protocol_version min_tls_version;
@@ -102,8 +103,11 @@ typedef struct mbedtls_ssl_session {
 typedef struct mbedtls_ssl_context {
     const mbedtls_ssl_config* conf;
     struct WOLFSSL* ssl;
+    unsigned int conf_changes; /* conf->changes when ssl was made */
+    int started; /* the handshake started on ssl */
     char* hostname; /* applied again by mbedtls_ssl_session_reset() */
     int hostname_set; /* mbedtls_ssl_set_hostname() was called */
+    int session_set; /* mbedtls_ssl_set_session() was called */
     void* p_bio;
     mbedtls_ssl_send_t* f_send;
     mbedtls_ssl_recv_t* f_recv;

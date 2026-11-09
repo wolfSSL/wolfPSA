@@ -118,11 +118,17 @@ make MBEDTLS_COMPAT=1
 Mapped so far:
 
 - net: init, connect, bind, accept, close, free, recv, send, usleep
-- x509_crt: init, free, parse, parse_der, parse_file
+- x509_crt: init, free, parse, parse_der, parse_file, parse_path; the
+  default, next and suiteb profiles
 - ssl_config: init, free, defaults; ssl_conf: authmode, ca_chain, own_cert,
-  verify, dbg
+  verify, min_tls_version, max_tls_version, ciphersuites, cert_profile, dbg
 - ssl: init, free, setup, session_reset, set_bio, set_verify, set_hostname,
-  handshake, get_verify_result, get_ciphersuite, read, write, close_notify
+  set_session, get_session, handshake, get_verify_result, get_ciphersuite,
+  get_ciphersuite_id_from_ssl, get_version, get_version_number,
+  get_bytes_avail, read, write, close_notify; list_ciphersuites,
+  get_ciphersuite_name
+- ssl_session: init, free; save and load return
+  `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`
 - pk, with or without the option: init, free, parse_key, parse_keyfile
 - threading, with `MBEDTLS_THREADING_C=1`, with or without the option: mutex
   init, free, lock, unlock; condition_variable init, free, signal, broadcast,
@@ -134,8 +140,9 @@ Known differences from Mbed TLS:
   call, such as `MBEDTLS_ERR_SSL_INTERNAL_ERROR`. wolfSSL's own codes are not
   returned: some Mbed TLS 4.x codes are PSA values (-128 to -160), which
   overlap wolfCrypt codes.
-- `conf_*` calls after `mbedtls_ssl_setup` take effect at the next
-  `mbedtls_ssl_session_reset`.
+- A server's config needs its `mbedtls_ssl_conf_own_cert` before
+  `mbedtls_ssl_setup`, which fails without it: wolfSSL makes a server
+  connection only with a certificate and key.
 - A second `mbedtls_ssl_conf_own_cert` replaces the first. Mbed TLS keeps
   both and picks one for each handshake.
 - `mbedtls_ssl_get_ciphersuite` returns IANA names, such as
@@ -172,7 +179,8 @@ Known differences from Mbed TLS:
 - wolfSSL keeps the intermediate CAs of a chain that verifies, for the
   config's later handshakes. A peer that then leaves them out still
   verifies, where Mbed TLS reports `NOT_TRUSTED`.
-- `mbedtls_ssl_conf_dbg` is accepted and ignored.
+- `mbedtls_ssl_conf_dbg` and `mbedtls_ssl_conf_cert_profile` are accepted
+  and ignored.
 - No global mutexes such as `mbedtls_threading_gmtime_mutex`.
 
 Tests build the Mbed TLS migration guide client
