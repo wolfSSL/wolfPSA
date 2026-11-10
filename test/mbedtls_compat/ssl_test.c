@@ -25,7 +25,12 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
+#include <stdint.h>
 #include <fcntl.h>
+#ifdef MBEDTLS_THREADING_C
+    #include <pthread.h>
+#endif /* MBEDTLS_THREADING_C */
 
 #include <psa/crypto.h>
 #include <mbedtls/ssl.h>
@@ -56,6 +61,11 @@
 #define VERIFY_CB_ERR -0x1234
 /* TLS_AES_128_GCM_SHA256, which wolfSSL does not pick by default */
 #define SUITE_ID 0x1301
+#define SUITE_NAME "TLS1-3-AES-128-GCM-SHA256"
+/* The most data in one TLS record */
+#define RECORD_SZ 16384
+/* Threads that look up the cipher suites at once */
+#define SUITE_THREADS 8
 
 /* Data in one direction. closed is set by the writer. */
 typedef struct {
@@ -69,6 +79,9 @@ typedef struct {
     mbedtls_ssl_context ssl;
     Pipe* rx;
     Pipe* tx;
+    /* Returned by each send or receive when set */
+    int sendErr;
+    int recvErr;
 } Peer;
 
 /* The CAs a peer trusts, and the certificates and key a server sends */
@@ -113,6 +126,9 @@ static int PipeSend(void* ctx, const unsigned char* buf, size_t len)
 {
     Pipe* p = ((Peer*)ctx)->tx;
 
+    if (((Peer*)ctx)->sendErr != 0) {
+        return ((Peer*)ctx)->sendErr;
+    }
     if (len > sizeof(p->buf) - p->len) {
         len = sizeof(p->buf) - p->len;
     }
@@ -128,6 +144,9 @@ static int PipeRecv(void* ctx, unsigned char* buf, size_t len)
 {
     Pipe* p = ((Peer*)ctx)->rx;
 
+    if (((Peer*)ctx)->recvErr != 0) {
+        return ((Peer*)ctx)->recvErr;
+    }
     if (p->len == 0) {
         return p->closed ? 0 : MBEDTLS_ERR_SSL_WANT_READ;
     }
@@ -150,6 +169,8 @@ static int PeerNewCerts(Peer* p, int endpoint, int authmode,
     mbedtls_ssl_init(&p->ssl);
     p->rx = (endpoint == MBEDTLS_SSL_IS_CLIENT) ? &toClient : &toServer;
     p->tx = (endpoint == MBEDTLS_SSL_IS_CLIENT) ? &toServer : &toClient;
+    p->sendErr = 0;
+    p->recvErr = 0;
     memset(p->tx, 0, sizeof(*p->tx));
 
     ret = mbedtls_ssl_config_defaults(&p->conf, endpoint,
@@ -624,6 +645,83 @@ static int ReadCloseNotify(void)
     return ok;
 }
 
+/* The client's send or receive fails with err during the handshake. It sends
+ * before it receives. */
+static int BioErrorHandshake(int send, int err)
+{
+    int s;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            1, HOST_NAME) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+
+    if (ok) {
+        *(send ? &cli.sendErr : &cli.recvErr) = err;
+        ok = Handshake(&s) == err;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* The BIO's error is returned by the call it fails */
+static int BioErrors(void)
+{
+    static const struct {
+        int send;
+        int err;
+    } errs[] = {
+        { 0, MBEDTLS_ERR_SSL_TIMEOUT },
+        { 0, MBEDTLS_ERR_NET_CONN_RESET },
+        { 0, MBEDTLS_ERR_NET_RECV_FAILED },
+        { 1, MBEDTLS_ERR_NET_CONN_RESET },
+        { 1, MBEDTLS_ERR_NET_SEND_FAILED }
+    };
+    unsigned char buf[16];
+    size_t i;
+    int ok = 1;
+
+    for (i = 0; ok && i < sizeof(errs) / sizeof(errs[0]); i++) {
+        ok = BioErrorHandshake(errs[i].send, errs[i].err);
+    }
+    if (ok) {
+        ok = Connect(MBEDTLS_SSL_VERIFY_NONE) == 0;
+        cli.sendErr = MBEDTLS_ERR_NET_SEND_FAILED;
+        srv.recvErr = MBEDTLS_ERR_SSL_TIMEOUT;
+        ok = ok && mbedtls_ssl_write(&cli.ssl, (const unsigned char*)"hello",
+                5) == MBEDTLS_ERR_NET_SEND_FAILED &&
+            mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+                MBEDTLS_ERR_SSL_TIMEOUT;
+        PeerFree(&cli);
+        PeerFree(&srv);
+    }
+    return ok;
+}
+
+/* A length that does not fit in an int. As in Mbed TLS, a write sends at
+ * most one record, so only RECORD_SZ bytes of buf are used. */
+static int LargeLength(void)
+{
+    static const size_t lens[] = {
+        (size_t)INT_MAX + 1,
+    #if SIZE_MAX > UINT_MAX
+        (size_t)UINT_MAX + 1,
+        (size_t)UINT_MAX + 6
+    #endif /* SIZE_MAX > UINT_MAX */
+    };
+    static unsigned char buf[RECORD_SZ];
+    size_t i;
+    int ok = Connect(MBEDTLS_SSL_VERIFY_NONE) == 0;
+
+    for (i = 0; ok && i < sizeof(lens) / sizeof(lens[0]); i++) {
+        ok = mbedtls_ssl_write(&cli.ssl, buf, lens[i]) == RECORD_SZ &&
+            mbedtls_ssl_read(&srv.ssl, buf, lens[i]) == RECORD_SZ;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
 /* The tests below change the config between mbedtls_ssl_setup and the
  * handshake, which Mbed TLS reads the config in */
 
@@ -743,9 +841,10 @@ static int AuthmodeNoneAfterSetup(void)
     return ok;
 }
 
-/* A TLS 1.2 session set before a conf_* call, as curl does, is resumed: the
- * server sends no certificate, so the verify callback is not called */
-static int SessionBeforeConf(void)
+/* A TLS 1.2 handshake, then one with its session, set before a conf_* call
+ * as curl does. The client verifies with authmode and the CAs of certs. The
+ * resumed session calls no verify callback and keeps the first result. */
+static int Resume(int authmode, const Certs* certs, uint32_t want)
 {
 #ifdef MBEDTLS_SSL_CACHE_C
     mbedtls_ssl_cache_context cache;
@@ -760,10 +859,10 @@ static int SessionBeforeConf(void)
 #endif /* MBEDTLS_SSL_CACHE_C */
     mbedtls_ssl_session_init(&session);
     VerifyInit(&v);
-    ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED, 1,
+    ok = PeerNewCerts(&cli, MBEDTLS_SSL_IS_CLIENT, authmode, certs, 1,
             HOST_NAME) == 0 &&
-        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
-            NULL) == 0;
+        PeerNewCerts(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE,
+            certs, 0, NULL) == 0;
     if (ok) {
         mbedtls_ssl_conf_max_tls_version(&cli.conf, MBEDTLS_SSL_VERSION_TLS1_2);
 #ifdef MBEDTLS_SSL_CACHE_C
@@ -784,8 +883,9 @@ static int SessionBeforeConf(void)
     }
     if (ok) {
         mbedtls_ssl_set_verify(&cli.ssl, VerifyCb, &v);
-        mbedtls_ssl_conf_ca_chain(&cli.conf, &ca, NULL);
-        ok = Handshake(&s) == 0 && s == 0 && v.calls == 0;
+        mbedtls_ssl_conf_ca_chain(&cli.conf, certs->ca, NULL);
+        ok = Handshake(&s) == 0 && s == 0 && v.calls == 0 &&
+            mbedtls_ssl_get_verify_result(&cli.ssl) == want;
     }
     mbedtls_ssl_session_free(&session);
     PeerFree(&cli);
@@ -794,6 +894,17 @@ static int SessionBeforeConf(void)
     mbedtls_ssl_cache_free(&cache);
 #endif /* MBEDTLS_SSL_CACHE_C */
     return ok;
+}
+
+static int ResumeRequired(void)
+{
+    return Resume(MBEDTLS_SSL_VERIFY_REQUIRED, &defaultCerts, 0);
+}
+
+static int ResumeOptional(void)
+{
+    return Resume(MBEDTLS_SSL_VERIFY_OPTIONAL, &untrustedCerts,
+        MBEDTLS_X509_BADCERT_NOT_TRUSTED);
 }
 
 /* A conf_* failure after mbedtls_ssl_setup, returned by next */
@@ -841,6 +952,60 @@ static int OwnKeyTooSmall(void)
     return ok;
 }
 
+#ifdef MBEDTLS_THREADING_C
+typedef struct {
+    int nameFirst;
+    size_t count;
+    const char* name;
+} SuiteLookup;
+
+static void* SuiteThread(void* arg)
+{
+    SuiteLookup* l = (SuiteLookup*)arg;
+    const int* ids;
+
+    if (l->nameFirst) {
+        l->name = mbedtls_ssl_get_ciphersuite_name(SUITE_ID);
+    }
+    ids = mbedtls_ssl_list_ciphersuites();
+    if (!l->nameFirst) {
+        l->name = mbedtls_ssl_get_ciphersuite_name(SUITE_ID);
+    }
+    while (ids[l->count] != 0) {
+        l->count++;
+    }
+    return NULL;
+}
+
+/* Threads that make the first lookups at once each see the whole list */
+static int SuitesThreads(void)
+{
+    pthread_t threads[SUITE_THREADS];
+    SuiteLookup l[SUITE_THREADS];
+    int started;
+    int i;
+    int ok = 1;
+
+    memset(l, 0, sizeof(l));
+    for (started = 0; started < SUITE_THREADS; started++) {
+        l[started].nameFirst = started % 2;
+        if (pthread_create(&threads[started], NULL, SuiteThread,
+                &l[started]) != 0) {
+            ok = 0;
+            break;
+        }
+    }
+    for (i = 0; i < started; i++) {
+        (void)pthread_join(threads[i], NULL);
+    }
+    for (i = 0; ok && i < SUITE_THREADS; i++) {
+        ok = l[i].count > 0 && l[i].count == l[0].count &&
+            strcmp(l[i].name, SUITE_NAME) == 0;
+    }
+    return ok;
+}
+#endif /* MBEDTLS_THREADING_C */
+
 static int AcceptWouldBlock(void)
 {
     mbedtls_net_context bound;
@@ -864,6 +1029,10 @@ static const struct {
     const char* name;
     int (*test)(void);
 } cases[] = {
+#ifdef MBEDTLS_THREADING_C
+    /* First: the list is made on the first lookup */
+    { "cipher suite lookups, threads at once", SuitesThreads },
+#endif /* MBEDTLS_THREADING_C */
     { "no client certificate, OPTIONAL", NoClientCertOptional },
     { "no client certificate, REQUIRED", NoClientCertRequired },
     { "host name not set", HostNotSet },
@@ -885,13 +1054,16 @@ static const struct {
     { "zero-length write", WriteZero },
     { "EOF without close_notify", ReadEof },
     { "close_notify", ReadCloseNotify },
+    { "BIO errors", BioErrors },
+    { "length over INT_MAX", LargeLength },
     { "client certificate set after setup", ClientCertAfterSetup },
     { "server certificate replaced after setup", ServerCertReplaced },
     { "cipher suites set after setup", SuitesAfterSetup },
     { "authmode set after setup", AuthmodeAfterSetup },
     { "bad version range set after setup", VersionsAfterSetup },
     { "VERIFY_NONE set after setup, no host name", AuthmodeNoneAfterSetup },
-    { "session set before a conf call", SessionBeforeConf },
+    { "session resumed, REQUIRED", ResumeRequired },
+    { "session resumed, OPTIONAL", ResumeOptional },
     { "session reset after a conf error", ResetConfError },
     { "handshake after a conf error", HandshakeConfError },
     { "own key too small", OwnKeyTooSmall },

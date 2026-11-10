@@ -98,6 +98,7 @@ typedef struct mbedtls_ssl_config {
 
 typedef struct mbedtls_ssl_session {
     struct WOLFSSL_SESSION* session;
+    uint32_t verify_result; /* of the handshake the session is from */
 } mbedtls_ssl_session;
 
 typedef struct mbedtls_ssl_context {
@@ -108,10 +109,12 @@ typedef struct mbedtls_ssl_context {
     char* hostname; /* applied again by mbedtls_ssl_session_reset() */
     int hostname_set; /* mbedtls_ssl_set_hostname() was called */
     int session_set; /* mbedtls_ssl_set_session() was called */
+    uint32_t session_verify; /* verify_result of the session set */
     void* p_bio;
     mbedtls_ssl_send_t* f_send;
     mbedtls_ssl_recv_t* f_recv;
     mbedtls_ssl_recv_timeout_t* f_recv_timeout;
+    int io_err; /* the last BIO call's error, 0 after data */
     /* Used in place of the config's when set */
     int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*);
     void* p_vrfy;

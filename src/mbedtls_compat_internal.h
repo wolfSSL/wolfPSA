@@ -25,6 +25,7 @@
 #ifndef MBEDTLS_COMPAT_INTERNAL_H
 #define MBEDTLS_COMPAT_INTERNAL_H
 
+#include <stddef.h>
 #include <wolfssl/wolfcrypt/visibility.h>
 
 enum {
@@ -34,5 +35,7 @@ enum {
 
 /* I/O error code in one direction, toWolf from Mbed TLS to wolfSSL */
 WOLFSSL_LOCAL int MbedIoErr(int code, int dir, int toWolf);
+/* An I/O length as an int, at most max */
+WOLFSSL_LOCAL int MbedIoLen(size_t len, int max);
 
 #endif /* MBEDTLS_COMPAT_INTERNAL_H */

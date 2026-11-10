@@ -34,6 +34,7 @@
 
 #if defined(WOLFPSA_MBEDTLS_COMPAT)
 
+#include <limits.h>
 #include <wolfssl/ssl.h>
 #include <wolfssl/wolfio.h>
 #include <mbedtls/ssl.h>
@@ -55,6 +56,25 @@ void mbedtls_net_init(mbedtls_net_context* ctx)
 }
 
 #ifdef USE_WOLFSSL_IO
+/* As in Mbed TLS: Winsock starts on first use and is not stopped, and a send
+ * to a closed peer fails instead of ending the process. Returns 1 when
+ * sockets can be used. */
+static int MbedNetPrepare(void)
+{
+#ifdef USE_WINDOWS_API
+    static int started = 0;
+    WSADATA data;
+
+    if (!started) {
+        started = (WSAStartup(MAKEWORD(2, 2), &data) == 0);
+    }
+    return started;
+#else
+    (void)signal(SIGPIPE, SIG_IGN);
+    return 1;
+#endif /* USE_WINDOWS_API */
+}
+
 static int MbedNetBind(int fd, const struct addrinfo* ai, int proto)
 {
     int on = 1;
@@ -100,12 +120,9 @@ static int MbedNetOpen(mbedtls_net_context* ctx, const char* host,
         hints.ai_flags = AI_PASSIVE;
     }
 
-#ifndef USE_WINDOWS_API
-    /* As in Mbed TLS: a send to a closed peer fails instead of ending the
-     * process */
-    (void)signal(SIGPIPE, SIG_IGN);
-#endif /* !USE_WINDOWS_API */
-
+    if (!MbedNetPrepare()) {
+        return MBEDTLS_ERR_NET_SOCKET_FAILED;
+    }
     if (getaddrinfo(host, port, &hints, &list) != 0) {
         return MBEDTLS_ERR_NET_UNKNOWN_HOST;
     }
@@ -253,7 +270,7 @@ int mbedtls_net_recv(void* ctx, unsigned char* buf, size_t len)
     if (net == NULL || net->fd < 0) {
         return MBEDTLS_ERR_NET_INVALID_CONTEXT;
     }
-    ret = wolfIO_Recv(net->fd, (char*)buf, (int)len, 0);
+    ret = wolfIO_Recv(net->fd, (char*)buf, MbedIoLen(len, INT_MAX), 0);
     if (ret >= 0) {
         return ret;
     }
@@ -270,7 +287,8 @@ int mbedtls_net_send(void* ctx, const unsigned char* buf, size_t len)
     if (net == NULL || net->fd < 0) {
         return MBEDTLS_ERR_NET_INVALID_CONTEXT;
     }
-    ret = wolfIO_Send(net->fd, (char*)(wc_ptr_t)buf, (int)len, 0);
+    ret = wolfIO_Send(net->fd, (char*)(wc_ptr_t)buf, MbedIoLen(len, INT_MAX),
+        0);
     if (ret >= 0) {
         return ret;
     }

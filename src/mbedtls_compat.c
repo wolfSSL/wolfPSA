@@ -29,6 +29,7 @@
 
 #if defined(WOLFPSA_MBEDTLS_COMPAT)
 
+#include <limits.h>
 #include <wolfssl/ssl.h>
 #include <wolfssl/internal.h>
 #include <wolfssl/wolfio.h>
@@ -89,6 +90,11 @@ int MbedIoErr(int code, int dir, int toWolf)
     return map[i].mbed[dir];
 }
 
+int MbedIoLen(size_t len, int max)
+{
+    return (len > (size_t)max) ? max : (int)len;
+}
+
 /* Mbed TLS checks these of the peer's certificate after the verify callback,
  * which does not see them */
 #define MBED_USAGE_FLAGS \
@@ -126,6 +132,10 @@ static int MbedSslErr(mbedtls_ssl_context* ssl, int ret)
             MBEDTLS_ERR_X509_CERT_VERIFY_FAILED :
             MBEDTLS_ERR_SSL_BAD_CERTIFICATE;
     }
+    /* wolfSSL's error for any failed BIO call */
+    if (err == WC_NO_ERR_TRACE(SOCKET_ERROR_E) && ssl->io_err != 0) {
+        return ssl->io_err;
+    }
     for (i = 0; i < XELEM_CNT(map); i++) {
         if (map[i].wolf == err) {
             return map[i].mbed;
@@ -153,6 +163,13 @@ static void MbedConfErr(mbedtls_ssl_config* conf, int err)
     }
 }
 
+/* The BIO call's result for wolfSSL. Keeps an error for MbedSslErr(). */
+static int MbedIoRet(mbedtls_ssl_context* s, int ret, int dir)
+{
+    s->io_err = (ret < 0) ? ret : 0;
+    return (ret > 0) ? ret : MbedIoErr(ret, dir, 1);
+}
+
 static int MbedRecvCb(WOLFSSL* ssl, char* buf, int sz, void* ctx)
 {
     mbedtls_ssl_context* s = (mbedtls_ssl_context*)ctx;
@@ -165,10 +182,7 @@ static int MbedRecvCb(WOLFSSL* ssl, char* buf, int sz, void* ctx)
     else if (s->f_recv != NULL) {
         ret = s->f_recv(s->p_bio, (unsigned char*)buf, (size_t)sz);
     }
-    if (ret > 0) {
-        return ret;
-    }
-    return MbedIoErr(ret, MBED_IO_RECV, 1);
+    return MbedIoRet(s, ret, MBED_IO_RECV);
 }
 
 static int MbedSendCb(WOLFSSL* ssl, char* buf, int sz, void* ctx)
@@ -180,10 +194,7 @@ static int MbedSendCb(WOLFSSL* ssl, char* buf, int sz, void* ctx)
     if (s->f_send != NULL) {
         ret = s->f_send(s->p_bio, (const unsigned char*)buf, (size_t)sz);
     }
-    if (ret > 0) {
-        return ret;
-    }
-    return MbedIoErr(ret, MBED_IO_SEND, 1);
+    return MbedIoRet(s, ret, MBED_IO_SEND);
 }
 
 /* Unknown codes map to the last entry */
@@ -949,6 +960,18 @@ void mbedtls_ssl_conf_cert_profile(mbedtls_ssl_config* conf,
 static int mbedSuiteIds[MBED_SUITES_MAX + 1];
 static char mbedSuiteNames[MBED_SUITES_MAX][MBED_SUITE_NAME_SZ];
 static int mbedSuitesSet = 0;
+static const int mbedNoSuites[1] = { 0 };
+
+/* MBEDTLS_THREADING_C is on pthreads, which have a static initializer */
+#ifdef MBEDTLS_THREADING_C
+static wolfSSL_Mutex mbedSuitesMutex =
+    WOLFSSL_MUTEX_INITIALIZER(mbedSuitesMutex);
+#define MBED_SUITES_LOCK()   (void)wc_LockMutex(&mbedSuitesMutex)
+#define MBED_SUITES_UNLOCK() (void)wc_UnLockMutex(&mbedSuitesMutex)
+#else
+#define MBED_SUITES_LOCK()   WC_DO_NOTHING
+#define MBED_SUITES_UNLOCK() WC_DO_NOTHING
+#endif /* MBEDTLS_THREADING_C */
 
 /* TLS1-3-AES-128-GCM-SHA256 for TLS_AES_128_GCM_SHA256, else the IANA name
  * with dashes */
@@ -971,9 +994,9 @@ static void MbedSuiteName(byte cs0, byte cs, char* name, size_t sz)
     name[i] = '\0';
 }
 
-/* wolfSSL's default client suites, most preferred first. Filled on first use,
- * as Mbed TLS does. */
-const int* mbedtls_ssl_list_ciphersuites(void)
+/* Fills the list with wolfSSL's default client suites, most preferred first.
+ * Returns 1 when filled. */
+static int MbedSuitesFill(void)
 {
     WOLFSSL_CTX* ctx;
     WOLFSSL* ssl = NULL;
@@ -983,11 +1006,6 @@ const int* mbedtls_ssl_list_ciphersuites(void)
     byte cs0;
     byte cs;
 
-    WOLFSSL_ENTER("mbedtls_ssl_list_ciphersuites");
-
-    if (mbedSuitesSet) {
-        return mbedSuiteIds;
-    }
     ctx = wolfSSL_CTX_new(wolfTLS_client_method());
     if (ctx != NULL) {
         ssl = wolfSSL_new(ctx);
@@ -995,24 +1013,37 @@ const int* mbedtls_ssl_list_ciphersuites(void)
     if (ssl != NULL) {
         suites = WOLFSSL_SUITES(ssl);
     }
-    if (suites != NULL) {
-        for (i = 0; i + 1 < suites->suiteSz && n < MBED_SUITES_MAX; i += 2) {
-            cs0 = suites->suites[i];
-            cs = suites->suites[i + 1];
-            if (cs0 == CIPHER_BYTE && cs == TLS_EMPTY_RENEGOTIATION_INFO_SCSV) {
-                continue;
-            }
-            mbedSuiteIds[n] = (cs0 << 8) | cs;
-            MbedSuiteName(cs0, cs, mbedSuiteNames[n],
-                sizeof(mbedSuiteNames[n]));
-            n++;
+    for (i = 0; suites != NULL && i + 1 < suites->suiteSz &&
+            n < MBED_SUITES_MAX; i += 2) {
+        cs0 = suites->suites[i];
+        cs = suites->suites[i + 1];
+        if (cs0 == CIPHER_BYTE && cs == TLS_EMPTY_RENEGOTIATION_INFO_SCSV) {
+            continue;
         }
-        mbedSuitesSet = 1;
+        mbedSuiteIds[n] = (cs0 << 8) | cs;
+        MbedSuiteName(cs0, cs, mbedSuiteNames[n], sizeof(mbedSuiteNames[n]));
+        n++;
     }
     mbedSuiteIds[n] = 0;
     wolfSSL_free(ssl);
     wolfSSL_CTX_free(ctx);
-    return mbedSuiteIds;
+    return suites != NULL;
+}
+
+/* Filled on first use, as Mbed TLS does */
+const int* mbedtls_ssl_list_ciphersuites(void)
+{
+    const int* ids;
+
+    WOLFSSL_ENTER("mbedtls_ssl_list_ciphersuites");
+
+    MBED_SUITES_LOCK();
+    if (!mbedSuitesSet) {
+        mbedSuitesSet = MbedSuitesFill();
+    }
+    ids = mbedSuitesSet ? mbedSuiteIds : mbedNoSuites;
+    MBED_SUITES_UNLOCK();
+    return ids;
 }
 
 const char* mbedtls_ssl_get_ciphersuite_name(const int ciphersuite_id)
@@ -1181,6 +1212,7 @@ static int MbedSslNew(mbedtls_ssl_context* ssl)
     ssl->verify_flags = 0;
     ssl->verify_ret = 0;
     ssl->peer_cert = 0;
+    ssl->io_err = 0;
     wolfSSL_SSLSetIORecv(ssl->ssl, MbedRecvCb);
     wolfSSL_SSLSetIOSend(ssl->ssl, MbedSendCb);
     wolfSSL_SetIOReadCtx(ssl->ssl, ssl);
@@ -1338,6 +1370,9 @@ uint32_t mbedtls_ssl_get_verify_result(const mbedtls_ssl_context* ssl)
     if (!wolfSSL_is_init_finished(ssl->ssl)) {
         return 0xFFFFFFFF;
     }
+    if (ssl->session_set && wolfSSL_session_reused(ssl->ssl)) {
+        return ssl->session_verify;
+    }
     if (ssl->authmode == MBEDTLS_SSL_VERIFY_NONE) {
         return MBEDTLS_X509_BADCERT_SKIP_VERIFY;
     }
@@ -1418,7 +1453,7 @@ int mbedtls_ssl_read(mbedtls_ssl_context* ssl, unsigned char* buf, size_t len)
     if (ret != 0) {
         return ret;
     }
-    ret = wolfSSL_read(ssl->ssl, buf, (int)len);
+    ret = wolfSSL_read(ssl->ssl, buf, MbedIoLen(len, INT_MAX));
     if (ret > 0) {
         return ret;
     }
@@ -1438,7 +1473,8 @@ int mbedtls_ssl_write(mbedtls_ssl_context* ssl,
     if (ret != 0) {
         return ret;
     }
-    ret = wolfSSL_write(ssl->ssl, buf, (int)len);
+    /* As in Mbed TLS, at most one record */
+    ret = wolfSSL_write(ssl->ssl, buf, MbedIoLen(len, MAX_RECORD_SIZE));
     return (ret > 0) ? ret : MbedSslErr(ssl, ret);
 }
 
@@ -1489,6 +1525,7 @@ int mbedtls_ssl_get_session(const mbedtls_ssl_context* ssl,
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
     session->session = wolfSSL_get1_session(ssl->ssl);
+    session->verify_result = mbedtls_ssl_get_verify_result(ssl);
     return (session->session != NULL) ? 0 : MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
 }
 
@@ -1507,6 +1544,7 @@ int mbedtls_ssl_set_session(mbedtls_ssl_context* ssl,
         MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
     if (ret == 0) {
         ssl->session_set = 1;
+        ssl->session_verify = session->verify_result;
     }
     return ret;
 }

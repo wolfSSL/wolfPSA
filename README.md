@@ -170,9 +170,9 @@ Known differences from Mbed TLS:
   qualified name, an IP address or `localhost`.
 - `mbedtls_ssl_set_hostname(ssl, NULL)` after `mbedtls_ssl_setup` starts a
   new connection, so call it before the handshake.
-- With `VERIFY_OPTIONAL`, a resumed session reports
-  `MBEDTLS_X509_BADCERT_MISSING`, where Mbed TLS keeps the result of the
-  first handshake.
+- A server resumes sessions from wolfSSL's session cache, where Mbed TLS
+  needs `mbedtls_ssl_conf_session_cache`. A server that verifies client
+  certificates reports `MBEDTLS_X509_BADCERT_MISSING` for a resumed session.
 - The verify flags come from wolfSSL, which reports one failure from each
   certificate's signature and date checks, and one from the later checks of
   the peer's own, such as the host name. So the verify callback and

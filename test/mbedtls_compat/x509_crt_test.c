@@ -20,12 +20,16 @@
  */
 
 /* Certificate parsing through the Mbed TLS 4.x API, one node per
- * certificate. The cases of mbedtls_x509_crt_parse_file come from Mbed TLS's
+ * certificate. The cases of mbedtls_x509_crt_parse_file and
+ * mbedtls_x509_crt_parse_path come from Mbed TLS's
  * tests/suites/test_suite_x509parse.data. Run from framework/data_files in
  * an Mbed TLS checkout. */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <psa/crypto.h>
 #include <mbedtls/x509_crt.h>
@@ -34,11 +38,15 @@
 #define ERR -1
 #define IN "parse_input/"
 
-static const struct {
+typedef int (*Parse)(mbedtls_x509_crt* chain, const char* path);
+
+typedef struct {
     const char* file;
     int ret;    /* number that failed, or ERR */
     int certs;
-} cases[] = {
+} Case;
+
+static const Case cases[] = {
     { IN "server5.basic-constraints-integer-first.badsign.crt", 0, 1 },
     { IN "server5.basic-constraints-integer-first.selfsigned.crt", 0, 1 },
     { IN "server1_pathlen_int_max.crt", ERR, 0 },
@@ -63,6 +71,16 @@ static const struct {
     { "test-ca2.crt", 0, 1 }
 };
 
+/* Each test-ca.crt fails, as in the cases above. Mbed TLS: 0, 1 and 0, 2 and
+ * 1, 2. */
+static const Case dirs[] = {
+    { "dir1", 1, 0 },
+    { "dir2", 1, 1 },
+    { "dir3", 2, 1 },
+    /* Not in Mbed TLS's cases */
+    { "missing-dir", ERR, 0 }
+};
+
 /* -1 for an empty node, apart from the first when no certificate parsed */
 static int CountCerts(const mbedtls_x509_crt* chain)
 {
@@ -77,6 +95,91 @@ static int CountCerts(const mbedtls_x509_crt* chain)
         }
     }
     return (certs == nodes || (certs == 0 && nodes == 1)) ? certs : -1;
+}
+
+/* Returns 1 when parse of path does not give the result of c */
+static int Check(Parse parse, const char* path, const Case* c)
+{
+    mbedtls_x509_crt crt;
+    int certs;
+    int ret;
+
+    mbedtls_x509_crt_init(&crt);
+    ret = parse(&crt, path);
+    certs = CountCerts(&crt);
+    mbedtls_x509_crt_free(&crt);
+    if ((c->ret == ERR ? ret < 0 : ret == c->ret) && certs == c->certs) {
+        printf("PASS: %s\n", c->file);
+        return 0;
+    }
+    printf("FAIL: %s: returned %d with %d certificates, expected %d with %d\n",
+        c->file, ret, certs, c->ret, c->certs);
+    return 1;
+}
+
+/* Each case, also parsed into all, which only grows. Returns the number that
+ * failed. */
+static int CheckAll(Parse parse, const Case* c, size_t n,
+    mbedtls_x509_crt* all, int* total)
+{
+    size_t i;
+    int fails = 0;
+
+    for (i = 0; i < n; i++) {
+        fails += Check(parse, c[i].file, &c[i]);
+        (void)parse(all, c[i].file);
+        *total += c[i].certs;
+    }
+    return fails;
+}
+
+/* Writes the DER of the certificate in file to path */
+static int WriteDer(const char* file, const char* path)
+{
+    mbedtls_x509_crt crt;
+    FILE* f;
+    int ok;
+
+    mbedtls_x509_crt_init(&crt);
+    f = fopen(path, "wb");
+    ok = f != NULL && mbedtls_x509_crt_parse_file(&crt, file) == 0 &&
+        fwrite(crt.raw.p, 1, crt.raw.len, f) == crt.raw.len;
+    if (f != NULL && fclose(f) != 0) {
+        ok = 0;
+    }
+    mbedtls_x509_crt_free(&crt);
+    return ok;
+}
+
+/* A directory made here, empty, then with only a subdirectory that has a
+ * certificate. As in Mbed TLS, a subdirectory is not read. */
+static int TempDirs(void)
+{
+    static const Case empty = { "empty directory", 0, 0 };
+    static const Case subdir = { "subdirectory", 0, 0 };
+    char dir[] = "/tmp/x509_crt_test.XXXXXX";
+    char sub[sizeof(dir) + 4];
+    char der[sizeof(sub) + 7];
+    int fails;
+
+    if (mkdtemp(dir) == NULL) {
+        printf("FAIL: mkdtemp\n");
+        return 1;
+    }
+    (void)snprintf(sub, sizeof(sub), "%s/sub", dir);
+    (void)snprintf(der, sizeof(der), "%s/ca.der", sub);
+    fails = Check(mbedtls_x509_crt_parse_path, dir, &empty);
+    if (mkdir(sub, 0700) == 0 && WriteDer("test-ca2.crt", der)) {
+        fails += Check(mbedtls_x509_crt_parse_path, dir, &subdir);
+    }
+    else {
+        printf("FAIL: making %s\n", der);
+        fails++;
+    }
+    (void)remove(der);
+    (void)rmdir(sub);
+    (void)rmdir(dir);
+    return fails;
 }
 
 /* Mbed TLS ignores data after a DER certificate, such as a NUL */
@@ -103,38 +206,21 @@ static int TrailingByte(void)
 
 int main(void)
 {
-    mbedtls_x509_crt crt;
     mbedtls_x509_crt all;
-    size_t i;
     int total = 0;
     int fails = 0;
     int certs;
-    int ret;
 
     if (psa_crypto_init() != PSA_SUCCESS) {
         printf("FAIL: psa_crypto_init\n");
         return 1;
     }
-    /* Every file also goes into one chain, which only grows */
     mbedtls_x509_crt_init(&all);
-    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
-        mbedtls_x509_crt_init(&crt);
-        ret = mbedtls_x509_crt_parse_file(&crt, cases[i].file);
-        certs = CountCerts(&crt);
-        if ((cases[i].ret == ERR ? ret < 0 : ret == cases[i].ret) &&
-                certs == cases[i].certs) {
-            printf("PASS: %s\n", cases[i].file);
-        }
-        else {
-            printf("FAIL: %s: returned %d with %d certificates, expected %d "
-                "with %d\n", cases[i].file, ret, certs, cases[i].ret,
-                cases[i].certs);
-            fails++;
-        }
-        mbedtls_x509_crt_free(&crt);
-        (void)mbedtls_x509_crt_parse_file(&all, cases[i].file);
-        total += cases[i].certs;
-    }
+    fails += CheckAll(mbedtls_x509_crt_parse_file, cases,
+        sizeof(cases) / sizeof(cases[0]), &all, &total);
+    fails += CheckAll(mbedtls_x509_crt_parse_path, dirs,
+        sizeof(dirs) / sizeof(dirs[0]), &all, &total);
+    fails += TempDirs();
     certs = CountCerts(&all);
     if (certs == total) {
         printf("PASS: one chain\n");
