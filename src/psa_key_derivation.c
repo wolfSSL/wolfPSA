@@ -519,7 +519,7 @@ psa_status_t psa_key_derivation_setup(psa_key_derivation_operation_t *operation,
     if (operation->opaque != (uintptr_t)NULL) {
         return PSA_ERROR_BAD_STATE;
     }
-    if (!wolfPSA_CryptoCanAlloc()) {
+    if (!wolfPSA_CryptoReady()) {
         return PSA_ERROR_BAD_STATE;
     }
 

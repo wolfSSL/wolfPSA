@@ -188,14 +188,14 @@ int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
             keylen > (size_t)INT_MAX) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-    if (!wolfPSA_CryptoCanAlloc()) {
-        return PSA_ERROR_BAD_STATE;
-    }
     if (keylen == 0) {
         return MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
     }
     if (PkIsEncrypted(key, keylen)) {
         return MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
+    }
+    if (!wolfPSA_CryptoReady()) {
+        return PSA_ERROR_BAD_STATE;
     }
 
     /* Big enough for the DER of a PEM key */

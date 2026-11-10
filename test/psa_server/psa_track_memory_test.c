@@ -24,6 +24,7 @@
  */
 
 #include <wolfssl/wolfcrypt/settings.h>
+#include <wolfssl/wolfcrypt/mem_track.h>
 #include <psa/crypto.h>
 #include <mbedtls/pk.h>
 #include <stdio.h>
@@ -47,11 +48,27 @@ static const uint8_t shake256_abc[] = {
     0x8d, 0xb4, 0x45, 0x30, 0xf8, 0xf1, 0xe1, 0xee,
     0x4f, 0x94, 0xea, 0x37, 0xe7, 0x8b, 0x57, 0x39
 };
+/* HKDF-SHA256 with "abc" as salt, secret and info */
+static const uint8_t hkdf_abc[] = {
+    0xfb, 0x71, 0xed, 0x96, 0x0a, 0x6e, 0xb9, 0x6e,
+    0xfb, 0xef, 0xdc, 0x6f, 0xf8, 0x67, 0x54, 0x15,
+    0x22, 0x69, 0x96, 0x52, 0x63, 0x87, 0x15, 0x85,
+    0xde, 0x5c, 0x60, 0x13, 0xf3, 0xab, 0xa5, 0xc8
+};
 
 static void check(const char *what, psa_status_t got, psa_status_t want)
 {
     if (got != want) {
         printf("FAIL: %s: got %d want %d\n", what, (int)got, (int)want);
+        failures++;
+    }
+}
+
+static void check_bytes(const char *what, const uint8_t *got, size_t got_len,
+                        const uint8_t *want, size_t want_len)
+{
+    if (got_len != want_len || memcmp(got, want, want_len) != 0) {
+        printf("FAIL: %s: output mismatch\n", what);
         failures++;
     }
 }
@@ -115,9 +132,9 @@ static void test_after_init(void)
         st = psa_xof_output(&xof, out, sizeof(out));
     }
     check("psa_xof_setup, update, output after init", st, PSA_SUCCESS);
-    if (st == PSA_SUCCESS && memcmp(out, shake256_abc, sizeof(out)) != 0) {
-        printf("FAIL: psa_xof_output after init: output mismatch\n");
-        failures++;
+    if (st == PSA_SUCCESS) {
+        check_bytes("psa_xof_output after init", out, sizeof(out),
+                    shake256_abc, sizeof(shake256_abc));
     }
     (void)psa_xof_abort(&xof);
 
@@ -139,6 +156,10 @@ static void test_after_init(void)
     }
     check("psa_key_derivation_setup, input, output after init", st,
           PSA_SUCCESS);
+    if (st == PSA_SUCCESS) {
+        check_bytes("psa_key_derivation_output_bytes after init", out,
+                    sizeof(out), hkdf_abc, sizeof(hkdf_abc));
+    }
     (void)psa_key_derivation_abort(&kdf);
 
     mbedtls_pk_init(&pk);
@@ -149,12 +170,32 @@ static void test_after_init(void)
     mbedtls_pk_free(&pk);
 }
 
+/* Leaks, and frees of memory the tracker did not allocate, unbalance it */
+static void check_tracker(const memoryStats *stats)
+{
+    if (stats == NULL) {
+        printf("FAIL: memory tracker not installed\n");
+        failures++;
+    }
+    else if (stats->currentBytes != 0 ||
+             stats->totalAllocs != stats->totalDeallocs) {
+        printf("FAIL: memory tracker: %ld bytes, %ld allocs, %ld frees\n",
+               stats->currentBytes, stats->totalAllocs, stats->totalDeallocs);
+        failures++;
+    }
+}
+
 int main(void)
 {
+    const memoryStats *stats;
+
     test_before_init();
 
     check("psa_crypto_init", psa_crypto_init(), PSA_SUCCESS);
+    stats = wc_MemStats_Ptr;
     test_after_init();
+    mbedtls_psa_crypto_free();
+    check_tracker(stats);
 
     if (failures != 0) {
         printf("PSA track memory test: %d failure(s)\n", failures);

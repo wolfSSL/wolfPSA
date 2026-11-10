@@ -357,7 +357,7 @@ psa_status_t psa_hash_setup(psa_hash_operation_t *operation,
 
     wolfpsa_trace("psa_hash_setup(alg=0x%08x)", (unsigned)alg);
 
-    if (!wolfPSA_CryptoCanAlloc()) {
+    if (!wolfPSA_CryptoReady()) {
         return PSA_ERROR_BAD_STATE;
     }
 

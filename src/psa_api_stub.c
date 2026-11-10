@@ -23,9 +23,8 @@
 #include <wolfssl/wolfcrypt/wc_port.h>
 
 #include <psa/crypto.h>
+#include <wolfpsa/psa_engine.h>
 #include "psa_output.h"
-
-extern int wolfPSA_CryptoIsInitialized(void);
 
 static psa_status_t wolfPSA_StubNotSupported(void)
 {

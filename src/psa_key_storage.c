@@ -92,8 +92,6 @@ int wolfpsa_lock_ensure_init(void)
 }
 #endif /* WOLFPSA_THREAD_SAFE */
 
-/* Internal init state from psa_crypto_init() */
-extern int wolfPSA_CryptoIsInitialized(void);
 extern int wc_psa_get_ecc_curve_id(psa_key_type_t type, size_t bits);
 psa_status_t psa_asymmetric_generate_key_rsa(psa_key_type_t key_type,
                                              size_t key_bits,
