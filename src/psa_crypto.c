@@ -57,6 +57,15 @@ int wolfPSA_CryptoIsInitialized(void)
     return initialized;
 }
 
+int wolfPSA_CryptoCanAlloc(void)
+{
+#ifdef WOLFPSA_ALLOC_NEEDS_INIT
+    return wolfPSA_CryptoIsInitialized();
+#else
+    return 1;
+#endif /* WOLFPSA_ALLOC_NEEDS_INIT */
+}
+
 psa_status_t psa_crypto_init(void)
 {
     int ret = 0;

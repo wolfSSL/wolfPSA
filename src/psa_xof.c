@@ -46,8 +46,6 @@
 #include <wolfssl/wolfcrypt/sha3.h>
 #endif
 
-extern int wolfPSA_CryptoIsInitialized(void);
-
 /*
  * Absorb strategy: wc_Shake128_Absorb / wc_Shake256_Absorb call Sha3Final()
  * internally on every invocation, which applies SHAKE padding and finalises the
@@ -195,7 +193,7 @@ psa_status_t psa_xof_setup(psa_xof_operation_t *operation,
 
     wolfpsa_trace("psa_xof_setup(alg=0x%08x)", (unsigned)alg);
 
-    if (!wolfPSA_CryptoIsInitialized())
+    if (!wolfPSA_CryptoCanAlloc())
         return PSA_ERROR_BAD_STATE;
 
     /* reject non-XOF algorithms */

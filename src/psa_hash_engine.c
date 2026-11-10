@@ -76,8 +76,6 @@
 #include <wolfssl/wolfcrypt/ascon.h>
 #endif
 
-extern int wolfPSA_CryptoIsInitialized(void);
-
 typedef struct psa_hash_operation_ctx {
     psa_algorithm_t alg;           /* Hash algorithm */
     int initialized;               /* Whether operation is initialized */
@@ -359,7 +357,7 @@ psa_status_t psa_hash_setup(psa_hash_operation_t *operation,
 
     wolfpsa_trace("psa_hash_setup(alg=0x%08x)", (unsigned)alg);
 
-    if (!wolfPSA_CryptoIsInitialized()) {
+    if (!wolfPSA_CryptoCanAlloc()) {
         return PSA_ERROR_BAD_STATE;
     }
 
@@ -937,10 +935,7 @@ psa_status_t psa_hash_compute(psa_algorithm_t alg,
     psa_status_t status;
 
     wolfpsa_clear_length(hash_length);
-    if (!wolfPSA_CryptoIsInitialized()) {
-        return PSA_ERROR_BAD_STATE;
-    }
-    
+
     /* Set up the operation */
     status = psa_hash_setup(&operation, alg);
     if (status != PSA_SUCCESS) {
@@ -976,10 +971,6 @@ psa_status_t psa_hash_compare(psa_algorithm_t alg,
     size_t computed_hash_length;
     size_t expected_hash_size;
 
-    if (!wolfPSA_CryptoIsInitialized()) {
-        return PSA_ERROR_BAD_STATE;
-    }
-    
     /* Check if the algorithm is a supported hash */
     if (!PSA_ALG_IS_HASH(alg)) {
         return PSA_ERROR_INVALID_ARGUMENT;

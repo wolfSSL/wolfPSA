@@ -66,6 +66,9 @@ WOLFSSL_LOCAL psa_status_t wc_error_to_psa_status(int ret);
 /* Undoes psa_crypto_init(), for mbedtls_psa_crypto_free() */
 WOLFSSL_LOCAL void wolfPSA_CryptoCleanup(void);
 
+/* 0 while memory that outlives a call must wait for psa_crypto_init() */
+WOLFSSL_LOCAL int wolfPSA_CryptoCanAlloc(void);
+
 /* Default wolfCrypt devId threaded through wolfPSA's internal wc_*Init()
  * calls. Set it to a registered devId to route every wolfPSA-issued
  * wolfCrypt call through that callback, the integration hook for offload

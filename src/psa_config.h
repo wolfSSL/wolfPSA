@@ -79,4 +79,12 @@
 #error "wolfPSA needs WC_ALLOW_ECC_ZERO_HASH (psa_sign_hash/psa_verify_hash must accept an all-zero digest)"
 #endif
 
+/* wolfCrypt_Init() installs the memory tracker's allocator, which cannot free
+ * memory allocated before it. See wolfPSA_CryptoCanAlloc(). */
+#if defined(WOLFSSL_PSA_ENGINE) && defined(WOLFSSL_TRACK_MEMORY) && \
+    defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY)
+    #define WOLFPSA_ALLOC_NEEDS_INIT
+#endif /* WOLFSSL_PSA_ENGINE && WOLFSSL_TRACK_MEMORY && USE_WOLFSSL_MEMORY &&
+        * !WOLFSSL_STATIC_MEMORY */
+
 #endif /* WOLFPSA_CONFIG_H */
