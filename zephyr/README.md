@@ -13,8 +13,8 @@ section of `../CLAUDE.md` for the architecture.
   `CONFIG_WOLFPSA` can never be enabled and the module is inert -- there is no
   extension point to plug into. Persistent keys additionally use the
   `secure_storage` subsystem (Zephyr 4.0+), which the 4.3 floor already covers.
-- **Tested on Zephyr 4.3 and 4.4** (CI builds and runs the samples/tests on
-  native_sim for both).
+- **Tested on Zephyr 4.3, 4.4 and 4.5** (CI builds and runs the samples/tests
+  on native_sim for each). Zephyr 4.5 needs wolfSSL newer than 5.9.4.
 
 (This floor is specific to wolfPSA-as-a-PSA-provider. The sibling wolfSSL module
 that supplies the wolfCrypt core is a plain library and supports a much wider
@@ -245,7 +245,8 @@ west twister -p native_sim/native/64 \
 Tests are (a) thin **wrappers that run Zephyr's OWN provider-agnostic apps
 against wolfPSA** (the drop-in proof, reusing their source from `$ZEPHYR_BASE`)
 and (b) checks of wolfPSA-internal behavior Zephyr cannot cover:
-- `tests/psa_consumer` -- Zephyr's `tests/crypto/mbedtls_psa` source, unchanged.
+- `tests/psa_consumer` -- Zephyr's `tests/crypto/psa` source (`mbedtls_psa`
+  before 4.5), unchanged.
 - `tests/psa_its` -- Zephyr's `samples/psa/its`.
 - `tests/psa_persistent_key` -- Zephyr's `samples/psa/persistent_key`.
 - `tests/psa_secure_storage` -- Zephyr's `tests/subsys/secure_storage/psa/crypto`

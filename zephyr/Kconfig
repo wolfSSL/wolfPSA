@@ -6,21 +6,12 @@
 config ZEPHYR_WOLFPSA_MODULE
 	bool
 
-# wolfPSA is the out-of-tree ("custom") PSA Crypto provider. It plugs into the
-# PSA_CRYPTO_PROVIDER choice defined by the in-tree mbedtls module
-# (zephyr/modules/mbedtls/Kconfig.psa.logic), which was ADDED IN ZEPHYR 4.3 --
-# so wolfPSA requires Zephyr >= 4.3 (below that PSA_CRYPTO_PROVIDER_CUSTOM does
-# not exist and CONFIG_WOLFPSA can never be selected). Selecting the CUSTOM
-# option keeps
-# Mbed TLS / TF-M from being pulled in and leaves the PSA surface to us:
-#   - we supply <psa/crypto.h> (from wolfpsa/psa/, put on the global include
-#     path by our CMakeLists),
-#   - we select PSA_CRYPTO_CLIENT to unlock the whole CONFIG_PSA_WANT_* tree
-#     (that symbol gates it in zephyr/modules/mbedtls/Kconfig.psa.auto), and
-#   - we register our own SYS_INIT that calls psa_crypto_init().
-#
-# The wolfCrypt core is reused from the sibling wolfSSL module rather than
-# rebuilt, so we select WOLFSSL (WOLFSSL_BUILTIN is its choice default).
+# wolfPSA plugs into the PSA_CRYPTO_PROVIDER choice in Zephyr's mbedtls module
+# (Kconfig.psa.logic), so it needs Zephyr 4.3 or later. The CUSTOM provider
+# keeps Mbed TLS and TF-M out: wolfPSA supplies <psa/crypto.h>, calls
+# psa_crypto_init() from its own SYS_INIT and reuses the wolfSSL module's
+# wolfCrypt. PSA_CRYPTO_CLIENT gates the PSA_WANT_* tree before Zephyr 4.5;
+# from 4.5 on PSA_CRYPTO does, and the provider choice already depends on it.
 config WOLFPSA
 	bool "wolfPSA PSA Crypto provider"
 	depends on PSA_CRYPTO_PROVIDER_CUSTOM
