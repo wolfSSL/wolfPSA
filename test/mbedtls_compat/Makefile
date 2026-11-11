@@ -66,6 +66,26 @@ MBEDTLS_FLAGS := -I$(BUILD_DIR)/include -I$(MBEDTLS_PATH)/include \
 	$(addprefix -I$(MBEDTLS_PATH)/tf-psa-crypto/,include core \
 		drivers/builtin/include)
 
+# Mbed TLS's ssl suite: the cases in cases.txt, on the clone and its patch
+SUITE := $(CURDIR)/ssl_suite
+SUITE_BUILD := $(BUILD_DIR)/ssl_suite
+SUITE_PATCHED := $(MBEDTLS_CLONE)-patched
+SUITE_NAME := $(SUITE_BUILD)/test_suite_ssl_public
+SUITE_OUTCOME := $(SUITE_BUILD)/outcome.csv
+SUITE_LOG := $(SUITE_BUILD)/test_suite_ssl_public.log
+SUITE_HELPERS := $(addprefix $(SUITE_BUILD)/,helpers.o random.o \
+	threading_helpers.o test_memory.o)
+SUITE_OBJS := $(SUITE_NAME).o $(SUITE_BUILD)/ssl_helpers.o \
+	$(SUITE_BUILD)/ssl_helpers_port.o $(SUITE_BUILD)/psa_crypto_helpers.o \
+	$(SUITE_HELPERS)
+SUITE_TEMPLATES := $(MBEDTLS_CLONE)/tf-psa-crypto/tests/suites
+# wolfPSA's headers first; Mbed TLS's public headers are not on the path
+SUITE_FLAGS := $(LAYER_FLAGS) -I$(SUITE) -I$(SUITE)/shim \
+	$(addprefix -I$(MBEDTLS_CLONE)/,framework/tests/include tests/include \
+		tf-psa-crypto/tests/include framework/tests/src) \
+	-idirafter $(MBEDTLS_CLONE)/tf-psa-crypto/core
+SUITE_PUBLIC_HEADERS := $(MBEDTLS_CLONE)/(tf-psa-crypto/)?include/
+
 # $(call link,flags,libraries) links the C source and objects among the
 # prerequisites
 link = $(CC) $(1) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $(WARNFLAGS) \
@@ -78,9 +98,9 @@ export BUILD_DIR WOLFSSL_PATH WOLFSSL_SERVER WOLFSSL_CLIENT MBEDTLS_PATH \
 ASAN_LINK_ORDER := verify_asan_link_order=0
 export ASAN_OPTIONS := $(if $(ASAN_OPTIONS),$(ASAN_OPTIONS):)$(ASAN_LINK_ORDER)
 
-.PHONY: test unit programs data-check wolfssl-check FORCE
+.PHONY: test unit programs suite suite-patch data-check wolfssl-check FORCE
 
-test: unit programs
+test: unit programs suite
 
 unit: $(UNIT) | data-check
 	@fails=0; for t in $(UNIT); do \
@@ -91,6 +111,25 @@ unit: $(UNIT) | data-check
 programs: $(CLIENT) $(PROGRAMS) $(WOLFSSL_SERVER) $(WOLFSSL_CLIENT) | \
 		data-check
 	./programs.sh
+
+# check.py compares each case with cases.txt, not the suite's exit code
+suite: $(SUITE_NAME)
+	@rm -f $(SUITE_OUTCOME)
+	cd $(MBEDTLS_CLONE)/tests && \
+		MBEDTLS_TEST_OUTCOME_FILE=$(SUITE_OUTCOME) $(WRAP) $< \
+		$<.datax > $(SUITE_LOG) 2>&1 || true
+	@echo "Mbed TLS ssl suite, $(MBEDTLS_REF)"
+	@python3 $(SUITE)/check.py $(SUITE)/cases.txt $(SUITE_OUTCOME) || \
+		{ echo "Log: $(SUITE_LOG)"; exit 1; }
+
+# Saves the clone's changes to mbedtls.patch, below its license lines
+suite-patch:
+	@mkdir -p $(SUITE_BUILD)
+	{ sed '/^diff --git/,$$d' $(SUITE)/mbedtls.patch; \
+		git -C $(MBEDTLS_CLONE) -c diff.suppressBlankEmpty=true \
+		diff --no-ext-diff; } > $(SUITE_BUILD)/mbedtls.patch
+	mv $(SUITE_BUILD)/mbedtls.patch $(SUITE)/mbedtls.patch
+	touch $(SUITE_PATCHED)
 
 data-check:
 	@if [ ! -f $(DATA)/server5.crt ]; then \
@@ -134,10 +173,50 @@ $(MBEDTLS_STAMP):
 ifeq ($(MBEDTLS_PATH),$(MBEDTLS_CLONE))
 $(PROGRAMS) $(CERTS) $(CERTS_H): $(MBEDTLS_STAMP)
 data-check: | $(MBEDTLS_STAMP)
+endif
 # Files from the clone exist once it is made
 .PRECIOUS: $(MBEDTLS_CLONE)/%
 $(MBEDTLS_CLONE)/%: | $(MBEDTLS_STAMP) ;
-endif
+
+# A newer patch resets the clone, dropping edits made there
+$(SUITE_PATCHED): $(SUITE)/mbedtls.patch $(MBEDTLS_STAMP)
+	git -C $(MBEDTLS_CLONE) reset -q --hard
+	git -C $(MBEDTLS_CLONE) apply $<
+	touch $@
+
+# One recipe writes the .c and the .datax
+$(SUITE_NAME).datax: $(SUITE_NAME).c ;
+$(SUITE_NAME).c: $(SUITE)/select.py $(SUITE)/cases.txt $(SUITE_PATCHED)
+	@mkdir -p $(@D)
+	python3 $< $(SUITE)/cases.txt $(MBEDTLS_CLONE)/tests/suites $(@D)
+	python3 $(MBEDTLS_CLONE)/framework/scripts/generate_test_code.py \
+		-f $(SUITE_NAME).function -d $(SUITE_NAME).data \
+		-t $(SUITE_TEMPLATES)/main_test.function \
+		-p $(SUITE_TEMPLATES)/host_test.function -s $(SUITE_TEMPLATES) \
+		--helpers-file $(SUITE_TEMPLATES)/helpers.function -o $(@D)
+
+$(SUITE_HELPERS): $(SUITE_BUILD)/%.o: $(MBEDTLS_CLONE)/framework/tests/src/%.c
+$(SUITE_BUILD)/ssl_helpers.o: \
+	$(MBEDTLS_CLONE)/tests/src/test_helpers/ssl_helpers.c
+$(SUITE_BUILD)/ssl_helpers_port.o: $(SUITE)/ssl_helpers_port.c
+$(SUITE_BUILD)/psa_crypto_helpers.o: $(SUITE)/shim/psa_crypto_helpers.c
+$(SUITE_NAME).o: $(SUITE_NAME).c
+# The header's static functions include some for cases left out
+$(SUITE_NAME).o: WARNFLAGS += -Wno-unused-function
+$(SUITE_OBJS): $(SUITE_PATCHED)
+	@mkdir -p $(@D)
+	$(CC) $(SUITE_FLAGS) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) \
+		$(WARNFLAGS) -MD -MP -c -o $@ $(filter %.c,$^)
+	@if grep -q -E '$(SUITE_PUBLIC_HEADERS)' $(@:.o=.d); then \
+		grep -o -E '$(SUITE_PUBLIC_HEADERS)[^ :]*' $(@:.o=.d) | \
+			sort -u; \
+		echo "$@: uses Mbed TLS's public headers"; rm $@; exit 1; \
+	fi
+
+$(SUITE_NAME): $(SUITE_OBJS) $(CERTS) $(WOLFPSA_LIB) $(SUITE_NAME).datax
+	$(call link,,$(LAYER_LIBS))
+
+-include $(SUITE_OBJS:.o=.d)
 
 # configure refuses a clone that is configured in place. autogen.sh only adds
 # files git ignores.

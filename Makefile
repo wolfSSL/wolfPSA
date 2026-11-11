@@ -306,24 +306,26 @@ unit-run: all
 	@$(MAKE) run-tests
 
 # Without MBEDTLS_PATH, test/mbedtls_compat clones Mbed TLS
+MBEDTLS_COMPAT_MAKE = $(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
+	WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
+	$(if $(MBEDTLS_PATH),MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH))) \
+	BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
+	PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
+	WOLFSSL_FLAGS="-I$(abspath $(WOLFSSL_PATH)) \
+		-I$(abspath $(USER_SETTINGS_PATH)) $(WOLFSSL_CPPFLAGS)" \
+	SANITIZE_FLAGS="$(SANITIZE_FLAGS)" WOLFPSA_LDFLAGS="$(LDFLAGS)"
 
-# mbedtls-compat-test runs mbedtls-compat-unit, our own tests of the API, and
-# mbedtls-compat-programs, Mbed TLS's sample programs with wolfSSL peers. Each
-# runs the target of the same name in test/mbedtls_compat.
-MBEDTLS_COMPAT_TESTS := $(addprefix mbedtls-compat-,test unit programs)
-.PHONY: $(MBEDTLS_COMPAT_TESTS)
+# mbedtls-compat-<name> runs <name> in test/mbedtls_compat
+MBEDTLS_COMPAT_TESTS := $(addprefix mbedtls-compat-,test unit programs suite)
+.PHONY: $(MBEDTLS_COMPAT_TESTS) mbedtls-compat-suite-patch
 ifeq ($(MBEDTLS_COMPAT),1)
 $(MBEDTLS_COMPAT_TESTS): mbedtls-compat-%: $(LIBNAME)
-	$(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
-		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
-		$(if $(MBEDTLS_PATH),MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH))) \
-		BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
-		PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
-		WOLFSSL_FLAGS="-I$(abspath $(WOLFSSL_PATH)) \
-			-I$(abspath $(USER_SETTINGS_PATH)) $(WOLFSSL_CPPFLAGS)" \
-		SANITIZE_FLAGS="$(SANITIZE_FLAGS)" WOLFPSA_LDFLAGS="$(LDFLAGS)" $*
+	$(MBEDTLS_COMPAT_MAKE) $*
+
+mbedtls-compat-suite-patch:
+	$(MBEDTLS_COMPAT_MAKE) suite-patch
 else
-$(MBEDTLS_COMPAT_TESTS):
+$(MBEDTLS_COMPAT_TESTS) mbedtls-compat-suite-patch:
 	@echo "Run make MBEDTLS_COMPAT=1 $@"; exit 1
 endif
 
