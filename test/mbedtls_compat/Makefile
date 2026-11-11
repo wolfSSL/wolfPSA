@@ -79,8 +79,9 @@ SUITE_OBJS := $(SUITE_NAME).o $(SUITE_BUILD)/ssl_helpers.o \
 	$(SUITE_BUILD)/ssl_helpers_port.o $(SUITE_BUILD)/psa_crypto_helpers.o \
 	$(SUITE_HELPERS)
 SUITE_TEMPLATES := $(MBEDTLS_CLONE)/tf-psa-crypto/tests/suites
-# wolfPSA's headers first; Mbed TLS's public headers are not on the path
-SUITE_FLAGS := $(LAYER_FLAGS) -I$(SUITE) -I$(SUITE)/shim \
+# wolfPSA's headers first; Mbed TLS's public headers are not on the path.
+# TEST_WOLFPSA leaves out the helpers' calls that wolfPSA does not have yet.
+SUITE_FLAGS := $(LAYER_FLAGS) -DTEST_WOLFPSA -I$(SUITE) -I$(SUITE)/shim \
 	$(addprefix -I$(MBEDTLS_CLONE)/,framework/tests/include tests/include \
 		tf-psa-crypto/tests/include framework/tests/src) \
 	-idirafter $(MBEDTLS_CLONE)/tf-psa-crypto/core
