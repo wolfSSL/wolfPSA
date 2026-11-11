@@ -305,8 +305,7 @@ unit-run: all
 	@$(MAKE) -C test $(UNIT_TESTS)
 	@$(MAKE) run-tests
 
-# Mbed TLS repo, for its test data and sample programs
-MBEDTLS_PATH ?= ../mbedtls
+# Without MBEDTLS_PATH, test/mbedtls_compat clones Mbed TLS
 
 # mbedtls-compat-test runs mbedtls-compat-unit, our own tests of the API, and
 # mbedtls-compat-programs, Mbed TLS's sample programs with wolfSSL peers. Each
@@ -317,7 +316,7 @@ ifeq ($(MBEDTLS_COMPAT),1)
 $(MBEDTLS_COMPAT_TESTS): mbedtls-compat-%: $(LIBNAME)
 	$(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
 		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
-		MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH)) \
+		$(if $(MBEDTLS_PATH),MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH))) \
 		BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
 		PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
 		WOLFSSL_FLAGS="-I$(abspath $(WOLFSSL_PATH)) \

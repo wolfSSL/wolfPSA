@@ -23,6 +23,14 @@ LAYER_FLAGS += -DMBEDTLS_THREADING_C
 LAYER_LIBS += -pthread
 endif
 
+# Mbed TLS 4.x: MBEDTLS_PATH, or by default a shallow clone of MBEDTLS_REF
+MBEDTLS_URL := https://github.com/Mbed-TLS/mbedtls.git
+MBEDTLS_REF := ba07f72f934a002021731a2bb5e564e5905f6569
+MBEDTLS_CLONE := $(BUILD_DIR)/mbedtls
+MBEDTLS_PATH ?= $(MBEDTLS_CLONE)
+# Named with the ref, so a new MBEDTLS_REF clones again
+MBEDTLS_STAMP := $(MBEDTLS_CLONE)-$(MBEDTLS_REF)
+
 # Mbed TLS's test data
 DATA := $(MBEDTLS_PATH)/framework/data_files
 # Certificate, key and PEM parsing, and TLS return codes and verify results
@@ -114,6 +122,22 @@ $(CERTS_H):
 $(CERTS): $(MBEDTLS_PATH)/tests/src/certs.c $(CERTS_H)
 	$(CC) $(MBEDTLS_FLAGS) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) \
 		$(WARNFLAGS) -c -o $@ $<
+
+$(MBEDTLS_STAMP):
+	rm -rf $(MBEDTLS_CLONE) $(MBEDTLS_CLONE)-*
+	git init -q $(MBEDTLS_CLONE)
+	git -C $(MBEDTLS_CLONE) fetch -q --depth 1 $(MBEDTLS_URL) $(MBEDTLS_REF)
+	git -C $(MBEDTLS_CLONE) checkout -q FETCH_HEAD
+	git -C $(MBEDTLS_CLONE) submodule update -q --init --depth 1
+	touch $@
+
+ifeq ($(MBEDTLS_PATH),$(MBEDTLS_CLONE))
+$(PROGRAMS) $(CERTS) $(CERTS_H): $(MBEDTLS_STAMP)
+data-check: | $(MBEDTLS_STAMP)
+# Files from the clone exist once it is made
+.PRECIOUS: $(MBEDTLS_CLONE)/%
+$(MBEDTLS_CLONE)/%: | $(MBEDTLS_STAMP) ;
+endif
 
 # configure refuses a clone that is configured in place. autogen.sh only adds
 # files git ignores.
