@@ -70,14 +70,13 @@
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 
-/* wolfPSA is the PSA Crypto provider, so its persistent-key records must live in
- * the crypto-provider ITS caller namespace -- isolated from application
- * psa_its_*()/psa_ps_*() data at the same numeric id. secure_storage picks the
- * namespace from ITS_CALLER_ID in <psa/internal_trusted_storage.h>, which is
- * SECURE_STORAGE_ITS_CALLER_MBEDTLS when BUILDING_MBEDTLS_CRYPTO is defined
- * (that is where the Mbed TLS provider stores keys) and the application-facing
- * SECURE_STORAGE_ITS_CALLER_PSA_ITS otherwise. Select the provider namespace so
- * wolfPSA occupies the same isolated slot Mbed TLS would. */
+/* wolfPSA is the PSA Crypto provider, so its key records belong in the
+ * provider's ITS caller namespace, apart from application psa_its_*() and
+ * psa_ps_*() data at the same UID, where Mbed TLS keeps its keys. Zephyr 4.5
+ * selects it with BUILDING_PSA_CRYPTO, 4.3/4.4 with BUILDING_MBEDTLS_CRYPTO. */
+#ifndef BUILDING_PSA_CRYPTO
+#define BUILDING_PSA_CRYPTO
+#endif
 #ifndef BUILDING_MBEDTLS_CRYPTO
 #define BUILDING_MBEDTLS_CRYPTO
 #endif
