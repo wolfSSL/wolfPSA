@@ -27,10 +27,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 4.3 = the wolfPSA floor (upstream), 4.4 = current target.
-        zephyr-ref: [ v4.3.0, v4.4.0 ]
+        # 4.3 = the wolfPSA floor (upstream), 4.5 = current release.
+        zephyr-ref: [ v4.3.0, v4.4.0, v4.5.0 ]
         # wolfSSL master plus the -stable tag wolfPSA is validated against.
         wolfssl-ref: [ master, v5.9.4-stable ]
+        # wolfSSL 5.9.4 predates Zephyr 4.5 support (wolfSSL/wolfssl#12044).
+        exclude:
+          - zephyr-ref: v4.5.0
+            wolfssl-ref: v5.9.4-stable
     steps:
       - name: Checkout wolfPSA CI driver
         uses: actions/checkout@v5
