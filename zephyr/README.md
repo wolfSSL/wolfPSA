@@ -47,10 +47,12 @@ not a separate wolfPSA RNG. wolfPSA registers no seed callback and installs no
 boot-time seed hook. The shared Hash-DRBG is seeded on demand by wolfCrypt's own
 `wc_GenerateSeed()`, which on Zephyr reads the hardware entropy driver
 **directly** (`entropy_get_entropy()` on the `zephyr,entropy` chosen node) and
-falls back to `sys_rand_get()` on boards with no chosen node. A dead entropy
-source fails `wc_InitRng()` with `RNG_FAILURE_E` rather than yielding weak
-output. wolfPSA requires the Hash-DRBG itself: `zephyr/zephyr_init.c` has a
-build-time `#error` if `HAVE_HASHDRBG` is missing from your wolfCrypt config.
+falls back to `sys_rand_get()` when there is no chosen node or no entropy driver
+(wolfSSL after 5.9.4 only with `WOLFSSL_ACCEPT_WEAK_ENTROPY` defined, as a
+test-only opt-in). A dead entropy source fails `wc_InitRng()` with
+`RNG_FAILURE_E` rather than yielding weak output. wolfPSA requires the
+Hash-DRBG itself: `zephyr/zephyr_init.c` has a build-time `#error` if
+`HAVE_HASHDRBG` is missing from your wolfCrypt config.
 
 ## Configuring which crypto wolfPSA exposes
 
