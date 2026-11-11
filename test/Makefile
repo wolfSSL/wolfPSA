@@ -340,6 +340,21 @@ psa_tf_psa_threading_test: psa_server/psa_tf_psa_threading_test.c \
 	$(CC) $(THREADS_CPPFLAGS) $(CFLAGS) -o $@ $< $(THREADS_LIB) \
 		$(SANITIZE_FLAGS) -pthread -lm
 
+# The memory tracker is installed by the real wolfCrypt_Init(), so its test
+# has a library built with it
+TRACK_BUILD_DIR := $(abspath .)/build-track$(if $(SANITIZE_FLAGS),-asan)
+TRACK_LIB := $(TRACK_BUILD_DIR)/libwolfpsa-track.a
+TRACK_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLFSSL_TRACK_MEMORY \
+	$(VARIANT_INC) -I$(TRACK_BUILD_DIR)/include
+
+$(TRACK_LIB): FORCE
+	$(call variant_lib,$(TRACK_BUILD_DIR),-DWOLFSSL_TRACK_MEMORY)
+
+psa_track_memory_test: psa_server/psa_track_memory_test.c \
+		$(TRACK_LIB) FORCE
+	$(CC) $(TRACK_CPPFLAGS) $(CFLAGS) -o $@ $< $(TRACK_LIB) \
+		$(SANITIZE_FLAGS) -lpthread -lm
+
 wolfcrypt-psa-benchmark:
 	make -C wolfcrypt-benchmark
 	cp wolfcrypt-benchmark/wolfcrypt-psa-benchmark ./wolfcrypt-psa-benchmark
@@ -381,6 +396,8 @@ clean:
 	rm -rf $(abspath .)/build-probe $(abspath .)/build-probe-asan
 	rm -rf $(abspath .)/build-enroll $(abspath .)/build-enroll-asan
 	rm -rf $(abspath .)/build-threads $(abspath .)/build-threads-asan
+	rm -rf $(abspath .)/build-track $(abspath .)/build-track-asan
 	rm -f $(BINARIES) psa_devid_cryptocb_test psa_kdf_zeroize_output_test *.o *.log
 	rm -f psa_enrollment_alg_test psa_tf_psa_threading_test
+	rm -f psa_track_memory_test
 	rm -f psa_server/*.gcda psa_server/*.gcno

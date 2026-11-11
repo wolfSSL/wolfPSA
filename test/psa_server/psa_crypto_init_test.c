@@ -29,6 +29,7 @@
 #include <wolfssl/wolfcrypt/error-crypt.h>
 
 #include <stdio.h>
+#include <string.h>
 
 #include <wolfpsa/psa/crypto.h>
 
@@ -51,7 +52,19 @@ static int expect_status(const char* label, psa_status_t status, psa_status_t ex
     return 0;
 }
 
-static int test_hash_requires_psa_crypto_init(void)
+static int expect_bytes(const char* label, const uint8_t* got, size_t got_len,
+                        const uint8_t* want, size_t want_len)
+{
+    if (got_len != want_len || memcmp(got, want, want_len) != 0) {
+        printf("FAIL %s output mismatch\n", label);
+        return 1;
+    }
+
+    return 0;
+}
+
+/* As in Mbed TLS, hashes and XOFs need no psa_crypto_init() */
+static int test_hash_before_psa_crypto_init(void)
 {
     static const uint8_t msg[] = "abc";
     static const uint8_t sha256_abc[] = {
@@ -60,28 +73,63 @@ static int test_hash_requires_psa_crypto_init(void)
         0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
         0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad
     };
+    static const uint8_t shake256_abc[] = {
+        0x48, 0x33, 0x66, 0x60, 0x13, 0x60, 0xa8, 0x77,
+        0x1c, 0x68, 0x63, 0x08, 0x0c, 0xc4, 0x11, 0x4d,
+        0x8d, 0xb4, 0x45, 0x30, 0xf8, 0xf1, 0xe1, 0xee,
+        0x4f, 0x94, 0xea, 0x37, 0xe7, 0x8b, 0x57, 0x39
+    };
     psa_hash_operation_t op = PSA_HASH_OPERATION_INIT;
+    psa_xof_operation_t xof = PSA_XOF_OPERATION_INIT;
     uint8_t hash[PSA_HASH_LENGTH(PSA_ALG_SHA_256)];
+    uint8_t out[sizeof(shake256_abc)];
     size_t hash_length = 0;
     psa_status_t st;
 
     st = psa_hash_setup(&op, PSA_ALG_SHA_256);
-    if (expect_status("psa_hash_setup before init", st,
-                      PSA_ERROR_BAD_STATE) != 0) {
+    if (st == PSA_SUCCESS) {
+        st = psa_hash_update(&op, msg, sizeof(msg) - 1);
+    }
+    if (st == PSA_SUCCESS) {
+        st = psa_hash_finish(&op, hash, sizeof(hash), &hash_length);
+    }
+    if (expect_status("psa_hash_setup, update, finish before init", st,
+                      PSA_SUCCESS) != 0 ||
+        expect_bytes("psa_hash_finish before init", hash, hash_length,
+                     sha256_abc, sizeof(sha256_abc)) != 0) {
+        (void)psa_hash_abort(&op);
         return 1;
     }
 
+    hash_length = 0;
     st = psa_hash_compute(PSA_ALG_SHA_256, msg, sizeof(msg) - 1, hash,
                           sizeof(hash), &hash_length);
     if (expect_status("psa_hash_compute before init", st,
-                      PSA_ERROR_BAD_STATE) != 0) {
+                      PSA_SUCCESS) != 0 ||
+        expect_bytes("psa_hash_compute before init", hash, hash_length,
+                     sha256_abc, sizeof(sha256_abc)) != 0) {
         return 1;
     }
 
     st = psa_hash_compare(PSA_ALG_SHA_256, msg, sizeof(msg) - 1, sha256_abc,
                           sizeof(sha256_abc));
     if (expect_status("psa_hash_compare before init", st,
-                      PSA_ERROR_BAD_STATE) != 0) {
+                      PSA_SUCCESS) != 0) {
+        return 1;
+    }
+
+    st = psa_xof_setup(&xof, PSA_ALG_SHAKE256);
+    if (st == PSA_SUCCESS) {
+        st = psa_xof_update(&xof, msg, sizeof(msg) - 1);
+    }
+    if (st == PSA_SUCCESS) {
+        st = psa_xof_output(&xof, out, sizeof(out));
+    }
+    (void)psa_xof_abort(&xof);
+    if (expect_status("psa_xof_setup, update, output before init", st,
+                      PSA_SUCCESS) != 0 ||
+        expect_bytes("psa_xof_output before init", out, sizeof(out),
+                     shake256_abc, sizeof(shake256_abc)) != 0) {
         return 1;
     }
 
@@ -123,7 +171,7 @@ int main(void)
 {
     psa_status_t st;
 
-    if (test_hash_requires_psa_crypto_init() != 0) {
+    if (test_hash_before_psa_crypto_init() != 0) {
         return 1;
     }
 

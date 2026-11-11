@@ -79,4 +79,17 @@
 #error "wolfPSA needs WC_ALLOW_ECC_ZERO_HASH (psa_sign_hash/psa_verify_hash must accept an all-zero digest)"
 #endif
 
+/* Require init when using TRACK_MEMORY, or hardware crypto engines */
+#if defined(WOLFSSL_PSA_ENGINE) && \
+    ((defined(WOLFSSL_TRACK_MEMORY) && defined(USE_WOLFSSL_MEMORY) && \
+      !defined(WOLFSSL_STATIC_MEMORY)) || \
+     defined(WOLF_CRYPTO_CB) || defined(WOLFSSL_RENESAS_TSIP) || \
+     defined(WOLFSSL_RENESAS_RX64_HASH) || defined(WOLFSSL_RENESAS_FSPSM) || \
+     defined(WOLFSSL_PSOC6_CRYPTO) || defined(WOLFSSL_SILABS_SE_TYPES) || \
+     defined(WOLFSSL_SCE) || defined(WOLFSSL_DEVCRYPTO) || \
+     defined(WOLFSSL_CAAM) || defined(WOLFSSL_IMXRT_DCP) || \
+     defined(WOLFSSL_NXP_HASHCRYPT) || defined(WOLFSSL_SE050_INIT))
+    #define WOLFPSA_NEEDS_INIT
+#endif /* WOLFSSL_PSA_ENGINE && (tracker, callbacks or hash engine) */
+
 #endif /* WOLFPSA_CONFIG_H */

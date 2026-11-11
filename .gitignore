@@ -96,5 +96,8 @@ test/psa_tf_psa_pk_test
 test/psa_tf_psa_threading_test
 test/build-threads
 test/build-threads-asan
+test/psa_track_memory_test
+test/build-track
+test/build-track-asan
 .cache/
 compile_commands.json

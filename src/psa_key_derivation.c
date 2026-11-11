@@ -519,6 +519,9 @@ psa_status_t psa_key_derivation_setup(psa_key_derivation_operation_t *operation,
     if (operation->opaque != (uintptr_t)NULL) {
         return PSA_ERROR_BAD_STATE;
     }
+    if (!wolfPSA_CryptoReady()) {
+        return PSA_ERROR_BAD_STATE;
+    }
 
     if (!PSA_ALG_IS_KEY_DERIVATION_OR_AGREEMENT(alg)) {
         return PSA_ERROR_INVALID_ARGUMENT;

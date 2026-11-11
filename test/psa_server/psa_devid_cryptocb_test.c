@@ -145,15 +145,20 @@ static int exercise_random(void)
     return 0;
 }
 
-static int exercise_hash(void)
+static psa_status_t hash_sample(void)
 {
     static const uint8_t msg[] = "wolfPSA devId coverage";
     uint8_t digest[PSA_HASH_MAX_SIZE];
     size_t digest_len = 0;
-    psa_status_t st;
 
-    st = psa_hash_compute(PSA_ALG_SHA_256, msg, sizeof(msg) - 1,
-                          digest, sizeof(digest), &digest_len);
+    return psa_hash_compute(PSA_ALG_SHA_256, msg, sizeof(msg) - 1,
+                            digest, sizeof(digest), &digest_len);
+}
+
+static int exercise_hash(void)
+{
+    psa_status_t st = hash_sample();
+
     if (st != PSA_SUCCESS)
         return fail("psa_hash_compute", st);
     return 0;
@@ -802,6 +807,11 @@ int main(void)
 {
     int ret = 0;
     psa_status_t st;
+
+    /* psa_crypto_init() sets up the callback table */
+    st = hash_sample();
+    if (st != PSA_ERROR_BAD_STATE)
+        return fail("psa_hash_compute before psa_crypto_init", st);
 
     st = psa_crypto_init();
     if (st != PSA_SUCCESS)

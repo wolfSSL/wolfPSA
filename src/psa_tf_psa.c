@@ -194,6 +194,9 @@ int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
     if (PkIsEncrypted(key, keylen)) {
         return MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
     }
+    if (!wolfPSA_CryptoReady()) {
+        return PSA_ERROR_BAD_STATE;
+    }
 
     /* Big enough for the DER of a PEM key */
     ctx->der = (unsigned char*)XMALLOC(keylen, NULL, DYNAMIC_TYPE_PRIVATE_KEY);
