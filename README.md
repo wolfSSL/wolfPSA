@@ -243,9 +243,10 @@ runs these against `libwolfpsa.a`. Each is also a target of its own.
 
 Notes:
 
-- `MBEDTLS_PATH` (default `../mbedtls`) is an Mbed TLS 4.x checkout with
-  its `framework` and `tf-psa-crypto` submodules, for its test data and
-  sample programs.
+- The tests clone Mbed TLS at `MBEDTLS_REF` (set in
+  `test/mbedtls_compat/Makefile`) into the build directory, so the first
+  run needs network access. `MBEDTLS_PATH` uses an Mbed TLS 4.x checkout
+  with its `framework` and `tf-psa-crypto` submodules instead.
 - The example server and client come from a wolfSSL configured out of tree
   from `WOLFSSL_PATH`, which must not be configured in place. The tests use
   the certificates in its `certs/`. This needs autoconf, automake and
