@@ -1,6 +1,6 @@
-# Build and run the Mbed TLS compatibility tests. Run by the
-# mbedtls-compat-test, mbedtls-compat-unit and mbedtls-compat-programs
-# targets in the wolfPSA root, which set the paths, all absolute.
+# Build and run the Mbed TLS compatibility tests. Run by the mbedtls-compat-*
+# targets in the wolfPSA root (make help there), which set the paths, all
+# absolute.
 
 ifndef WOLFPSA_PATH
 $(error Run make MBEDTLS_COMPAT=1 mbedtls-compat-test in the wolfPSA root)
@@ -116,6 +116,7 @@ export ASAN_OPTIONS := $(if $(ASAN_OPTIONS),$(ASAN_OPTIONS):)$(ASAN_LINK_ORDER)
 .PHONY: test unit programs suite suite-ref suite-patch data-check \
 	wolfssl-check FORCE
 
+# Everything that tests wolfPSA
 test: unit programs suite
 
 unit: $(UNIT) | data-check
