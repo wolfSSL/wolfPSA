@@ -123,6 +123,8 @@ Known differences from Mbed TLS:
 - `mbedtls_x509_crt` has one node per certificate, with no parsed fields
   apart from `raw`. Parse errors are `MBEDTLS_ERR_X509_INVALID_FORMAT` or
   `MBEDTLS_ERR_X509_ALLOC_FAILED`.
+- `mbedtls_x509_crt_parse_path` needs `<dirent.h>`. On Windows, or with
+  `NO_WOLFSSL_DIR`, it returns `MBEDTLS_ERR_X509_FILE_IO_ERROR`.
 - The profiles are not applied: wolfSSL's own limits hold.
   `mbedtls_x509_crt_profile` is opaque, so applications cannot define their
   own.

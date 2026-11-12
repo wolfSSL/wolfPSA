@@ -45,6 +45,7 @@ typedef struct mbedtls_x509_crl mbedtls_x509_crl;
 /* Opaque, so no custom profiles. Not applied: wolfSSL's own limits hold. */
 typedef struct mbedtls_x509_crt_profile mbedtls_x509_crt_profile;
 
+#if defined(MBEDTLS_X509_CRT_PARSE_C)
 extern const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_default;
 extern const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_next;
 extern const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_suiteb;
@@ -59,6 +60,7 @@ int mbedtls_x509_crt_parse_der(mbedtls_x509_crt* chain,
 int mbedtls_x509_crt_parse_file(mbedtls_x509_crt* chain, const char* path);
 int mbedtls_x509_crt_parse_path(mbedtls_x509_crt* chain, const char* path);
 #endif /* MBEDTLS_FS_IO */
+#endif /* MBEDTLS_X509_CRT_PARSE_C */
 
 #ifdef __cplusplus
     } /* extern "C" */

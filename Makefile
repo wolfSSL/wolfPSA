@@ -342,9 +342,8 @@ cov:
 
 # Remove gcov artifacts and the coverage report.
 covclean:
-	rm -f $(OBJDIR)/*.gcda $(OBJDIR)/*.gcno \
-	      $(OBJDIR_PIC)/*.gcda $(OBJDIR_PIC)/*.gcno
-	find test \( -name '*.gcda' -o -name '*.gcno' \) -delete
+	find $(wildcard $(OBJDIR) $(OBJDIR_PIC)) test \
+	    \( -name '*.gcda' -o -name '*.gcno' \) -delete
 	rm -rf $(COV_DIR)
 
 clean:

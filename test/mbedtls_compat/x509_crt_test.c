@@ -340,26 +340,53 @@ static int NoMemory(void)
     return fails;
 }
 
-/* Mbed TLS ignores data after a DER certificate, such as a NUL */
-static int TrailingByte(void)
-{
-    mbedtls_x509_crt crt;
-    mbedtls_x509_crt copy;
-    unsigned char buf[2048];
-    int ok = 0;
+typedef int (*ParseBuf)(mbedtls_x509_crt* chain, const unsigned char* buf,
+    size_t buflen);
 
-    mbedtls_x509_crt_init(&crt);
-    mbedtls_x509_crt_init(&copy);
-    if (mbedtls_x509_crt_parse_file(&crt, "test-ca.der") == 0 &&
-            crt.raw.len < sizeof(buf)) {
-        memcpy(buf, crt.raw.p, crt.raw.len);
-        buf[crt.raw.len] = 0;
-        ok = mbedtls_x509_crt_parse_der(&copy, buf, crt.raw.len + 1) == 0 &&
-            copy.raw.len == crt.raw.len;
+/* A DER buffer, as an embedded CA usually is. Mbed TLS ignores data after
+ * the certificate, such as a NUL. */
+static int DerBuffer(void)
+{
+    static const struct {
+        const char* what;
+        ParseBuf parse;
+        size_t extra;
+    } parses[] = {
+        { "parse, DER", mbedtls_x509_crt_parse, 0 },
+        { "parse, DER and a NUL", mbedtls_x509_crt_parse, 1 },
+        { "parse_der, DER and a NUL", mbedtls_x509_crt_parse_der, 1 }
+    };
+    mbedtls_x509_crt ca;
+    mbedtls_x509_crt crt;
+    unsigned char buf[2048];
+    size_t len = 0;
+    size_t i;
+    int fails = 0;
+    int ret;
+
+    mbedtls_x509_crt_init(&ca);
+    if (mbedtls_x509_crt_parse_file(&ca, "test-ca.der") == 0 &&
+            ca.raw.len < sizeof(buf)) {
+        len = ca.raw.len;
+        memcpy(buf, ca.raw.p, len);
+        buf[len] = 0;
     }
-    mbedtls_x509_crt_free(&copy);
-    mbedtls_x509_crt_free(&crt);
-    return ok;
+    mbedtls_x509_crt_free(&ca);
+    if (len == 0) {
+        printf("FAIL: reading test-ca.der\n");
+        return 1;
+    }
+
+    for (i = 0; i < sizeof(parses) / sizeof(parses[0]); i++) {
+        mbedtls_x509_crt_init(&crt);
+        ret = parses[i].parse(&crt, buf, len + parses[i].extra);
+        if (ret == 0 && (CountCerts(&crt) != 1 || crt.raw.len != len)) {
+            ret = ERR;
+        }
+        mbedtls_x509_crt_free(&crt);
+        fails += Expect(parses[i].what, ret, 0);
+    }
+    return fails;
 }
 
 int main(void)
@@ -389,6 +416,7 @@ int main(void)
     fails += BadInput();
     fails += TempDirs();
     fails += NoMemory();
+    fails += DerBuffer();
     certs = CountCerts(&all);
     if (certs == total) {
         printf("PASS: one chain\n");
@@ -396,13 +424,6 @@ int main(void)
     else {
         printf("FAIL: one chain: %d certificates, expected %d\n", certs,
             total);
-        fails++;
-    }
-    if (TrailingByte()) {
-        printf("PASS: DER with a trailing byte\n");
-    }
-    else {
-        printf("FAIL: DER with a trailing byte\n");
         fails++;
     }
     mbedtls_x509_crt_free(&all);

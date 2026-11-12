@@ -27,7 +27,7 @@
 
 #include "psa_config.h"
 
-#if defined(WOLFPSA_MBEDTLS_COMPAT)
+#if defined(WOLFSSL_PSA_ENGINE) && defined(WOLFPSA_MBEDTLS_COMPAT)
 
 #include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
@@ -345,4 +345,4 @@ const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_suiteb = { 0 };
 
 #endif /* MBEDTLS_X509_CRT_PARSE_C */
 
-#endif /* WOLFPSA_MBEDTLS_COMPAT */
+#endif /* WOLFSSL_PSA_ENGINE && WOLFPSA_MBEDTLS_COMPAT */
