@@ -1,4 +1,4 @@
-/* mbedtls_x509.c
+/* x509.c
  *
  * Copyright (C) 2026 wolfSSL Inc.
  *
@@ -34,10 +34,16 @@
 #include <wolfssl/wolfcrypt/logging.h>
 #include <wolfpsa/psa_engine.h>
 #include <mbedtls/x509_crt.h>
+#include "psa_tf_psa_internal.h"
 
-#ifndef MBEDTLS_X509_CRT_PARSE_C
-    #error "The generated config must define MBEDTLS_X509_CRT_PARSE_C"
-#endif /* !MBEDTLS_X509_CRT_PARSE_C */
+/* The generated config has MBEDTLS_X509_CRT_PARSE_C when wolfCrypt parses
+ * certificates */
+#if defined(MBEDTLS_X509_CRT_PARSE_C) == \
+        (defined(NO_ASN) || defined(NO_CERTS))
+    #error "MBEDTLS_X509_CRT_PARSE_C does not match NO_ASN and NO_CERTS"
+#endif /* MBEDTLS_X509_CRT_PARSE_C == (NO_ASN || NO_CERTS) */
+
+#if defined(MBEDTLS_X509_CRT_PARSE_C)
 
 #if defined(MBEDTLS_FS_IO) && !defined(NO_WOLFSSL_DIR) && !defined(_WIN32)
     #define WOLFPSA_X509_DIR
@@ -52,12 +58,6 @@ static int MbedCertDecode(DecodedCert* cert, const byte* der, word32 len)
 {
     wc_InitDecodedCert(cert, der, len, NULL);
     return wc_ParseCert(cert, CERT_TYPE, NO_VERIFY, NULL);
-}
-
-static int MbedCertErr(int ret, int err)
-{
-    return (ret == WC_NO_ERR_TRACE(MEMORY_E)) ? MBEDTLS_ERR_X509_ALLOC_FAILED :
-        err;
 }
 
 /* Checks buf decodes as a certificate, without verifying it. Sets *len to
@@ -83,7 +83,16 @@ static int MbedCertCheck(const unsigned char* buf, size_t* len)
     wc_FreeDecodedCert(cert);
     XFREE(cert, NULL, DYNAMIC_TYPE_DCERT);
 
-    return (ret == 0) ? 0 : MbedCertErr(ret, MBEDTLS_ERR_X509_INVALID_FORMAT);
+    return wolfPSA_MbedRet(ret, MBEDTLS_ERR_X509_INVALID_FORMAT);
+}
+
+/* The checks common to the parse functions, before any allocation */
+static int MbedParseCheck(const mbedtls_x509_crt* chain, const void* in)
+{
+    if (chain == NULL || in == NULL) {
+        return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
+    }
+    return wolfPSA_CryptoReady() ? 0 : PSA_ERROR_BAD_STATE;
 }
 
 void mbedtls_x509_crt_init(mbedtls_x509_crt* crt)
@@ -116,32 +125,23 @@ void mbedtls_x509_crt_free(mbedtls_x509_crt* crt)
 }
 
 /* Returns 0 if all certificates parse, the number that failed if some parse,
- * else an error. Input without a PEM header is DER. Unlike Mbed TLS, PEM
- * need not be NUL terminated. */
-int mbedtls_x509_crt_parse(mbedtls_x509_crt* chain,
-    const unsigned char* buf, size_t buflen)
+ * else an error. buf is DER when pem is 0 or it has no PEM header. */
+static int MbedCertParse(mbedtls_x509_crt* chain, const unsigned char* buf,
+    size_t len, int pem)
 {
-    const unsigned char* pem = buf;
-    size_t len = buflen;
-    EncryptedInfo info;
-    DerBuffer* der;
     int parsed = 0;
     int failed = 0;
     int ret;
+#ifdef WOLFSSL_PEM_TO_DER
+    const unsigned char* cur = buf;
+    size_t left = len;
+    EncryptedInfo info;
+    DerBuffer* der;
 
-    WOLFSSL_ENTER("mbedtls_x509_crt_parse");
-
-    if (chain == NULL || buf == NULL) {
-        return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
-    }
-    if (!wolfPSA_CryptoReady()) {
-        return PSA_ERROR_BAD_STATE;
-    }
-
-    while (len > 0) {
+    while (pem && left > 0) {
         der = NULL;
         XMEMSET(&info, 0, sizeof(info));
-        ret = wc_PemToDer(pem, (long)len, CERT_TYPE, &der, NULL, &info, NULL);
+        ret = wc_PemToDer(cur, (long)left, CERT_TYPE, &der, NULL, &info, NULL);
         if (ret == WC_NO_ERR_TRACE(ASN_NO_PEM_HEADER)) {
             break;
         }
@@ -150,7 +150,7 @@ int mbedtls_x509_crt_parse(mbedtls_x509_crt* chain,
                 der->length);
         }
         else {
-            ret = MbedCertErr(ret, MBEDTLS_ERR_X509_INVALID_FORMAT);
+            ret = wolfPSA_MbedRet(ret, MBEDTLS_ERR_X509_INVALID_FORMAT);
         }
         wc_FreeDer(&der);
         if (ret == MBEDTLS_ERR_X509_ALLOC_FAILED) {
@@ -163,12 +163,15 @@ int mbedtls_x509_crt_parse(mbedtls_x509_crt* chain,
             failed++;
         }
         /* Set once the footer is found, also when the block does not decode */
-        if (info.consumed <= 0 || (size_t)info.consumed > len) {
+        if (info.consumed <= 0 || (size_t)info.consumed > left) {
             break;
         }
-        pem += info.consumed;
-        len -= (size_t)info.consumed;
+        cur += info.consumed;
+        left -= (size_t)info.consumed;
     }
+#else
+    (void)pem;
+#endif /* WOLFSSL_PEM_TO_DER */
 
     if (parsed > 0) {
         ret = failed;
@@ -177,7 +180,23 @@ int mbedtls_x509_crt_parse(mbedtls_x509_crt* chain,
         ret = MBEDTLS_ERR_X509_INVALID_FORMAT;
     }
     else {
-        ret = mbedtls_x509_crt_parse_der(chain, buf, buflen);
+        ret = mbedtls_x509_crt_parse_der(chain, buf, len);
+    }
+    return ret;
+}
+
+int mbedtls_x509_crt_parse(mbedtls_x509_crt* chain,
+    const unsigned char* buf, size_t buflen)
+{
+    int ret;
+
+    WOLFSSL_ENTER("mbedtls_x509_crt_parse");
+
+    ret = MbedParseCheck(chain, buf);
+    if (ret == 0) {
+        /* As in Mbed TLS, only NUL terminated data can be PEM */
+        ret = MbedCertParse(chain, buf, buflen,
+            buflen > 0 && buf[buflen - 1] == '\0');
     }
     return ret;
 }
@@ -191,14 +210,13 @@ int mbedtls_x509_crt_parse_der(mbedtls_x509_crt* chain,
 
     WOLFSSL_ENTER("mbedtls_x509_crt_parse_der");
 
-    if (chain == NULL || buf == NULL || (word32)buflen != buflen) {
-        return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
+    ret = MbedParseCheck(chain, buf);
+    if (ret == 0 && (word32)buflen != buflen) {
+        ret = MBEDTLS_ERR_X509_BAD_INPUT_DATA;
     }
-    if (!wolfPSA_CryptoReady()) {
-        return PSA_ERROR_BAD_STATE;
+    if (ret == 0) {
+        ret = MbedCertCheck(buf, &buflen);
     }
-
-    ret = MbedCertCheck(buf, &buflen);
     if (ret != 0) {
         return ret;
     }
@@ -232,30 +250,29 @@ int mbedtls_x509_crt_parse_der(mbedtls_x509_crt* chain,
 #if defined(MBEDTLS_FS_IO)
 int mbedtls_x509_crt_parse_file(mbedtls_x509_crt* chain, const char* path)
 {
-    byte* buf = NULL;
+    unsigned char* buf = NULL;
     size_t len = 0;
     int ret;
 
     WOLFSSL_ENTER("mbedtls_x509_crt_parse_file");
 
-    ret = wc_FileLoad(path, &buf, &len, NULL);
+    ret = MbedParseCheck(chain, path);
     if (ret == 0) {
-        ret = mbedtls_x509_crt_parse(chain, buf, len);
+        ret = wolfPSA_MbedLoadFile(path, &buf, &len);
     }
-    else {
-        /* As in Mbed TLS, which loads the file with mbedtls_pk_load_file() */
-        ret = MbedCertErr(ret, MBEDTLS_ERR_PK_FILE_IO_ERROR);
+    if (ret == 0) {
+        /* Mbed TLS NUL terminates a file with a PEM header */
+        ret = MbedCertParse(chain, buf, len, 1);
     }
-    /* wc_FileLoad() can fail with buf allocated */
-    XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    wolfPSA_MbedFreeFile(buf, len);
     return ret;
 }
 
+#ifdef WOLFPSA_X509_DIR
 /* As in Mbed TLS, a file that does not parse counts as one failure, and an
  * entry that stat() does not find, such as a dangling symlink, is skipped */
-int mbedtls_x509_crt_parse_path(mbedtls_x509_crt* chain, const char* path)
+static int MbedParseDir(mbedtls_x509_crt* chain, const char* path)
 {
-#ifdef WOLFPSA_X509_DIR
     char name[MBEDTLS_X509_MAX_FILE_PATH_LEN];
     struct dirent* entry;
     struct stat st;
@@ -264,14 +281,6 @@ int mbedtls_x509_crt_parse_path(mbedtls_x509_crt* chain, const char* path)
     int fileRet;
     int ret = 0;
 
-    WOLFSSL_ENTER("mbedtls_x509_crt_parse_path");
-
-    if (chain == NULL || path == NULL) {
-        return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
-    }
-    if (!wolfPSA_CryptoReady()) {
-        return PSA_ERROR_BAD_STATE;
-    }
     dir = opendir(path);
     if (dir == NULL) {
         return MBEDTLS_ERR_X509_FILE_IO_ERROR;
@@ -304,20 +313,36 @@ int mbedtls_x509_crt_parse_path(mbedtls_x509_crt* chain, const char* path)
     (void)closedir(dir);
 
     return (ret == 0) ? failed : ret;
-#else
-    (void)chain;
-    (void)path;
-    return MBEDTLS_ERR_X509_FILE_IO_ERROR;
+}
 #endif /* WOLFPSA_X509_DIR */
+
+int mbedtls_x509_crt_parse_path(mbedtls_x509_crt* chain, const char* path)
+{
+    int ret;
+
+    WOLFSSL_ENTER("mbedtls_x509_crt_parse_path");
+
+    ret = MbedParseCheck(chain, path);
+    if (ret == 0) {
+#ifdef WOLFPSA_X509_DIR
+        ret = MbedParseDir(chain, path);
+#else
+        ret = MBEDTLS_ERR_X509_FILE_IO_ERROR;
+#endif /* WOLFPSA_X509_DIR */
+    }
+    return ret;
 }
 #endif /* MBEDTLS_FS_IO */
 
+/* Opaque, so applications cannot define their own. C needs a member. */
 struct mbedtls_x509_crt_profile {
-    uint32_t rsa_min_bitlen;
+    char unused;
 };
 
-const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_default = { 2048 };
-const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_next = { 2048 };
+const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_default = { 0 };
+const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_next = { 0 };
 const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_suiteb = { 0 };
+
+#endif /* MBEDTLS_X509_CRT_PARSE_C */
 
 #endif /* WOLFPSA_MBEDTLS_COMPAT */

@@ -41,6 +41,7 @@
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfpsa/psa_engine.h>
 #include "psa_lock.h"
+#include "psa_tf_psa_internal.h"
 
 /* The generated crypto config must match the build's NO_FILESYSTEM */
 #if defined(MBEDTLS_FS_IO) == defined(NO_FILESYSTEM)
@@ -87,8 +88,7 @@ enum {
     PK_TYPE_ECC = 2
 };
 
-/* MEMORY_E becomes PSA_ERROR_INSUFFICIENT_MEMORY, other errors become err */
-static int PkRet(int wcRet, int err)
+int wolfPSA_MbedRet(int wcRet, int err)
 {
     if (wcRet == 0) {
         return 0;
@@ -103,7 +103,7 @@ static int PkDecodeRet(int wcRet, word32 idx, word32 len)
     if (wcRet == 0 && idx != len) {
         return MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
     }
-    return PkRet(wcRet, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
+    return wolfPSA_MbedRet(wcRet, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
 }
 
 /* An RSA or EC private key, traditional or PKCS #8. *type becomes PK_TYPE_*. */
@@ -218,7 +218,7 @@ int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
         ret = 0;
     }
     else {
-        ret = PkRet(ret, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
+        ret = wolfPSA_MbedRet(ret, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
     }
 
     if (ret == 0) {
@@ -274,23 +274,38 @@ int mbedtls_pk_can_do_psa(const mbedtls_pk_context* pk, psa_algorithm_t alg,
 }
 
 #if defined(MBEDTLS_FS_IO)
+int wolfPSA_MbedLoadFile(const char* path, unsigned char** buf, size_t* len)
+{
+    *buf = NULL;
+    *len = 0;
+    if (!wolfPSA_CryptoReady()) {
+        return PSA_ERROR_BAD_STATE;
+    }
+    return wolfPSA_MbedRet(wc_FileLoad(path, buf, len, NULL),
+        MBEDTLS_ERR_PK_FILE_IO_ERROR);
+}
+
+/* wc_FileLoad() can fail with buf allocated. The file can be a key. */
+void wolfPSA_MbedFreeFile(unsigned char* buf, size_t len)
+{
+    mbedtls_platform_zeroize(buf, len);
+    XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+}
+
 int mbedtls_pk_parse_keyfile(mbedtls_pk_context* ctx, const char* path,
     const char* password)
 {
-    byte* buf = NULL;
-    size_t len = 0;
+    unsigned char* buf;
+    size_t len;
     int ret;
 
-    ret = PkRet(wc_FileLoad(path, &buf, &len, NULL),
-        MBEDTLS_ERR_PK_FILE_IO_ERROR);
+    ret = wolfPSA_MbedLoadFile(path, &buf, &len);
     if (ret == 0) {
         ret = mbedtls_pk_parse_key(ctx, buf, len,
             (const unsigned char*)password,
             (password == NULL) ? 0 : XSTRLEN(password));
     }
-    /* wc_FileLoad() can fail with buf allocated */
-    mbedtls_platform_zeroize(buf, len);
-    XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    wolfPSA_MbedFreeFile(buf, len);
     return ret;
 }
 #endif /* MBEDTLS_FS_IO */

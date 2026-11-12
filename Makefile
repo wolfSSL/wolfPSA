@@ -15,7 +15,7 @@ CC ?= cc
 AR ?= ar
 RANLIB ?= ranlib
 
-SRC := $(wildcard src/*.c)
+SRC := $(wildcard src/*.c src/mbedtls/*.c)
 OBJ := $(patsubst src/%.c,$(OBJDIR)/%.o,$(SRC))
 OBJ_PIC := $(patsubst src/%.c,$(OBJDIR_PIC)/%.o,$(SRC))
 
@@ -79,9 +79,9 @@ WOLFCRYPT_SRC := \
 WOLFCRYPT_OBJ := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 
-# MBEDTLS_COMPAT=1 adds the Mbed TLS 4.x X.509 API. See src/mbedtls_x509.c.
+# MBEDTLS_COMPAT=1 adds the Mbed TLS 4.x X.509 API. See src/mbedtls/.
 ifeq ($(MBEDTLS_COMPAT),1)
-CPPFLAGS += -DWOLFPSA_MBEDTLS_COMPAT
+CPPFLAGS += -DWOLFPSA_MBEDTLS_COMPAT -I$(CURDIR)/wolfpsa/mbedtls_compat
 endif
 
 # MBEDTLS_THREADING_C=1 builds a thread safe library, as in Mbed TLS. See
@@ -186,7 +186,7 @@ $(OPTIONS_STAMP):
 	touch $@
 
 $(OBJDIR)/%.o: src/%.c
-	@mkdir -p $(OBJDIR)
+	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR)/wolfcrypt_%.o: $(WOLFSSL_PATH)/wolfcrypt/src/%.c
@@ -194,7 +194,7 @@ $(OBJDIR)/wolfcrypt_%.o: $(WOLFSSL_PATH)/wolfcrypt/src/%.c
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR_PIC)/%.o: src/%.c
-	@mkdir -p $(OBJDIR_PIC)
+	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
 
 $(OBJDIR_PIC)/wolfcrypt_%.o: $(WOLFSSL_PATH)/wolfcrypt/src/%.c
@@ -295,7 +295,7 @@ mbedtls-compat-test: $(LIBNAME)
 		PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
 		WOLFSSL_FLAGS="-I$(abspath $(WOLFSSL_PATH)) \
 			-I$(abspath $(USER_SETTINGS_PATH)) $(WOLFSSL_CPPFLAGS)" \
-		WOLFPSA_LDFLAGS="$(LDFLAGS)" check
+		SANITIZE_FLAGS="$(SANITIZE_FLAGS)" WOLFPSA_LDFLAGS="$(LDFLAGS)" check
 else
 mbedtls-compat-test:
 	@echo "Run make MBEDTLS_COMPAT=1 mbedtls-compat-test"; exit 1

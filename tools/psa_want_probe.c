@@ -269,6 +269,6 @@ __WPSA_EMIT__MBEDTLS_CTR_DRBG_C
 #endif
 
 /* ----- Mbed TLS options, MBEDTLS_COMPAT=1 ----- */
-#if defined(WOLFPSA_MBEDTLS_COMPAT)
+#if defined(WOLFPSA_MBEDTLS_COMPAT) && !defined(NO_ASN) && !defined(NO_CERTS)
 __WPSA_EMIT__MBEDTLS_X509_CRT_PARSE_C
 #endif

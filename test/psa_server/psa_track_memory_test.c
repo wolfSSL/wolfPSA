@@ -102,6 +102,12 @@ static void test_before_init(void)
           mbedtls_pk_parse_key(&pk, ecc_key_der_256,
                                (size_t)sizeof_ecc_key_der_256, NULL, 0),
           PSA_ERROR_BAD_STATE);
+#ifdef MBEDTLS_FS_IO
+    /* A missing file, so only a check before the load gives BAD_STATE */
+    check("mbedtls_pk_parse_keyfile before init",
+          mbedtls_pk_parse_keyfile(&pk, "missing.key", NULL),
+          PSA_ERROR_BAD_STATE);
+#endif /* MBEDTLS_FS_IO */
 #ifdef MBEDTLS_X509_CRT_PARSE_C
     mbedtls_x509_crt_init(&crt);
     check("mbedtls_x509_crt_parse_der before init",
@@ -113,6 +119,9 @@ static void test_before_init(void)
                                  (size_t)sizeof_serv_ecc_der_256),
           PSA_ERROR_BAD_STATE);
 #ifdef MBEDTLS_FS_IO
+    check("mbedtls_x509_crt_parse_file before init",
+          mbedtls_x509_crt_parse_file(&crt, "missing.crt"),
+          PSA_ERROR_BAD_STATE);
     check("mbedtls_x509_crt_parse_path before init",
           mbedtls_x509_crt_parse_path(&crt, "."), PSA_ERROR_BAD_STATE);
 #endif /* MBEDTLS_FS_IO */

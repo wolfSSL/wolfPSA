@@ -129,6 +129,17 @@ static int Check(Parse parse, const char* path, const Case* c)
     return 1;
 }
 
+/* Returns 1 when ret is not expected */
+static int Expect(const char* what, int ret, int expected)
+{
+    if (ret == expected) {
+        printf("PASS: %s\n", what);
+        return 0;
+    }
+    printf("FAIL: %s: returned %d, expected %d\n", what, ret, expected);
+    return 1;
+}
+
 /* Each case, also parsed into all, which only grows. Returns the number that
  * failed. */
 static int CheckAll(Parse parse, const Case* c, size_t n,
@@ -197,6 +208,67 @@ static int WriteDer(const char* file, const char* path)
     }
     mbedtls_x509_crt_free(&crt);
     return ok;
+}
+
+/* Bad arguments, empty data, PEM without the NUL that Mbed TLS needs, and a
+ * path too long with each entry name. Needs pem loaded. */
+static int BadInput(void)
+{
+    static const unsigned char nul[1] = { 0 };
+    char longPath[MBEDTLS_X509_MAX_FILE_PATH_LEN];
+    mbedtls_x509_crt crt;
+    size_t i;
+    int fails;
+
+    /* "./././." */
+    longPath[0] = '.';
+    for (i = 1; i + 2 < sizeof(longPath); i += 2) {
+        longPath[i] = '/';
+        longPath[i + 1] = '.';
+    }
+    longPath[i] = '\0';
+
+    mbedtls_x509_crt_init(&crt);
+    fails = Expect("parse, NULL chain",
+        mbedtls_x509_crt_parse(NULL, nul, sizeof(nul)),
+        MBEDTLS_ERR_X509_BAD_INPUT_DATA);
+    fails += Expect("parse, NULL buf", mbedtls_x509_crt_parse(&crt, NULL, 0),
+        MBEDTLS_ERR_X509_BAD_INPUT_DATA);
+    fails += Expect("parse, empty", mbedtls_x509_crt_parse(&crt, nul, 0),
+        MBEDTLS_ERR_X509_INVALID_FORMAT);
+    fails += Expect("parse, NUL only",
+        mbedtls_x509_crt_parse(&crt, nul, sizeof(nul)),
+        MBEDTLS_ERR_X509_INVALID_FORMAT);
+    fails += Expect("parse, PEM without a NUL",
+        mbedtls_x509_crt_parse(&crt, (const unsigned char*)pem, strlen(pem)),
+        MBEDTLS_ERR_X509_INVALID_FORMAT);
+    fails += Expect("parse_der, NULL chain",
+        mbedtls_x509_crt_parse_der(NULL, nul, sizeof(nul)),
+        MBEDTLS_ERR_X509_BAD_INPUT_DATA);
+    fails += Expect("parse_der, NULL buf",
+        mbedtls_x509_crt_parse_der(&crt, NULL, 0),
+        MBEDTLS_ERR_X509_BAD_INPUT_DATA);
+    fails += Expect("parse_der, empty",
+        mbedtls_x509_crt_parse_der(&crt, nul, 0),
+        MBEDTLS_ERR_X509_INVALID_FORMAT);
+    fails += Expect("parse_file, NULL chain",
+        mbedtls_x509_crt_parse_file(NULL, "test-ca.der"),
+        MBEDTLS_ERR_X509_BAD_INPUT_DATA);
+    fails += Expect("parse_file, NULL path",
+        mbedtls_x509_crt_parse_file(&crt, NULL),
+        MBEDTLS_ERR_X509_BAD_INPUT_DATA);
+    fails += Expect("parse_path, NULL chain",
+        mbedtls_x509_crt_parse_path(NULL, "dir1"),
+        MBEDTLS_ERR_X509_BAD_INPUT_DATA);
+    fails += Expect("parse_path, NULL path",
+        mbedtls_x509_crt_parse_path(&crt, NULL),
+        MBEDTLS_ERR_X509_BAD_INPUT_DATA);
+    fails += Expect("parse_path, long names",
+        mbedtls_x509_crt_parse_path(&crt, longPath),
+        MBEDTLS_ERR_X509_BUFFER_TOO_SMALL);
+    fails += Expect("no certificate after bad input", CountCerts(&crt), 0);
+    mbedtls_x509_crt_free(&crt);
+    return fails;
 }
 
 /* A directory made here: empty, then with a dangling symlink, then also with
@@ -314,6 +386,7 @@ int main(void)
         printf("FAIL: reading server5.crt\n");
         fails++;
     }
+    fails += BadInput();
     fails += TempDirs();
     fails += NoMemory();
     certs = CountCerts(&all);

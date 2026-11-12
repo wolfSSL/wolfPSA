@@ -23,8 +23,11 @@ jobs:
       - name: Clone sibling wolfSSL
         run: git clone --depth 1 --branch ${{ matrix.wolfssl-ref }} https://github.com/wolfSSL/wolfssl ../wolfssl
 
+      # The tests need only framework/data_files
       - name: Clone sibling Mbed TLS
-        run: git clone --depth 1 --branch mbedtls-4.2.0 --recurse-submodules --shallow-submodules https://github.com/Mbed-TLS/mbedtls ../mbedtls
+        run: |
+          git clone --depth 1 --branch mbedtls-4.2.0 https://github.com/Mbed-TLS/mbedtls ../mbedtls
+          git -C ../mbedtls submodule update --init --depth 1 framework
 
       - name: Build and run the compatibility tests
         run: make MBEDTLS_COMPAT=1 ${{ matrix.options }} mbedtls-compat-test

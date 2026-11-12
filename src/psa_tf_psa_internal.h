@@ -1,4 +1,4 @@
-/* build_info.h
+/* psa_tf_psa_internal.h
  *
  * Copyright (C) 2026 wolfSSL Inc.
  *
@@ -19,25 +19,23 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-/* Mbed TLS feature macros for the compatibility layer, built with
- * MBEDTLS_COMPAT=1. */
+#ifndef WOLFPSA_TF_PSA_INTERNAL_H
+#define WOLFPSA_TF_PSA_INTERNAL_H
 
-#ifndef MBEDTLS_BUILD_INFO_H
-#define MBEDTLS_BUILD_INFO_H
+#include <stddef.h>
 
-#include "tf-psa-crypto/build_info.h"
+#include <wolfssl/wolfcrypt/types.h>
+#include <mbedtls/pk.h>
 
-/* The Mbed TLS API version this layer follows */
-#define MBEDTLS_VERSION_MAJOR  4
-#define MBEDTLS_VERSION_MINOR  2
-#define MBEDTLS_VERSION_PATCH  0
-#define MBEDTLS_VERSION_NUMBER         0x04020000
-#define MBEDTLS_VERSION_STRING         "4.2.0"
-#define MBEDTLS_VERSION_STRING_FULL    "Mbed TLS 4.2.0"
+/* MEMORY_E becomes PSA_ERROR_INSUFFICIENT_MEMORY, other errors become err */
+WOLFSSL_LOCAL int wolfPSA_MbedRet(int wcRet, int err);
 
-/* MBEDTLS_X509_CRT_PARSE_C is in the generated config, with
- * MBEDTLS_COMPAT=1 */
-/* No mbedtls_x509_crt_info() and friends yet */
-#define MBEDTLS_X509_REMOVE_INFO
+#if defined(MBEDTLS_FS_IO)
+/* Loads path with the errors of Mbed TLS's mbedtls_pk_load_file(). Free *buf
+ * with wolfPSA_MbedFreeFile() whatever the result. */
+WOLFSSL_LOCAL int wolfPSA_MbedLoadFile(const char* path, unsigned char** buf,
+    size_t* len);
+WOLFSSL_LOCAL void wolfPSA_MbedFreeFile(unsigned char* buf, size_t len);
+#endif /* MBEDTLS_FS_IO */
 
-#endif /* MBEDTLS_BUILD_INFO_H */
+#endif /* WOLFPSA_TF_PSA_INTERNAL_H */

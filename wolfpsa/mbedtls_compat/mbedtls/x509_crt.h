@@ -42,7 +42,7 @@ typedef struct mbedtls_x509_crt {
 
 typedef struct mbedtls_x509_crl mbedtls_x509_crl;
 
-/* Not applied: wolfSSL's own limits hold */
+/* Opaque, so no custom profiles. Not applied: wolfSSL's own limits hold. */
 typedef struct mbedtls_x509_crt_profile mbedtls_x509_crt_profile;
 
 extern const mbedtls_x509_crt_profile mbedtls_x509_crt_profile_default;

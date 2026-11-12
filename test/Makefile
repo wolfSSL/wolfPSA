@@ -345,7 +345,8 @@ psa_tf_psa_threading_test: psa_server/psa_tf_psa_threading_test.c \
 TRACK_BUILD_DIR := $(abspath .)/build-track$(if $(SANITIZE_FLAGS),-asan)
 TRACK_LIB := $(TRACK_BUILD_DIR)/libwolfpsa-track.a
 TRACK_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLFSSL_TRACK_MEMORY \
-	-DWOLFPSA_MBEDTLS_COMPAT $(VARIANT_INC) -I$(TRACK_BUILD_DIR)/include
+	-DWOLFPSA_MBEDTLS_COMPAT $(VARIANT_INC) \
+	-I$(WOLFPSA_ABS)/wolfpsa/mbedtls_compat -I$(TRACK_BUILD_DIR)/include
 
 $(TRACK_LIB): FORCE
 	$(call variant_lib,$(TRACK_BUILD_DIR),-DWOLFSSL_TRACK_MEMORY, \
