@@ -8,6 +8,9 @@
 # Expect: pass must PASS. fail must FAIL or SKIP: mark it pass once it
 # passes. notrun is left out of the run.
 #
+# Function: the test function in test_suite_ssl.function that runs the case.
+# select.py fails when it differs from Mbed TLS's.
+#
 # Waits on, for fail:
 #   session        mbedtls_ssl_session_save and _load; PSK too for a session
 #                  without a certificate
@@ -29,229 +32,244 @@
 #   tls13-off      it too
 #   get_hostname   calls mbedtls_ssl_<name>, which wolfPSA does not have, so
 #   tls_prf        its test function is not built
-#   group_list
+#   group_list     the same for mbedtls_ssl_get_supported_group_list or
+#                  MBEDTLS_SSL_IANA_TLS_GROUPS_INFO
 #
-# Columns: group, expect, waits on or why, description
-api    fail   psk           Attempt to register multiple PSKs
-api    fail   psk           Attempt to register multiple PSKS, incl. opaque PSK, #0
-api    fail   psk           Attempt to register multiple PSKs, incl. opaque PSK, #1
-api    fail   psk           Attempt to register multiple PSKs, incl. opaque PSK, #2
-mock   pass   -             Test callback buffer sanity
-mock   pass   -             Callback buffer test: Exercise simple write/read
-mock   pass   -             Callback buffer test: Filling up the buffer
-mock   pass   -             Callback buffer test: Filling up the buffer in two steps
-mock   pass   -             Callback buffer test: Reading out the buffer in two steps
-mock   pass   -             Callback buffer test: Data wraps in buffer
-mock   pass   -             Callback buffer test: Data starts at the end
-mock   pass   -             Callback buffer test: Can write less than requested
-mock   pass   -             Callback buffer test: Can read less than requested
-mock   pass   -             Callback buffer test: Writing to full buffer
-mock   pass   -             Callback buffer test: Reading from empty buffer
-mock   pass   -             Test mock socket sanity
-mock   pass   -             Test mock blocking TCP connection
-mock   pass   -             Test mock non-blocking TCP connection
-mock   pass   -             Test mock blocking TCP connection (interleaving)
-mock   pass   -             Test mock non-blocking TCP connection (interleaving)
-mock   pass   -             Message queue - sanity
-mock   pass   -             Message queue - basic test
-mock   pass   -             Message queue - overflow/underflow
-mock   pass   -             Message queue - interleaved
-mock   pass   -             Message queue - insufficient buffer
-mock   pass   -             Message transport mock - uninitialized structures
-mock   pass   -             Message transport mock - basic test
-mock   pass   -             Message transport mock - queue overflow/underflow
-mock   pass   -             Message transport mock - socket overflow
-mock   pass   -             Message transport mock - truncated message
-mock   pass   -             Message transport mock - socket read error
-mock   pass   -             Message transport mock - one-way interleaved sends/reads
-mock   pass   -             Message transport mock - two-way interleaved sends/reads
-target pass   -             Test mbedtls_endpoint sanity for the client
-target pass   -             Test mbedtls_endpoint sanity for the server
-target pass   -             Handshake, tls1_2
-target pass   -             Handshake, tls1_3
-target pass   -             Handshake, ECDHE-RSA-WITH-AES-256-GCM-SHA384
-target pass   -             Handshake, ECDHE-RSA-WITH-AES-128-CBC-SHA256
-target pass   -             Handshake, ECDHE-RSA-WITH-AES-256-CBC-SHA384
-target notrun ccm           Handshake, ECDHE-ECDSA-WITH-AES-256-CCM
-target fail   psk           Handshake, PSK-WITH-AES-128-CBC-SHA
-target fail   psk           DTLS Handshake, PSK-WITH-AES-128-CBC-SHA
-target fail   dtls          DTLS Handshake, tls1_2
-target fail   dtls          DTLS Handshake, ECDHE-RSA-WITH-AES-256-GCM-SHA384
-target fail   dtls          DTLS Handshake, ECDHE-RSA-WITH-AES-128-CBC-SHA256
-target fail   dtls          DTLS Handshake, ECDHE-RSA-WITH-AES-256-CBC-SHA384
-target notrun ccm           DTLS Handshake, ECDHE-ECDSA-WITH-AES-256-CCM
-target fail   context       DTLS Handshake with serialization, tls1_2
-target fail   dtls          DTLS Handshake fragmentation, MFL=512
-target fail   dtls          DTLS Handshake fragmentation, MFL=1024
-target notrun tls13-off     Handshake min/max version check, all -> 1.2
-target pass   -             Handshake min/max version check, all -> 1.3
-target pass   -             Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, non-opaque
-target fail   opaque        Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, PSA_ALG_ANY_HASH
-target fail   opaque        Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, PSA_ALG_SHA_384
-target fail   opaque        Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, invalid alg
-target fail   opaque        Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, bad alg
-target fail   opaque        Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, bad usage
-target notrun ccm           Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, non-opaque
-target notrun ccm           Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, opaque, PSA_ALG_ANY_HASH
-target notrun ccm           Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, opaque, PSA_ALG_SHA_256
-target notrun ccm           Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, opaque, bad alg
-target notrun ccm           Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, opaque, bad usage
-target notrun internal      Handshake: DTLS 1.2, badmac_seen on client
-target notrun internal      Handshake: DTLS 1.2, badmac_seen on server
-target fail   mfl           Sending app data via TLS, MFL=512 without fragmentation
-target fail   mfl           Sending app data via TLS, MFL=512 with fragmentation
-target fail   mfl           Sending app data via TLS, MFL=1024 without fragmentation
-target fail   mfl           Sending app data via TLS, MFL=1024 with fragmentation
-target fail   mfl           Sending app data via TLS, MFL=2048 without fragmentation
-target fail   mfl           Sending app data via TLS, MFL=2048 with fragmentation
-target fail   mfl           Sending app data via TLS, MFL=4096 without fragmentation
-target fail   mfl           Sending app data via TLS, MFL=4096 with fragmentation
-target pass   -             Sending app data via TLS without MFL and without fragmentation
-target pass   -             Sending app data via TLS without MFL and with fragmentation
-target fail   dtls          Sending app data via DTLS, MFL=512 without fragmentation
-target fail   dtls          Sending app data via DTLS, MFL=512 with fragmentation
-target fail   dtls          Sending app data via DTLS, MFL=1024 without fragmentation
-target fail   dtls          Sending app data via DTLS, MFL=1024 with fragmentation
-target fail   dtls          Sending app data via DTLS, MFL=2048 without fragmentation
-target fail   dtls          Sending app data via DTLS, MFL=2048 with fragmentation
-target fail   dtls          Sending app data via DTLS, MFL=4096 without fragmentation
-target fail   dtls          Sending app data via DTLS, MFL=4096 with fragmentation
-target fail   dtls          Sending app data via DTLS, without MFL and without fragmentation
-target fail   dtls          Sending app data via DTLS, without MFL and with fragmentation
-target fail   renegotiation DTLS renegotiation: no legacy renegotiation
-target fail   renegotiation DTLS renegotiation: legacy renegotiation
-target fail   renegotiation DTLS renegotiation: legacy break handshake
-target notrun internal      DTLS renegotiation: after bad MAC on client
-target notrun internal      DTLS renegotiation: after bad MAC on server
-api    notrun get_hostname  SSL SET_HOSTNAME memory leak: call ssl_set_hostname twice
-target fail   session       SSL session serialization: Wrong major version
-target fail   session       SSL session serialization: Wrong minor version
-target fail   session       SSL session serialization: Wrong patch version
-target fail   session       SSL session serialization: Wrong config
-target fail   ticket        TLS 1.3: CLI: session serialization: Wrong major version
-target fail   ticket        TLS 1.3: CLI: session serialization: Wrong minor version
-target fail   ticket        TLS 1.3: CLI: session serialization: Wrong patch version
-target fail   ticket        TLS 1.3: CLI: session serialization: Wrong config
-target fail   ticket        TLS 1.3: SRV: session serialization: Wrong major version
-target fail   ticket        TLS 1.3: SRV: session serialization: Wrong minor version
-target fail   ticket        TLS 1.3: SRV: session serialization: Wrong patch version
-target fail   ticket        TLS 1.3: SRV: session serialization: Wrong config
-api    notrun tls_prf       SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_NONE
-api    notrun tls_prf       SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA384
-api    notrun tls_prf       SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA256
-api    notrun tls_prf       SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA384 SHA-384 not enabled
-api    notrun tls_prf       SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA256 SHA-256 not enabled
-target fail   session       Session serialization, load-save: no ticket, no cert
-target fail   ticket        Session serialization, load-save: small ticket, no cert
-target fail   ticket        Session serialization, load-save: large ticket, no cert
-target fail   session       Session serialization, load-save: no ticket, cert
-target fail   ticket        Session serialization, load-save: small ticket, cert
-target fail   ticket        Session serialization, load-save: large ticket, cert
-target fail   ticket        TLS 1.3: CLI: Session serialization, load-save: no ticket
-target fail   ticket        TLS 1.3: CLI: Session serialization, load-save: small ticket
-target fail   ticket        TLS 1.3: CLI: Session serialization, load-save: large ticket
-target fail   ticket        TLS 1.3: SRV: Session serialization, load-save
-target fail   session       Session serialization, save buffer size: no ticket, no cert
-target fail   ticket        Session serialization, save buffer size: small ticket, no cert
-target fail   ticket        Session serialization, save buffer size: large ticket, no cert
-target fail   session       Session serialization, save buffer size: no ticket, cert
-target fail   ticket        Session serialization, save buffer size: small ticket, cert
-target fail   ticket        Session serialization, save buffer size: large ticket, cert
-target fail   ticket        TLS 1.3: CLI: Session serialization, save buffer size: no ticket
-target fail   ticket        TLS 1.3: CLI: Session serialization, save buffer size: small ticket
-target fail   ticket        TLS 1.3: CLI: Session serialization, save buffer size: large ticket
-target fail   ticket        TLS 1.3: SRV: Session serialization, save buffer size
-target fail   session       Session serialization, load buffer size: no ticket, no cert
-target fail   ticket        Session serialization, load buffer size: small ticket, no cert
-target fail   ticket        Session serialization, load buffer size: large ticket, no cert
-target fail   session       Session serialization, load buffer size: no ticket, cert
-target fail   ticket        Session serialization, load buffer size: small ticket, cert
-target fail   ticket        Session serialization, load buffer size: large ticket, cert
-target fail   ticket        TLS 1.3: CLI: Session serialization, load buffer size: no ticket
-target fail   ticket        TLS 1.3: CLI: Session serialization, load buffer size: small ticket
-target fail   ticket        TLS 1.3: CLI: Session serialization, load buffer size: large ticket
-target fail   ticket        TLS 1.3: SRV: Session serialization, load buffer size
-api    notrun internal      Test configuration of EC groups through mbedtls_ssl_conf_groups()
-api    notrun group_list    Get supported group list: x25519, positive
-api    notrun group_list    Get supported group list: x25519, negative
-api    notrun group_list    Get supported group list: secp256r1, positive
-api    notrun group_list    Get supported group list: secp256r1, negative
-api    notrun group_list    Get supported group list: secp384r1, positive
-api    notrun group_list    Get supported group list: secp384r1, negative
-api    notrun group_list    Get supported group list: x448, positive
-api    notrun group_list    Get supported group list: x448, negative
-api    notrun group_list    Get supported group list: secp521r1, positive
-api    notrun group_list    Get supported group list: secp521r1, negative
-api    notrun group_list    Get supported group list: brainpool256r1, positive
-api    notrun group_list    Get supported group list: brainpool256r1, negative
-api    notrun group_list    Get supported group list: brainpool384r1, positive
-api    notrun group_list    Get supported group list: brainpool384r1, negative
-api    notrun group_list    Get supported group list: brainpool512r1, positive
-api    notrun group_list    Get supported group list: brainpool512r1, negative
-api    notrun group_list    Get supported group list: ffdhe2048, positive
-api    notrun group_list    Get supported group list: ffdhe2048, negative
-api    notrun group_list    Get supported group list: ffdhe3072, positive
-api    notrun group_list    Get supported group list: ffdhe3072, negative
-api    notrun group_list    Get supported group list: ffdhe4096, positive
-api    notrun group_list    Get supported group list: ffdhe4096, negative
-api    notrun group_list    Get supported group list: ffdhe6144, positive
-api    notrun group_list    Get supported group list: ffdhe6144, negative
-api    notrun group_list    Get supported group list: ffdhe8192, positive
-api    notrun group_list    Get supported group list: ffdhe8192, negative
-api    fail   defaults      Version config: valid client TLS 1.2 only
-api    fail   defaults      Version config: valid client DTLS 1.2 only
-api    fail   defaults      Version config: valid server TLS 1.2 only
-api    fail   defaults      Version config: valid server DTLS 1.2 only
-api    notrun tls12-off     Version config: invalid client TLS 1.2 only
-api    notrun tls12-off     Version config: invalid client DTLS 1.2 only
-api    notrun tls12-off     Version config: invalid server TLS 1.2 only
-api    notrun tls12-off     Version config: invalid server DTLS 1.2 only
-api    fail   defaults      Version config: valid client TLS 1.3 only
-api    fail   defaults      Version config: unsupported client DTLS 1.3 only
-api    fail   defaults      Version config: valid server TLS 1.3 only
-api    fail   defaults      Version config: unsupported server DTLS 1.3 only
-api    notrun tls13-off     Version config: invalid client TLS 1.3 only
-api    notrun tls13-off     Version config: invalid client DTLS 1.3 only
-api    notrun tls13-off     Version config: invalid server TLS 1.3 only
-api    notrun tls13-off     Version config: invalid server DTLS 1.3 only
-api    fail   defaults      Version config: valid client hybrid TLS 1.2/3
-api    fail   defaults      Version config: unsupported client hybrid DTLS 1.2/3
-api    fail   defaults      Version config: valid server hybrid TLS 1.2/3
-api    fail   defaults      Version config: unsupported server hybrid DTLS 1.2/3
-api    notrun tls12-off     Version config: valid client hybrid TLS 1.2/3, no TLS 1.2
-api    notrun tls12-off     Version config: unsupported client hybrid DTLS 1.2/3, no TLS 1.2
-api    notrun tls12-off     Version config: valid server hybrid TLS 1.2/3, no TLS 1.2
-api    notrun tls12-off     Version config: unsupported server hybrid DTLS 1.2/3, no TLS 1.2
-api    notrun tls13-off     Version config: valid client hybrid TLS 1.2/3, no TLS 1.3
-api    notrun tls13-off     Version config: unsupported client hybrid DTLS 1.2/3, no TLS 1.3
-api    notrun tls13-off     Version config: valid server hybrid TLS 1.2/3, no TLS 1.3
-api    notrun tls13-off     Version config: unsupported server hybrid DTLS 1.2/3, no TLS 1.3
-api    fail   defaults      Version config: invalid minimum version
-api    fail   defaults      Version config: invalid maximum version
-api    fail   timing        Test accessor into timing_delay_context
-api    fail   cid           Sanity test cid functions
-api    notrun internal      Test Elliptic curves' info parsing
-target fail   exporter      TLS 1.2 Keying Material Exporter: Consistent results, no context
-target fail   exporter      TLS 1.2 Keying Material Exporter: Consistent results, with context
-target fail   exporter      TLS 1.2 Keying Material Exporter: Consistent results, large keys
-target fail   exporter      TLS 1.2 Keying Material Exporter: Uses label
-target fail   exporter      TLS 1.2 Keying Material Exporter: Uses context
-target fail   exporter      TLS 1.2 Keying Material Exporter: Context too long
-target fail   exporter      TLS 1.2 Keying Material Exporter: Handshake not done
-target fail   exporter      TLS 1.3 Keying Material Exporter: Consistent results, no context
-target fail   exporter      TLS 1.3 Keying Material Exporter: Consistent results, with context
-target fail   exporter      TLS 1.3 Keying Material Exporter: Consistent results, large keys
-target fail   exporter      TLS 1.3 Keying Material Exporter: Uses label
-target fail   exporter      TLS 1.3 Keying Material Exporter: Uses context
-target fail   exporter      TLS 1.3 Keying Material Exporter: Uses length
-target fail   exporter      TLS 1.3 Keying Material Exporter: Exported key too long
-target fail   exporter      TLS 1.3 Keying Material Exporter: Label too long
-target fail   exporter      TLS 1.3 Keying Material Exporter: Handshake not done
-target notrun internal      Send large fragmented ClientHello: reassembled 1 byte larger than the buffer
-target notrun internal      Send large fragmented ClientHello: would just fit except for overhead
-target notrun internal      Send large fragmented ClientHello: would fit except for overhead (1)
-target notrun internal      Send large fragmented ClientHello: would fit except for overhead (2)
-target notrun internal      Send large fragmented ClientHello: would fit except for overhead (3)
-target notrun internal      Send large fragmented ClientHello: would fit except for overhead (4)
-target notrun internal      Send large fragmented ClientHello: just fits
-target notrun internal      Send large fragmented ClientHello: length doesn't fit in two bytes
+# Columns: group, expect, waits on or why, function, description
+api    fail   psk           test_multiple_psks                        Attempt to register multiple PSKs
+api    fail   psk           test_multiple_psks_opaque                 Attempt to register multiple PSKS, incl. opaque PSK, #0
+api    fail   psk           test_multiple_psks_opaque                 Attempt to register multiple PSKs, incl. opaque PSK, #1
+api    fail   psk           test_multiple_psks_opaque                 Attempt to register multiple PSKs, incl. opaque PSK, #2
+mock   pass   -             test_callback_buffer_sanity               Test callback buffer sanity
+mock   pass   -             test_callback_buffer                      Callback buffer test: Exercise simple write/read
+mock   pass   -             test_callback_buffer                      Callback buffer test: Filling up the buffer
+mock   pass   -             test_callback_buffer                      Callback buffer test: Filling up the buffer in two steps
+mock   pass   -             test_callback_buffer                      Callback buffer test: Reading out the buffer in two steps
+mock   pass   -             test_callback_buffer                      Callback buffer test: Data wraps in buffer
+mock   pass   -             test_callback_buffer                      Callback buffer test: Data starts at the end
+mock   pass   -             test_callback_buffer                      Callback buffer test: Can write less than requested
+mock   pass   -             test_callback_buffer                      Callback buffer test: Can read less than requested
+mock   pass   -             test_callback_buffer                      Callback buffer test: Writing to full buffer
+mock   pass   -             test_callback_buffer                      Callback buffer test: Reading from empty buffer
+mock   pass   -             ssl_mock_sanity                           Test mock socket sanity
+mock   pass   -             ssl_mock_tcp                              Test mock blocking TCP connection
+mock   pass   -             ssl_mock_tcp                              Test mock non-blocking TCP connection
+mock   pass   -             ssl_mock_tcp_interleaving                 Test mock blocking TCP connection (interleaving)
+mock   pass   -             ssl_mock_tcp_interleaving                 Test mock non-blocking TCP connection (interleaving)
+mock   pass   -             ssl_message_queue_sanity                  Message queue - sanity
+mock   pass   -             ssl_message_queue_basic                   Message queue - basic test
+mock   pass   -             ssl_message_queue_overflow_underflow      Message queue - overflow/underflow
+mock   pass   -             ssl_message_queue_interleaved             Message queue - interleaved
+mock   pass   -             ssl_message_queue_insufficient_buffer     Message queue - insufficient buffer
+mock   pass   -             ssl_message_mock_uninitialized            Message transport mock - uninitialized structures
+mock   pass   -             ssl_message_mock_basic                    Message transport mock - basic test
+mock   pass   -             ssl_message_mock_queue_overflow_underflow Message transport mock - queue overflow/underflow
+mock   pass   -             ssl_message_mock_socket_overflow          Message transport mock - socket overflow
+mock   pass   -             ssl_message_mock_truncated                Message transport mock - truncated message
+mock   pass   -             ssl_message_mock_socket_read_error        Message transport mock - socket read error
+mock   pass   -             ssl_message_mock_interleaved_one_way      Message transport mock - one-way interleaved sends/reads
+mock   pass   -             ssl_message_mock_interleaved_two_ways     Message transport mock - two-way interleaved sends/reads
+target pass   -             mbedtls_endpoint_sanity                   Test mbedtls_endpoint sanity for the client
+target pass   -             mbedtls_endpoint_sanity                   Test mbedtls_endpoint sanity for the server
+target pass   -             handshake_version                         Handshake, tls1_2
+target pass   -             handshake_version                         Handshake, tls1_3
+target pass   -             handshake_cipher                          Handshake, ECDHE-RSA-WITH-AES-256-GCM-SHA384
+target pass   -             handshake_cipher                          Handshake, ECDHE-RSA-WITH-AES-128-CBC-SHA256
+target pass   -             handshake_cipher                          Handshake, ECDHE-RSA-WITH-AES-256-CBC-SHA384
+target notrun ccm           handshake_cipher                          Handshake, ECDHE-ECDSA-WITH-AES-256-CCM
+target fail   psk           handshake_psk_cipher                      Handshake, PSK-WITH-AES-128-CBC-SHA
+target fail   psk           handshake_psk_cipher                      DTLS Handshake, PSK-WITH-AES-128-CBC-SHA
+target fail   dtls          handshake_version                         DTLS Handshake, tls1_2
+target fail   dtls          handshake_cipher                          DTLS Handshake, ECDHE-RSA-WITH-AES-256-GCM-SHA384
+target fail   dtls          handshake_cipher                          DTLS Handshake, ECDHE-RSA-WITH-AES-128-CBC-SHA256
+target fail   dtls          handshake_cipher                          DTLS Handshake, ECDHE-RSA-WITH-AES-256-CBC-SHA384
+target notrun ccm           handshake_cipher                          DTLS Handshake, ECDHE-ECDSA-WITH-AES-256-CCM
+target fail   context       handshake_serialization                   DTLS Handshake with serialization, tls1_2
+target fail   dtls          handshake_fragmentation                   DTLS Handshake fragmentation, MFL=512
+target fail   dtls          handshake_fragmentation                   DTLS Handshake fragmentation, MFL=1024
+target notrun tls13-off     handshake_version                         Handshake min/max version check, all -> 1.2
+target pass   -             handshake_version                         Handshake min/max version check, all -> 1.3
+target pass   -             handshake_ciphersuite_select              Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, non-opaque
+target fail   opaque        handshake_ciphersuite_select              Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, PSA_ALG_ANY_HASH
+target fail   opaque        handshake_ciphersuite_select              Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, PSA_ALG_SHA_384
+target fail   opaque        handshake_ciphersuite_select              Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, invalid alg
+target fail   opaque        handshake_ciphersuite_select              Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, bad alg
+target fail   opaque        handshake_ciphersuite_select              Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, bad usage
+target notrun ccm           handshake_ciphersuite_select              Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, non-opaque
+target notrun ccm           handshake_ciphersuite_select              Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, opaque, PSA_ALG_ANY_HASH
+target notrun ccm           handshake_ciphersuite_select              Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, opaque, PSA_ALG_SHA_256
+target notrun ccm           handshake_ciphersuite_select              Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, opaque, bad alg
+target notrun ccm           handshake_ciphersuite_select              Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, opaque, bad usage
+target notrun internal      handshake_with_forced_context             Handshake: DTLS 1.2, badmac_seen on client
+target notrun internal      handshake_with_forced_context             Handshake: DTLS 1.2, badmac_seen on server
+target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=512 without fragmentation
+target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=512 with fragmentation
+target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=1024 without fragmentation
+target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=1024 with fragmentation
+target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=2048 without fragmentation
+target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=2048 with fragmentation
+target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=4096 without fragmentation
+target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=4096 with fragmentation
+target pass   -             app_data_tls                              Sending app data via TLS without MFL and without fragmentation
+target pass   -             app_data_tls                              Sending app data via TLS without MFL and with fragmentation
+target fail   dtls          app_data_dtls                             Sending app data via DTLS, MFL=512 without fragmentation
+target fail   dtls          app_data_dtls                             Sending app data via DTLS, MFL=512 with fragmentation
+target fail   dtls          app_data_dtls                             Sending app data via DTLS, MFL=1024 without fragmentation
+target fail   dtls          app_data_dtls                             Sending app data via DTLS, MFL=1024 with fragmentation
+target fail   dtls          app_data_dtls                             Sending app data via DTLS, MFL=2048 without fragmentation
+target fail   dtls          app_data_dtls                             Sending app data via DTLS, MFL=2048 with fragmentation
+target fail   dtls          app_data_dtls                             Sending app data via DTLS, MFL=4096 without fragmentation
+target fail   dtls          app_data_dtls                             Sending app data via DTLS, MFL=4096 with fragmentation
+target fail   dtls          app_data_dtls                             Sending app data via DTLS, without MFL and without fragmentation
+target fail   dtls          app_data_dtls                             Sending app data via DTLS, without MFL and with fragmentation
+target fail   renegotiation renegotiation                             DTLS renegotiation: no legacy renegotiation
+target fail   renegotiation renegotiation                             DTLS renegotiation: legacy renegotiation
+target fail   renegotiation renegotiation                             DTLS renegotiation: legacy break handshake
+target notrun internal      renegotiation                             DTLS renegotiation: after bad MAC on client
+target notrun internal      renegotiation                             DTLS renegotiation: after bad MAC on server
+api    notrun get_hostname  ssl_set_hostname_twice                    SSL SET_HOSTNAME memory leak: call ssl_set_hostname twice
+target fail   session       ssl_session_serialize_version_check       SSL session serialization: Wrong major version
+target fail   session       ssl_session_serialize_version_check       SSL session serialization: Wrong minor version
+target fail   session       ssl_session_serialize_version_check       SSL session serialization: Wrong patch version
+target fail   session       ssl_session_serialize_version_check       SSL session serialization: Wrong config
+target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: CLI: session serialization: Wrong major version
+target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: CLI: session serialization: Wrong minor version
+target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: CLI: session serialization: Wrong patch version
+target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: CLI: session serialization: Wrong config
+target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: SRV: session serialization: Wrong major version
+target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: SRV: session serialization: Wrong minor version
+target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: SRV: session serialization: Wrong patch version
+target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: SRV: session serialization: Wrong config
+api    notrun tls_prf       ssl_tls_prf                               SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_NONE
+api    notrun tls_prf       ssl_tls_prf                               SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA384
+api    notrun tls_prf       ssl_tls_prf                               SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA256
+api    notrun tls_prf       ssl_tls_prf                               SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA384 SHA-384 not enabled
+api    notrun tls_prf       ssl_tls_prf                               SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA256 SHA-256 not enabled
+target fail   session       ssl_serialize_session_load_save           Session serialization, load-save: no ticket, no cert
+target fail   ticket        ssl_serialize_session_load_save           Session serialization, load-save: small ticket, no cert
+target fail   ticket        ssl_serialize_session_load_save           Session serialization, load-save: large ticket, no cert
+target fail   session       ssl_serialize_session_load_save           Session serialization, load-save: no ticket, cert
+target fail   ticket        ssl_serialize_session_load_save           Session serialization, load-save: small ticket, cert
+target fail   ticket        ssl_serialize_session_load_save           Session serialization, load-save: large ticket, cert
+target fail   ticket        ssl_serialize_session_load_save           TLS 1.3: CLI: Session serialization, load-save: no ticket
+target fail   ticket        ssl_serialize_session_load_save           TLS 1.3: CLI: Session serialization, load-save: small ticket
+target fail   ticket        ssl_serialize_session_load_save           TLS 1.3: CLI: Session serialization, load-save: large ticket
+target fail   ticket        ssl_serialize_session_load_save           TLS 1.3: SRV: Session serialization, load-save
+target fail   session       ssl_serialize_session_save_buf_size       Session serialization, save buffer size: no ticket, no cert
+target fail   ticket        ssl_serialize_session_save_buf_size       Session serialization, save buffer size: small ticket, no cert
+target fail   ticket        ssl_serialize_session_save_buf_size       Session serialization, save buffer size: large ticket, no cert
+target fail   session       ssl_serialize_session_save_buf_size       Session serialization, save buffer size: no ticket, cert
+target fail   ticket        ssl_serialize_session_save_buf_size       Session serialization, save buffer size: small ticket, cert
+target fail   ticket        ssl_serialize_session_save_buf_size       Session serialization, save buffer size: large ticket, cert
+target fail   ticket        ssl_serialize_session_save_buf_size       TLS 1.3: CLI: Session serialization, save buffer size: no ticket
+target fail   ticket        ssl_serialize_session_save_buf_size       TLS 1.3: CLI: Session serialization, save buffer size: small ticket
+target fail   ticket        ssl_serialize_session_save_buf_size       TLS 1.3: CLI: Session serialization, save buffer size: large ticket
+target fail   ticket        ssl_serialize_session_save_buf_size       TLS 1.3: SRV: Session serialization, save buffer size
+target fail   session       ssl_serialize_session_load_buf_size       Session serialization, load buffer size: no ticket, no cert
+target fail   ticket        ssl_serialize_session_load_buf_size       Session serialization, load buffer size: small ticket, no cert
+target fail   ticket        ssl_serialize_session_load_buf_size       Session serialization, load buffer size: large ticket, no cert
+target fail   session       ssl_serialize_session_load_buf_size       Session serialization, load buffer size: no ticket, cert
+target fail   ticket        ssl_serialize_session_load_buf_size       Session serialization, load buffer size: small ticket, cert
+target fail   ticket        ssl_serialize_session_load_buf_size       Session serialization, load buffer size: large ticket, cert
+target fail   ticket        ssl_serialize_session_load_buf_size       TLS 1.3: CLI: Session serialization, load buffer size: no ticket
+target fail   ticket        ssl_serialize_session_load_buf_size       TLS 1.3: CLI: Session serialization, load buffer size: small ticket
+target fail   ticket        ssl_serialize_session_load_buf_size       TLS 1.3: CLI: Session serialization, load buffer size: large ticket
+target fail   ticket        ssl_serialize_session_load_buf_size       TLS 1.3: SRV: Session serialization, load buffer size
+api    notrun internal      conf_group                                Test configuration of EC groups through mbedtls_ssl_conf_groups()
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: x25519, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: x25519, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: secp256r1, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: secp256r1, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: secp384r1, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: secp384r1, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: x448, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: x448, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: secp521r1, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: secp521r1, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: brainpool256r1, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: brainpool256r1, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: brainpool384r1, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: brainpool384r1, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: brainpool512r1, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: brainpool512r1, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: ffdhe2048, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: ffdhe2048, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: ffdhe3072, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: ffdhe3072, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: ffdhe4096, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: ffdhe4096, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: ffdhe6144, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: ffdhe6144, negative
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: ffdhe8192, positive
+api    notrun group_list    test_mbedtls_ssl_get_supported_group_list Get supported group list: ffdhe8192, negative
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: x25519
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: secp256r1
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: secp256k1
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: secp384r1
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: x448
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: secp521r1
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: brainpoolP256r1
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: brainpoolP384r1
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: brainpoolP512r1
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: ffdhe2048
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: ffdhe3072
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: ffdhe4096
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: ffdhe6144
+api    notrun group_list    test_mbedtls_tls_id_group_name_table      TLS ID <-> group name: ffdhe8192
+api    fail   defaults      conf_version                              Version config: valid client TLS 1.2 only
+api    fail   defaults      conf_version                              Version config: valid client DTLS 1.2 only
+api    fail   defaults      conf_version                              Version config: valid server TLS 1.2 only
+api    fail   defaults      conf_version                              Version config: valid server DTLS 1.2 only
+api    notrun tls12-off     conf_version                              Version config: invalid client TLS 1.2 only
+api    notrun tls12-off     conf_version                              Version config: invalid client DTLS 1.2 only
+api    notrun tls12-off     conf_version                              Version config: invalid server TLS 1.2 only
+api    notrun tls12-off     conf_version                              Version config: invalid server DTLS 1.2 only
+api    fail   defaults      conf_version                              Version config: valid client TLS 1.3 only
+api    fail   defaults      conf_version                              Version config: unsupported client DTLS 1.3 only
+api    fail   defaults      conf_version                              Version config: valid server TLS 1.3 only
+api    fail   defaults      conf_version                              Version config: unsupported server DTLS 1.3 only
+api    notrun tls13-off     conf_version                              Version config: invalid client TLS 1.3 only
+api    notrun tls13-off     conf_version                              Version config: invalid client DTLS 1.3 only
+api    notrun tls13-off     conf_version                              Version config: invalid server TLS 1.3 only
+api    notrun tls13-off     conf_version                              Version config: invalid server DTLS 1.3 only
+api    fail   defaults      conf_version                              Version config: valid client hybrid TLS 1.2/3
+api    fail   defaults      conf_version                              Version config: unsupported client hybrid DTLS 1.2/3
+api    fail   defaults      conf_version                              Version config: valid server hybrid TLS 1.2/3
+api    fail   defaults      conf_version                              Version config: unsupported server hybrid DTLS 1.2/3
+api    notrun tls12-off     conf_version                              Version config: valid client hybrid TLS 1.2/3, no TLS 1.2
+api    notrun tls12-off     conf_version                              Version config: unsupported client hybrid DTLS 1.2/3, no TLS 1.2
+api    notrun tls12-off     conf_version                              Version config: valid server hybrid TLS 1.2/3, no TLS 1.2
+api    notrun tls12-off     conf_version                              Version config: unsupported server hybrid DTLS 1.2/3, no TLS 1.2
+api    notrun tls13-off     conf_version                              Version config: valid client hybrid TLS 1.2/3, no TLS 1.3
+api    notrun tls13-off     conf_version                              Version config: unsupported client hybrid DTLS 1.2/3, no TLS 1.3
+api    notrun tls13-off     conf_version                              Version config: valid server hybrid TLS 1.2/3, no TLS 1.3
+api    notrun tls13-off     conf_version                              Version config: unsupported server hybrid DTLS 1.2/3, no TLS 1.3
+api    fail   defaults      conf_version                              Version config: invalid minimum version
+api    fail   defaults      conf_version                              Version config: invalid maximum version
+api    fail   timing        timing_final_delay_accessor               Test accessor into timing_delay_context
+api    fail   cid           cid_sanity                                Sanity test cid functions
+api    notrun internal      elliptic_curve_get_properties             Test Elliptic curves' info parsing
+target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.2 Keying Material Exporter: Consistent results, no context
+target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.2 Keying Material Exporter: Consistent results, with context
+target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.2 Keying Material Exporter: Consistent results, large keys
+target fail   exporter      ssl_tls_exporter_uses_label               TLS 1.2 Keying Material Exporter: Uses label
+target fail   exporter      ssl_tls_exporter_uses_context             TLS 1.2 Keying Material Exporter: Uses context
+target fail   exporter      ssl_tls_exporter_rejects_bad_parameters   TLS 1.2 Keying Material Exporter: Context too long
+target fail   exporter      ssl_tls_exporter_too_early                TLS 1.2 Keying Material Exporter: Handshake not done
+target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.3 Keying Material Exporter: Consistent results, no context
+target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.3 Keying Material Exporter: Consistent results, with context
+target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.3 Keying Material Exporter: Consistent results, large keys
+target fail   exporter      ssl_tls_exporter_uses_label               TLS 1.3 Keying Material Exporter: Uses label
+target fail   exporter      ssl_tls_exporter_uses_context             TLS 1.3 Keying Material Exporter: Uses context
+target fail   exporter      ssl_tls13_exporter_uses_length            TLS 1.3 Keying Material Exporter: Uses length
+target fail   exporter      ssl_tls_exporter_rejects_bad_parameters   TLS 1.3 Keying Material Exporter: Exported key too long
+target fail   exporter      ssl_tls_exporter_rejects_bad_parameters   TLS 1.3 Keying Material Exporter: Label too long
+target fail   exporter      ssl_tls_exporter_too_early                TLS 1.3 Keying Material Exporter: Handshake not done
+target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: reassembled 1 byte larger than the buffer
+target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: would just fit except for overhead
+target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: would fit except for overhead (1)
+target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: would fit except for overhead (2)
+target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: would fit except for overhead (3)
+target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: would fit except for overhead (4)
+target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: just fits
+target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: length doesn't fit in two bytes

@@ -12,6 +12,8 @@
 import collections
 import sys
 
+import cases
+
 GROUPS = ('target', 'api', 'mock')
 
 
@@ -24,14 +26,11 @@ def main():
         sys.exit('Usage: check.py [--all-pass] CASES OUTCOME')
     cases_path, outcome_path = args
 
-    cases = {}
-    with open(cases_path, encoding='ascii') as f:
-        for line in f:
-            if line.strip() and not line.startswith('#'):
-                group, expect, waits, desc = line.split(None, 3)
-                if all_pass and expect == 'fail':
-                    expect = 'pass'
-                cases[desc.strip()] = (group, expect, waits)
+    listed = cases.read(cases_path)
+    if all_pass:
+        listed = {desc: case._replace(expect='pass')
+                  if case.expect == 'fail' else case
+                  for desc, case in listed.items()}
 
     results = {}
     try:
@@ -44,31 +43,32 @@ def main():
 
     bad = []
     for desc, (result, reason) in results.items():
-        if desc not in cases:
+        if desc not in listed:
             bad.append('not in cases.txt: ' + desc)
-        elif cases[desc][1] == 'notrun':
+        elif listed[desc].expect == 'notrun':
             bad.append('run, but marked notrun: ' + desc)
-    for desc, (group, expect, waits) in cases.items():
-        if expect == 'notrun':
+    for desc, case in listed.items():
+        if case.expect == 'notrun':
             continue
         if desc not in results:
             bad.append('not run: ' + desc)
             continue
         result, reason = results[desc]
-        if expect == 'pass' and result != 'PASS':
+        if case.expect == 'pass' and result != 'PASS':
             bad.append('%s, expected pass: %s (%s)' % (result, desc, reason))
-        elif expect == 'fail' and result == 'PASS':
+        elif case.expect == 'fail' and result == 'PASS':
             bad.append('PASS, expected fail: ' + desc)
 
     for group in GROUPS:
-        run = [(d, c) for d, c in cases.items()
-               if c[0] == group and c[1] != 'notrun']
+        run = [(d, c) for d, c in listed.items()
+               if c.group == group and c.expect != 'notrun']
         passed = sum(results.get(d, ('',))[0] == 'PASS' for d, _ in run)
-        notrun = sum(c[0] == group and c[1] == 'notrun'
-                     for c in cases.values())
+        notrun = sum(c.group == group and c.expect == 'notrun'
+                     for c in listed.values())
         line = '  %-7s %d of %d pass' % (group, passed, len(run))
         print(line + (', %d not run' % notrun if notrun else ''))
-        waits = collections.Counter(c[2] for _, c in run if c[1] == 'fail')
+        waits = collections.Counter(c.waits for _, c in run
+                                    if c.expect == 'fail')
         if waits:
             print('          not yet: ' + ', '.join(
                 '%s %d' % w for w in waits.most_common()))
