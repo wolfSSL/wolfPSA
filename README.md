@@ -266,11 +266,11 @@ Notes:
 Most of Mbed TLS's TLS unit tests check its internals: the record layer,
 the handshake state machine, the key schedule. `mbedtls-compat-suite` runs
 the cases whose test logic uses the public API. `ssl_suite/cases.txt`
-lists them with the result each should have: pass; fail, with the feature
-it waits on; or not run, with the reason. The target prints how many pass
-and what the rest wait on, and fails when a result differs. A case that
-passes where fail is listed is an error too, so the change that adds a
-feature also marks its cases pass.
+lists them, each with its test function and the result it should have:
+pass; fail, with the feature it waits on; or not run, with the reason.
+The target prints how many pass and what the rest wait on, and fails when
+a result differs. A case that passes where fail is listed is an error too,
+so the change that adds a feature also marks its cases pass.
 
 - Mbed TLS's test helpers (`ssl_helpers.c`) reach its internals.
   `mbedtls.patch` turns those parts off and `ssl_helpers_port.c` does the

@@ -112,6 +112,8 @@ export BUILD_DIR WOLFSSL_PATH WOLFSSL_SERVER WOLFSSL_CLIENT MBEDTLS_PATH \
 # With ASAN=1: let a preloaded library, such as faketime's, come first
 ASAN_LINK_ORDER := verify_asan_link_order=0
 export ASAN_OPTIONS := $(if $(ASAN_OPTIONS),$(ASAN_OPTIONS):)$(ASAN_LINK_ORDER)
+# select.py and check.py import cases.py: no __pycache__ in the source tree
+export PYTHONDONTWRITEBYTECODE := 1
 
 .PHONY: test unit programs suite suite-ref suite-patch data-check \
 	wolfssl-check FORCE
@@ -201,7 +203,8 @@ $(SUITE_PATCHED): $(SUITE)/mbedtls.patch $(MBEDTLS_STAMP)
 
 # One recipe writes the .c and the .datax
 $(SUITE_NAME).datax: $(SUITE_NAME).c ;
-$(SUITE_NAME).c: $(SUITE)/select.py $(SUITE)/cases.txt $(SUITE_PATCHED)
+$(SUITE_NAME).c: $(SUITE)/select.py $(SUITE)/cases.py $(SUITE)/cases.txt \
+		$(SUITE_PATCHED)
 	@mkdir -p $(@D)
 	python3 $< $(SUITE)/cases.txt $(MBEDTLS_CLONE)/tests/suites $(@D)
 	python3 $(MBEDTLS_CLONE)/framework/scripts/generate_test_code.py \

@@ -5,7 +5,8 @@
 #
 # Writes test_suite_ssl_public.function and .data: the ssl suite's header, the
 # test functions the cases in CASES need, and those cases, unchanged. Fails
-# when CASES and Mbed TLS differ on the cases of those test functions.
+# when CASES and Mbed TLS differ on the cases of those test functions, or on
+# a case's test function.
 #
 # Usage: select.py CASES SUITES_DIR OUT_DIR (SUITES_DIR: the clone's
 # tests/suites)
@@ -14,27 +15,11 @@ import os
 import re
 import sys
 
+import cases
+
 FUNCTION = 'test_suite_ssl.function'
 DATA = ('test_suite_ssl.data', 'test_suite_ssl.tls-defrag.data')
 OUT = 'test_suite_ssl_public'
-EXPECT = ('pass', 'fail', 'notrun')
-
-
-def read_cases(path):
-    """Return {description: expect} from cases.txt."""
-    cases = {}
-    with open(path, encoding='ascii') as f:
-        for num, line in enumerate(f, 1):
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            fields = line.split(None, 3)
-            if len(fields) != 4 or fields[1] not in EXPECT:
-                sys.exit('%s:%d: bad line' % (path, num))
-            if fields[3] in cases:
-                sys.exit('%s:%d: case listed twice' % (path, num))
-            cases[fields[3]] = fields[1]
-    return cases
 
 
 def read_data(path):
@@ -56,7 +41,7 @@ def main():
     if len(sys.argv) != 4:
         sys.exit('Usage: select.py CASES SUITES_DIR OUT_DIR')
     cases_path, suites, out_dir = sys.argv[1:]
-    cases = read_cases(cases_path)
+    listed = cases.read(cases_path)
 
     data = []
     for name in DATA:
@@ -74,17 +59,20 @@ def main():
         name = re.search(r'\nvoid\s+(\w+)\s*\(', m.group(0)).group(1)
         bodies[name] = m.group(0)
 
-    upstream = {desc for desc, _, _ in data}
-    listed_funcs = {func for desc, func, _ in data if desc in cases}
+    upstream = {desc: func for desc, func, _ in data}
+    listed_funcs = {func for desc, func, _ in data if desc in listed}
     errors = ['listed, not in Mbed TLS: ' + desc
-              for desc in cases if desc not in upstream]
+              for desc in listed if desc not in upstream]
+    errors += ['function is %s in Mbed TLS: %s' % (upstream[desc], desc)
+               for desc, case in listed.items()
+               if desc in upstream and case.function != upstream[desc]]
     errors += ['not listed: ' + desc for desc, func, _ in data
-               if func in listed_funcs and desc not in cases]
+               if func in listed_funcs and desc not in listed]
     if errors:
         sys.exit('%s:\n  %s' % (cases_path, '\n  '.join(errors)))
 
     run = [(func, text) for desc, func, text in data
-           if cases.get(desc, 'notrun') != 'notrun']
+           if desc in listed and listed[desc].expect != 'notrun']
     funcs = {func for func, _ in run}
     todo = list(funcs)
     while todo:
