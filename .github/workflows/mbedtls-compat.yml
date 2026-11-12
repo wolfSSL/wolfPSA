@@ -6,8 +6,8 @@ on:
 
 jobs:
   # make MBEDTLS_COMPAT=1 mbedtls-compat-test: the Mbed TLS 4.x API on
-  # wolfSSL, tested with Mbed TLS's sample programs and test data. See the
-  # README.
+  # wolfSSL, tested with our tests, Mbed TLS's sample programs and its ssl
+  # suite. See the README.
   mbedtls-compat:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -44,3 +44,21 @@ jobs:
               WOLFSSL_CPPFLAGS="-DWOLFSSL_USER_SETTINGS -DNO_WOLFSSL_$side" \
               want-surface-test
           done
+
+  # make MBEDTLS_COMPAT=1 mbedtls-compat-suite-ref: the same ssl suite on Mbed
+  # TLS's own libraries, where every case must pass. No wolfSSL.
+  mbedtls-compat-suite-ref:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out wolfPSA
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake python3-jinja2 python3-jsonschema
+
+      - name: Build Mbed TLS and run the ssl suite on it
+        run: make -j"$(nproc)" MBEDTLS_COMPAT=1 mbedtls-compat-suite-ref
