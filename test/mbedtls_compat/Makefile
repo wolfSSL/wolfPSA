@@ -142,7 +142,7 @@ suite-patch:
 	@mkdir -p $(SUITE_BUILD)
 	{ sed '/^diff --git/,$$d' $(SUITE)/mbedtls.patch; \
 		git -C $(MBEDTLS_CLONE) -c diff.suppressBlankEmpty=true \
-		diff --no-ext-diff; } > $(SUITE_BUILD)/mbedtls.patch
+		diff --no-ext-diff HEAD; } > $(SUITE_BUILD)/mbedtls.patch
 	mv $(SUITE_BUILD)/mbedtls.patch $(SUITE)/mbedtls.patch
 	touch $(SUITE_PATCHED)
 

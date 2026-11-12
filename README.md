@@ -228,7 +228,8 @@ Known differences from Mbed TLS:
 make MBEDTLS_COMPAT=1 mbedtls-compat-test
 ```
 
-runs these against `libwolfpsa.a`. Each is also a target of its own.
+runs these against `libwolfpsa.a`. Each is also a target of its own;
+`make help` lists them all.
 
 - `mbedtls-compat-unit`: `test/mbedtls_compat/x509_crt_test.c`,
   `pk_test.c` and `pem_test.c` parse Mbed TLS's test certificates and keys.
@@ -240,13 +241,16 @@ runs these against `libwolfpsa.a`. Each is also a target of its own.
   TLS's server programs run against the wolfSSL example client. With
   `MBEDTLS_THREADING_C=1`, `ssl_pthread_server` serves clients at the same
   time.
+- `mbedtls-compat-suite`: Mbed TLS's TLS unit tests, the cases that test
+  the public API (below).
 
 Notes:
 
 - The tests clone Mbed TLS at `MBEDTLS_REF` (set in
   `test/mbedtls_compat/Makefile`) into the build directory, so the first
   run needs network access. `MBEDTLS_PATH` uses an Mbed TLS 4.x checkout
-  with its `framework` and `tf-psa-crypto` submodules instead.
+  with its `framework` and `tf-psa-crypto` submodules instead, for unit and
+  programs. The suite always uses the clone, since it changes it.
 - The example server and client come from a wolfSSL configured out of tree
   from `WOLFSSL_PATH`, which must not be configured in place. The tests use
   the certificates in its `certs/`. This needs autoconf, automake and
@@ -256,7 +260,35 @@ Notes:
 - `WRAP` prefixes each test program, for example `WRAP=valgrind`. Server
   programs are stopped by the script, so their exit codes are not checked.
 - `libwolfpsa.a` has no Mbed TLS code. The tests link Mbed TLS's test
-  certificate data.
+  certificate data, and the suite its test code, changed by
+  `test/mbedtls_compat/ssl_suite/mbedtls.patch` (Mbed TLS's license).
+
+Most of Mbed TLS's TLS unit tests check its internals: the record layer,
+the handshake state machine, the key schedule. `mbedtls-compat-suite` runs
+the cases whose test logic uses the public API. `ssl_suite/cases.txt`
+lists them with the result each should have: pass; fail, with the feature
+it waits on; or not run, with the reason. The target prints how many pass
+and what the rest wait on, and fails when a result differs. A case that
+passes where fail is listed is an error too, so the change that adds a
+feature also marks its cases pass.
+
+- Mbed TLS's test helpers (`ssl_helpers.c`) reach its internals.
+  `mbedtls.patch` turns those parts off and `ssl_helpers_port.c` does the
+  same through the public API. For example, the session the save and load
+  cases use comes from a handshake, where Mbed TLS's helper sets its
+  fields.
+- `mbedtls-compat-suite-ref` runs the same cases on Mbed TLS's own
+  libraries, built from the clone with CMake, and every case must pass.
+  This shows the changed helpers still test what Mbed TLS's do. It needs
+  no wolfSSL, but needs cmake and python3 with jinja2 and jsonschema.
+- To change the patch, edit the clone (`build/mbedtls_compat/mbedtls` by
+  default), then run `make MBEDTLS_COMPAT=1 mbedtls-compat-suite-patch`. A
+  newer `mbedtls.patch` resets the clone, dropping edits made there.
+- After a change of `MBEDTLS_REF`, the suite build fails when `cases.txt`
+  lists a case Mbed TLS dropped, or lacks a new case of a test function it
+  uses. If the patch does not apply, `git apply --reject` in the clone
+  leaves the parts that fail in `.rej` files; fix them, then save the
+  patch.
 
 ## Testing (PSA Architecture Test Suite)
 
