@@ -8,8 +8,8 @@
 # configuration, by preprocessing psa_want_probe.c with the same flags as the
 # rest of the build. The result is the consumer-visible PSA_WANT_ surface:
 # exactly the algorithm families wolfCrypt has enabled AND wolfPSA implements.
-# It also has the TF-PSA-Crypto options the build supports, such as
-# MBEDTLS_FS_IO.
+# It also has the TF-PSA-Crypto and Mbed TLS options the build supports, such
+# as MBEDTLS_FS_IO.
 #
 # Python (not shell) to fit the Zephyr build ecosystem, invoked via CMake's
 # PYTHON_EXECUTABLE from wolfPSA's zephyr/CMakeLists.txt, and by the Makefile.

@@ -79,6 +79,11 @@ WOLFCRYPT_SRC := \
 WOLFCRYPT_OBJ := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 
+# MBEDTLS_COMPAT=1 adds the Mbed TLS 4.x X.509 API. See src/mbedtls_x509.c.
+ifeq ($(MBEDTLS_COMPAT),1)
+CPPFLAGS += -DWOLFPSA_MBEDTLS_COMPAT
+endif
+
 # MBEDTLS_THREADING_C=1 builds a thread safe library, as in Mbed TLS. See
 # user_settings.h. Applications define MBEDTLS_THREADING_C too.
 ifeq ($(MBEDTLS_THREADING_C),1)
@@ -86,8 +91,9 @@ CPPFLAGS += -DMBEDTLS_THREADING_C
 LDFLAGS += -pthread
 endif
 
-# Changing MBEDTLS_THREADING_C rebuilds every object
+# Changing MBEDTLS_COMPAT or MBEDTLS_THREADING_C rebuilds every object
 OPTIONS_STAMP := $(BUILD_DIR)/options_$(if \
+	$(filter 1,$(MBEDTLS_COMPAT)),compat,nocompat)_$(if \
 	$(filter 1,$(MBEDTLS_THREADING_C)),threads,nothreads)
 
 WOLFSSL_CPPFLAGS ?= -DWOLFSSL_USER_SETTINGS
@@ -135,7 +141,7 @@ LDFLAGS += --coverage
 endif
 
 .PHONY: all clean psa-objects unit-run run-tests cov covclean \
-	want-surface-test
+	want-surface-test mbedtls-compat-test
 
 all: $(LIBNAME) $(SHLIBNAME)
 
@@ -277,6 +283,23 @@ run-tests:
 unit-run: all
 	@$(MAKE) -C test $(UNIT_TESTS)
 	@$(MAKE) run-tests
+
+# Mbed TLS repo, for its test data
+MBEDTLS_PATH ?= ../mbedtls
+
+ifeq ($(MBEDTLS_COMPAT),1)
+mbedtls-compat-test: $(LIBNAME)
+	$(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
+		MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH)) \
+		BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
+		PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
+		WOLFSSL_FLAGS="-I$(abspath $(WOLFSSL_PATH)) \
+			-I$(abspath $(USER_SETTINGS_PATH)) $(WOLFSSL_CPPFLAGS)" \
+		WOLFPSA_LDFLAGS="$(LDFLAGS)" check
+else
+mbedtls-compat-test:
+	@echo "Run make MBEDTLS_COMPAT=1 mbedtls-compat-test"; exit 1
+endif
 
 # Build everything with gcov instrumentation, run the unit tests, and emit an
 # HTML coverage report for src/*.c (the bundled wolfCrypt sources are

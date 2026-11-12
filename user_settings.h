@@ -137,6 +137,11 @@
 #define HAVE_XCHACHA
 #define HAVE_CMAC_KDF
 
+#ifdef WOLFPSA_MBEDTLS_COMPAT
+/* Mbed TLS accepts NULL parameters after an ECDSA signature OID */
+#define WOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED
+#endif /* WOLFPSA_MBEDTLS_COMPAT */
+
 #endif /* __ZEPHYR__ */
 
 #endif /* WOLFSSL_USER_SETTINGS_H */
