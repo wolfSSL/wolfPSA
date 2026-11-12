@@ -5,8 +5,9 @@
 #
 # Prints what passes per group and what the rest waits on, then each case
 # whose outcome differs from cases.txt, and exits 1 if there is one.
+# --all-pass: every case that runs must pass, as against Mbed TLS itself.
 #
-# Usage: check.py CASES OUTCOME
+# Usage: check.py [--all-pass] CASES OUTCOME
 
 import collections
 import sys
@@ -15,15 +16,21 @@ GROUPS = ('target', 'api', 'mock')
 
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit('Usage: check.py CASES OUTCOME')
-    cases_path, outcome_path = sys.argv[1:]
+    args = sys.argv[1:]
+    all_pass = args[:1] == ['--all-pass']
+    if all_pass:
+        args = args[1:]
+    if len(args) != 2:
+        sys.exit('Usage: check.py [--all-pass] CASES OUTCOME')
+    cases_path, outcome_path = args
 
     cases = {}
     with open(cases_path, encoding='ascii') as f:
         for line in f:
             if line.strip() and not line.startswith('#'):
                 group, expect, waits, desc = line.split(None, 3)
+                if all_pass and expect == 'fail':
+                    expect = 'pass'
                 cases[desc.strip()] = (group, expect, waits)
 
     results = {}

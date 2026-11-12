@@ -324,8 +324,13 @@ $(MBEDTLS_COMPAT_TESTS): mbedtls-compat-%: $(LIBNAME)
 
 mbedtls-compat-suite-patch:
 	$(MBEDTLS_COMPAT_MAKE) suite-patch
+
+# The suite on Mbed TLS's own libraries, without wolfSSL or wolfPSA
+mbedtls-compat-suite-ref:
+	$(MBEDTLS_COMPAT_MAKE) suite-ref
 else
-$(MBEDTLS_COMPAT_TESTS) mbedtls-compat-suite-patch:
+$(MBEDTLS_COMPAT_TESTS) mbedtls-compat-suite-patch \
+		mbedtls-compat-suite-ref:
 	@echo "Run make MBEDTLS_COMPAT=1 $@"; exit 1
 endif
 

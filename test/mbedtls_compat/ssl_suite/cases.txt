@@ -9,7 +9,6 @@
 # passes. notrun is left out of the run.
 #
 # Waits on, for fail:
-#   pss            MBEDTLS_X509_RSASSA_PSS_SUPPORT
 #   session        mbedtls_ssl_session_save and _load; PSK too for a session
 #                  without a certificate
 #   ticket         session tickets, then session save and load
@@ -69,7 +68,7 @@ mock   pass   -             Message transport mock - two-way interleaved sends/r
 target pass   -             Test mbedtls_endpoint sanity for the client
 target pass   -             Test mbedtls_endpoint sanity for the server
 target pass   -             Handshake, tls1_2
-target fail   pss           Handshake, tls1_3
+target pass   -             Handshake, tls1_3
 target pass   -             Handshake, ECDHE-RSA-WITH-AES-256-GCM-SHA384
 target pass   -             Handshake, ECDHE-RSA-WITH-AES-128-CBC-SHA256
 target pass   -             Handshake, ECDHE-RSA-WITH-AES-256-CBC-SHA384
@@ -85,7 +84,7 @@ target fail   context       DTLS Handshake with serialization, tls1_2
 target fail   dtls          DTLS Handshake fragmentation, MFL=512
 target fail   dtls          DTLS Handshake fragmentation, MFL=1024
 target notrun tls13-off     Handshake min/max version check, all -> 1.2
-target fail   pss           Handshake min/max version check, all -> 1.3
+target pass   -             Handshake min/max version check, all -> 1.3
 target pass   -             Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, non-opaque
 target fail   opaque        Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, PSA_ALG_ANY_HASH
 target fail   opaque        Handshake, select ECDHE-RSA-WITH-AES-256-GCM-SHA384, opaque, PSA_ALG_SHA_384
