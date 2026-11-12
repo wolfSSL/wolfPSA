@@ -71,8 +71,6 @@ SUITE := $(CURDIR)/ssl_suite
 SUITE_BUILD := $(BUILD_DIR)/ssl_suite
 SUITE_PATCHED := $(MBEDTLS_CLONE)-patched
 SUITE_NAME := $(SUITE_BUILD)/test_suite_ssl_public
-SUITE_OUTCOME := $(SUITE_BUILD)/outcome.csv
-SUITE_LOG := $(SUITE_BUILD)/test_suite_ssl_public.log
 SUITE_HELPERS := $(addprefix $(SUITE_BUILD)/,helpers.o random.o \
 	threading_helpers.o test_memory.o)
 SUITE_OBJS := $(SUITE_NAME).o $(SUITE_BUILD)/ssl_helpers.o \
@@ -86,6 +84,22 @@ SUITE_FLAGS := $(LAYER_FLAGS) -DTEST_WOLFPSA -I$(SUITE) -I$(SUITE)/shim \
 		tf-psa-crypto/tests/include framework/tests/src) \
 	-idirafter $(MBEDTLS_CLONE)/tf-psa-crypto/core
 SUITE_PUBLIC_HEADERS := $(MBEDTLS_CLONE)/(tf-psa-crypto/)?include/
+# The same suite and ssl_helpers_port.c on Mbed TLS's CMake build of the clone
+REF_BUILD := $(BUILD_DIR)/ssl_suite_ref
+REF_NAME := $(REF_BUILD)/test_suite_ssl_public
+
+# $(call run_suite,title,check.py options) runs the suite $< from the clone's
+# tests/, for the .data's ../framework/data_files paths. check.py compares
+# each case with cases.txt, not the suite's exit code.
+define run_suite
+@rm -f $(dir $<)outcome.csv
+cd $(MBEDTLS_CLONE)/tests && \
+	MBEDTLS_TEST_OUTCOME_FILE=$(dir $<)outcome.csv $(WRAP) $< \
+	$(SUITE_NAME).datax > $<.log 2>&1 || true
+@echo "$(1), $(MBEDTLS_REF)"
+@python3 $(SUITE)/check.py $(2) $(SUITE)/cases.txt $(dir $<)outcome.csv || \
+	{ echo "Log: $<.log"; exit 1; }
+endef
 
 # $(call link,flags,libraries) links the C source and objects among the
 # prerequisites
@@ -99,7 +113,8 @@ export BUILD_DIR WOLFSSL_PATH WOLFSSL_SERVER WOLFSSL_CLIENT MBEDTLS_PATH \
 ASAN_LINK_ORDER := verify_asan_link_order=0
 export ASAN_OPTIONS := $(if $(ASAN_OPTIONS),$(ASAN_OPTIONS):)$(ASAN_LINK_ORDER)
 
-.PHONY: test unit programs suite suite-patch data-check wolfssl-check FORCE
+.PHONY: test unit programs suite suite-ref suite-patch data-check \
+	wolfssl-check FORCE
 
 test: unit programs suite
 
@@ -113,15 +128,13 @@ programs: $(CLIENT) $(PROGRAMS) $(WOLFSSL_SERVER) $(WOLFSSL_CLIENT) | \
 		data-check
 	./programs.sh
 
-# check.py compares each case with cases.txt, not the suite's exit code
 suite: $(SUITE_NAME)
-	@rm -f $(SUITE_OUTCOME)
-	cd $(MBEDTLS_CLONE)/tests && \
-		MBEDTLS_TEST_OUTCOME_FILE=$(SUITE_OUTCOME) $(WRAP) $< \
-		$<.datax > $(SUITE_LOG) 2>&1 || true
-	@echo "Mbed TLS ssl suite, $(MBEDTLS_REF)"
-	@python3 $(SUITE)/check.py $(SUITE)/cases.txt $(SUITE_OUTCOME) || \
-		{ echo "Log: $(SUITE_LOG)"; exit 1; }
+	$(call run_suite,Mbed TLS ssl suite)
+
+# Run our modified suite on Mbed TLS's own libraries. Every case must pass,
+# which shows the ported helpers still test what upstream's do.
+suite-ref: $(REF_NAME)
+	$(call run_suite,Mbed TLS ssl suite on Mbed TLS,--all-pass)
 
 # Saves the clone's changes to mbedtls.patch, below its license lines
 suite-patch:
@@ -216,6 +229,17 @@ $(SUITE_OBJS): $(SUITE_PATCHED)
 
 $(SUITE_NAME): $(SUITE_OBJS) $(CERTS) $(WOLFPSA_LIB) $(SUITE_NAME).datax
 	$(call link,,$(LAYER_LIBS))
+
+# Mbed TLS's CMake build needs tf-psa-crypto's own framework submodule, and
+# Python's jinja2 and jsonschema
+$(REF_BUILD)/CMakeCache.txt: $(MBEDTLS_STAMP) | $(SUITE_PATCHED)
+	git -C $(MBEDTLS_CLONE) submodule update -q --init --depth 1 --recursive
+	cmake -S $(SUITE) -B $(REF_BUILD) -DCMAKE_BUILD_TYPE=Release \
+		-DMBEDTLS_DIR=$(MBEDTLS_CLONE) -DSUITE_C=$(SUITE_NAME).c
+
+# CMake tracks the sources
+$(REF_NAME): $(REF_BUILD)/CMakeCache.txt $(SUITE_NAME).datax FORCE
+	+cmake --build $(REF_BUILD) --target $(@F)
 
 -include $(SUITE_OBJS:.o=.d)
 
