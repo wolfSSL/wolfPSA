@@ -52,8 +52,8 @@ WOLFSSL_CLIENT := $(WOLFSSL_BUILD)/examples/client/client
 # Mbed TLS migration guide client
 CLIENT := $(BUILD_DIR)/client-tls-mbedtls
 # Mbed TLS sample programs, built unchanged from MBEDTLS_PATH
-PROGRAMS := $(addprefix $(BUILD_DIR)/programs/ssl/,mini_client ssl_server \
-	ssl_fork_server)
+PROGRAMS := $(addprefix $(BUILD_DIR)/programs/ssl/,mini_client ssl_client1 \
+	ssl_server ssl_fork_server)
 # Threads, with MBEDTLS_THREADING_C=1
 ifeq ($(MBEDTLS_THREADING_C),1)
 PROGRAMS += $(BUILD_DIR)/programs/ssl/ssl_pthread_server
@@ -170,9 +170,10 @@ data-check:
 		exit 1; \
 	fi
 
-# x509_crt_test sets wolfSSL's allocators. WOLFSSL_FLAGS configures the
-# wolfSSL headers as for libwolfpsa.a.
-$(BUILD_DIR)/x509_crt_test: LAYER_FLAGS += $(WOLFSSL_FLAGS) -I$(WOLFPSA_PATH)
+# x509_crt_test and ssl_test set wolfSSL's allocators. WOLFSSL_FLAGS
+# configures the wolfSSL headers as for libwolfpsa.a.
+$(addprefix $(BUILD_DIR)/,x509_crt_test ssl_test): \
+	LAYER_FLAGS += $(WOLFSSL_FLAGS) -I$(WOLFPSA_PATH)
 # ssl_test also reads wolfSSL's test certificates
 $(BUILD_DIR)/ssl_test: LAYER_FLAGS += \
 	-DWOLFSSL_CERTS_DIR='"$(WOLFSSL_PATH)/certs"'
@@ -181,8 +182,8 @@ $(CLIENT): client-tls-mbedtls.c
 $(UNIT): $(BUILD_DIR)/%: %.c
 $(PROGRAMS): $(BUILD_DIR)/programs/%: $(MBEDTLS_PATH)/programs/%.c
 $(PROGRAMS): override CPPFLAGS += -I$(MBEDTLS_PATH)/tests/include
-$(addprefix $(BUILD_DIR)/programs/ssl/,ssl_server ssl_fork_server \
-	ssl_pthread_server): $(CERTS)
+$(addprefix $(BUILD_DIR)/programs/ssl/,ssl_client1 ssl_server \
+	ssl_fork_server ssl_pthread_server): $(CERTS)
 $(CLIENT) $(UNIT) $(PROGRAMS): $(WOLFPSA_LIB)
 	@mkdir -p $(@D)
 	$(call link,$(LAYER_FLAGS),$(LAYER_LIBS))

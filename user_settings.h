@@ -171,6 +171,8 @@
 #define WOLFSSL_ALLOW_SINGLE_LABEL_HOSTNAME
 /* An IP address host name is checked against the certificate's IP SANs */
 #define WOLFSSL_IP_ALT_NAME
+/* The verify callbacks need the call for a peer certificate that passes */
+#define WOLFSSL_ALWAYS_VERIFY_CB
 #endif /* WOLFPSA_MBEDTLS_COMPAT */
 
 #endif /* __ZEPHYR__ */
