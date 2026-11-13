@@ -15,7 +15,7 @@ CC ?= cc
 AR ?= ar
 RANLIB ?= ranlib
 
-SRC := $(wildcard src/*.c)
+SRC := $(wildcard src/*.c src/mbedtls/*.c)
 OBJ := $(patsubst src/%.c,$(OBJDIR)/%.o,$(SRC))
 OBJ_PIC := $(patsubst src/%.c,$(OBJDIR_PIC)/%.o,$(SRC))
 
@@ -79,6 +79,11 @@ WOLFCRYPT_SRC := \
 WOLFCRYPT_OBJ := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 
+# MBEDTLS_COMPAT=1 adds the Mbed TLS 4.x X.509 API. See src/mbedtls/.
+ifeq ($(MBEDTLS_COMPAT),1)
+CPPFLAGS += -DWOLFPSA_MBEDTLS_COMPAT -I$(CURDIR)/wolfpsa/mbedtls_compat
+endif
+
 # MBEDTLS_THREADING_C=1 builds a thread safe library, as in Mbed TLS. See
 # user_settings.h. Applications define MBEDTLS_THREADING_C too.
 ifeq ($(MBEDTLS_THREADING_C),1)
@@ -86,8 +91,9 @@ CPPFLAGS += -DMBEDTLS_THREADING_C
 LDFLAGS += -pthread
 endif
 
-# Changing MBEDTLS_THREADING_C rebuilds every object
+# Changing MBEDTLS_COMPAT or MBEDTLS_THREADING_C rebuilds every object
 OPTIONS_STAMP := $(BUILD_DIR)/options_$(if \
+	$(filter 1,$(MBEDTLS_COMPAT)),compat,nocompat)_$(if \
 	$(filter 1,$(MBEDTLS_THREADING_C)),threads,nothreads)
 
 WOLFSSL_CPPFLAGS ?= -DWOLFSSL_USER_SETTINGS
@@ -135,7 +141,7 @@ LDFLAGS += --coverage
 endif
 
 .PHONY: all clean psa-objects unit-run run-tests cov covclean \
-	want-surface-test
+	want-surface-test mbedtls-compat-test
 
 all: $(LIBNAME) $(SHLIBNAME)
 
@@ -180,7 +186,7 @@ $(OPTIONS_STAMP):
 	touch $@
 
 $(OBJDIR)/%.o: src/%.c
-	@mkdir -p $(OBJDIR)
+	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR)/wolfcrypt_%.o: $(WOLFSSL_PATH)/wolfcrypt/src/%.c
@@ -188,7 +194,7 @@ $(OBJDIR)/wolfcrypt_%.o: $(WOLFSSL_PATH)/wolfcrypt/src/%.c
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR_PIC)/%.o: src/%.c
-	@mkdir -p $(OBJDIR_PIC)
+	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
 
 $(OBJDIR_PIC)/wolfcrypt_%.o: $(WOLFSSL_PATH)/wolfcrypt/src/%.c
@@ -278,6 +284,23 @@ unit-run: all
 	@$(MAKE) -C test $(UNIT_TESTS)
 	@$(MAKE) run-tests
 
+# Mbed TLS repo, for its test data
+MBEDTLS_PATH ?= ../mbedtls
+
+ifeq ($(MBEDTLS_COMPAT),1)
+mbedtls-compat-test: $(LIBNAME)
+	$(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
+		MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH)) \
+		BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
+		PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
+		WOLFSSL_FLAGS="-I$(abspath $(WOLFSSL_PATH)) \
+			-I$(abspath $(USER_SETTINGS_PATH)) $(WOLFSSL_CPPFLAGS)" \
+		SANITIZE_FLAGS="$(SANITIZE_FLAGS)" WOLFPSA_LDFLAGS="$(LDFLAGS)" check
+else
+mbedtls-compat-test:
+	@echo "Run make MBEDTLS_COMPAT=1 mbedtls-compat-test"; exit 1
+endif
+
 # Build everything with gcov instrumentation, run the unit tests, and emit an
 # HTML coverage report for src/*.c (the bundled wolfCrypt sources are
 # excluded by the -f filter). The instrumented objects are dropped once the
@@ -319,9 +342,8 @@ cov:
 
 # Remove gcov artifacts and the coverage report.
 covclean:
-	rm -f $(OBJDIR)/*.gcda $(OBJDIR)/*.gcno \
-	      $(OBJDIR_PIC)/*.gcda $(OBJDIR_PIC)/*.gcno
-	find test \( -name '*.gcda' -o -name '*.gcno' \) -delete
+	find $(wildcard $(OBJDIR) $(OBJDIR_PIC)) test \
+	    \( -name '*.gcda' -o -name '*.gcno' \) -delete
 	rm -rf $(COV_DIR)
 
 clean:
