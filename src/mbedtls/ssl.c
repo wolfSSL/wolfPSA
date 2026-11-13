@@ -51,7 +51,7 @@
 #include "psa_tf_psa_internal.h"
 
 #if LIBWOLFSSL_VERSION_HEX < 0x05009004
-    #error "wolfPSA: MBEDTLS_COMPAT needs wolfSSL 5.9.4 or later"
+    #error "wolfPSA: MBEDTLS_COMPAT needs wolfSSL's master branch"
 #endif /* LIBWOLFSSL_VERSION_HEX < 0x05009004 */
 
 /* Unknown codes map to the last entry */
@@ -721,7 +721,7 @@ static int MbedSetHostname(WOLFSSL* ssl, const char* hostname)
     return ret;
 }
 
-/* wolfSSL takes one version, or the whole range when min and max differ */
+/* TLS 1.2, TLS 1.3, or both as wolfSSL's default range */
 static int MbedSetVersion(WOLFSSL* ssl, const mbedtls_ssl_config* conf)
 {
     static const struct {
@@ -733,14 +733,13 @@ static int MbedSetVersion(WOLFSSL* ssl, const mbedtls_ssl_config* conf)
     };
     size_t i;
 
-    if (conf->min_tls_version > conf->max_tls_version) {
-        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
-    }
-    if (conf->min_tls_version != conf->max_tls_version) {
+    if (conf->min_tls_version == MBEDTLS_SSL_VERSION_TLS1_2 &&
+            conf->max_tls_version == MBEDTLS_SSL_VERSION_TLS1_3) {
         return 0;
     }
     for (i = 0; i < XELEM_CNT(map); i++) {
-        if (map[i].mbed == conf->max_tls_version) {
+        if (map[i].mbed == conf->min_tls_version &&
+                map[i].mbed == conf->max_tls_version) {
             return MbedRet(wolfSSL_SetVersion(ssl, map[i].wolf),
                 MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
         }

@@ -661,20 +661,28 @@ static int AuthmodeAfterSetup(void)
     return ok;
 }
 
-/* A minimum above the maximum fails the handshake */
+/* Ranges other than TLS 1.2, TLS 1.3 or both fail the handshake */
 static int VersionsAfterSetup(void)
 {
-    int ret = 0;
-    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
-        1, HOST_NAME) == 0;
+    static const mbedtls_ssl_protocol_version ranges[][2] = {
+        { MBEDTLS_SSL_VERSION_TLS1_3, MBEDTLS_SSL_VERSION_TLS1_2 },
+        { MBEDTLS_SSL_VERSION_UNKNOWN, MBEDTLS_SSL_VERSION_TLS1_2 },
+        { MBEDTLS_SSL_VERSION_UNKNOWN, MBEDTLS_SSL_VERSION_TLS1_3 }
+    };
+    size_t i;
+    int ok = 1;
 
-    if (ok) {
-        mbedtls_ssl_conf_min_tls_version(&cli.conf, MBEDTLS_SSL_VERSION_TLS1_3);
-        mbedtls_ssl_conf_max_tls_version(&cli.conf, MBEDTLS_SSL_VERSION_TLS1_2);
-        ret = mbedtls_ssl_handshake(&cli.ssl);
-        ok = ret != 0 && !Waiting(ret);
+    for (i = 0; ok && i < sizeof(ranges) / sizeof(ranges[0]); i++) {
+        ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            1, HOST_NAME) == 0;
+        if (ok) {
+            mbedtls_ssl_conf_min_tls_version(&cli.conf, ranges[i][0]);
+            mbedtls_ssl_conf_max_tls_version(&cli.conf, ranges[i][1]);
+            ok = mbedtls_ssl_handshake(&cli.ssl) ==
+                MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+        }
+        PeerFree(&cli);
     }
-    PeerFree(&cli);
     return ok;
 }
 
@@ -696,10 +704,10 @@ static int AuthmodeNoneAfterSetup(void)
     return ok;
 }
 
-/* A TLS 1.2 handshake, then one with its session, set before a conf_* call
- * as curl does. The new CA list does not trust the server, so only a resumed
- * session passes, with the first result. */
-static int ResumeRequired(void)
+/* A TLS 1.2 handshake, then one with its session, set before conf_* calls as
+ * curl does. The new CA list does not trust the server, so only a resumed
+ * session passes, with the first result. want and flags are the client's. */
+static int Resume(int srvAuthmode, int want, uint32_t flags)
 {
 #ifdef MBEDTLS_SSL_CACHE_C
     mbedtls_ssl_cache_context cache;
@@ -736,8 +744,9 @@ static int ResumeRequired(void)
     }
     if (ok) {
         mbedtls_ssl_conf_ca_chain(&cli.conf, &root, NULL);
-        ok = Handshake(&s) == 0 && s == 0 &&
-            mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
+        mbedtls_ssl_conf_authmode(&srv.conf, srvAuthmode);
+        ok = Handshake(&s) == want && (want != 0 || s == 0) &&
+            mbedtls_ssl_get_verify_result(&cli.ssl) == flags;
     }
     mbedtls_ssl_session_free(&session);
     PeerFree(&cli);
@@ -746,6 +755,18 @@ static int ResumeRequired(void)
     mbedtls_ssl_cache_free(&cache);
 #endif /* MBEDTLS_SSL_CACHE_C */
     return ok;
+}
+
+static int ResumeRequired(void)
+{
+    return Resume(MBEDTLS_SSL_VERIFY_NONE, 0, 0);
+}
+
+/* The session has no client certificate, so a full handshake */
+static int ResumeServerRequired(void)
+{
+    return Resume(MBEDTLS_SSL_VERIFY_REQUIRED,
+        MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, MBEDTLS_X509_BADCERT_NOT_TRUSTED);
 }
 
 /* The same endpoint and transport again keep the config */
@@ -1028,6 +1049,8 @@ static const struct {
     { "bad version range set after setup", VersionsAfterSetup },
     { "VERIFY_NONE set after setup, no host name", AuthmodeNoneAfterSetup },
     { "session resumed, REQUIRED", ResumeRequired },
+    { "session without a client certificate, server REQUIRED",
+        ResumeServerRequired },
     { "same endpoint and transport set again", EndpointSame },
     { "session reset after a conf error", ResetConfError },
     { "handshake after a conf error", HandshakeConfError },

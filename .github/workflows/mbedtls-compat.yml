@@ -14,7 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        wolfssl-ref: [ master, v5.9.4-stable ]
+        # The compatibility layer needs wolfSSL master, not a release
+        wolfssl-ref: [ master ]
         options: [ "", "MBEDTLS_THREADING_C=1 ASAN=1" ]
 
     steps:

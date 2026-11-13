@@ -47,6 +47,13 @@
 /* DNS name in the subjectAltName of certs/server-cert.pem */
 #define HOST_NAME "example.com"
 
+/* Non-blocking I/O: call again with the same arguments */
+static int tls_want(int ret)
+{
+    return ret == MBEDTLS_ERR_SSL_WANT_READ ||
+           ret == MBEDTLS_ERR_SSL_WANT_WRITE;
+}
+
 int tls_get(int fd, const char* host, const char* caFile)
 {
     int ret;
@@ -56,6 +63,7 @@ int tls_get(int fd, const char* host, const char* caFile)
     mbedtls_x509_crt ca;
     unsigned char buf[256];
     const char req[] = "GET / HTTP/1.0\r\n\r\n";
+    size_t sent = 0;
 
     mbedtls_net_init(&net);
     net.fd = fd;
@@ -84,18 +92,23 @@ int tls_get(int fd, const char* host, const char* caFile)
     mbedtls_ssl_set_bio(&ssl, &net, mbedtls_net_send, mbedtls_net_recv, NULL);
 
     while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
-        if (ret != MBEDTLS_ERR_SSL_WANT_READ &&
-            ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+        if (!tls_want(ret)) {
             goto out;
         }
     }
-    ret = mbedtls_ssl_write(&ssl, (const unsigned char*)req, sizeof(req) - 1);
-    if (ret <= 0) {
-        goto out;
+    while (sent < sizeof(req) - 1) {
+        ret = mbedtls_ssl_write(&ssl, (const unsigned char*)req + sent,
+                                sizeof(req) - 1 - sent);
+        if (ret > 0) {
+            sent += (size_t)ret;
+        }
+        else if (!tls_want(ret)) {
+            goto out;
+        }
     }
     do {
         ret = mbedtls_ssl_read(&ssl, buf, sizeof(buf) - 1);
-    } while (ret == MBEDTLS_ERR_SSL_WANT_READ ||
+    } while (tls_want(ret) ||
              ret == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET);
     if (ret > 0) {
         ret = 0;

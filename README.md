@@ -101,7 +101,9 @@ make MBEDTLS_COMPAT=1
 
 - wolfSSL's TLS sources are compiled from `WOLFSSL_PATH` into
   `libwolfpsa.a`, like wolfCrypt, with the TLS settings in `user_settings.h`.
-  Changing the option rebuilds everything. Needs wolfSSL 5.9.4 or later.
+  Changing the option rebuilds everything.
+- Needs a current wolfSSL built from its master branch. wolfSSL releases,
+  such as v5.9.4-stable, are not supported.
 - Applications use `-I<wolfPSA>/wolfpsa`,
   `-I<wolfPSA>/wolfpsa/mbedtls_compat` and `-I<wolfPSA>/build/include`, and
   link `libwolfpsa.a`, in place of Mbed TLS's libraries. The headers include
@@ -197,10 +199,6 @@ Known differences from Mbed TLS:
 - A server resumes sessions from wolfSSL's session cache, where Mbed TLS
   needs `mbedtls_ssl_conf_session_cache`. A server that verifies client
   certificates reports `MBEDTLS_X509_BADCERT_MISSING` for a resumed session.
-- wolfSSL 5.9.4 lets a server with `MBEDTLS_SSL_VERIFY_REQUIRED` resume a
-  session in which the client sent no certificate, such as one from a
-  config with `MBEDTLS_SSL_VERIFY_NONE`. wolfSSL's master branch does a full
-  handshake instead.
 - wolfSSL keeps the intermediate CAs of a chain that verifies, for the
   config's later handshakes. A peer that then leaves them out still
   verifies, where Mbed TLS reports `NOT_TRUSTED`.
