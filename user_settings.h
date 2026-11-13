@@ -34,7 +34,9 @@
 #include_next "user_settings.h"
 #else
 
+#ifndef WOLFPSA_MBEDTLS_COMPAT
 #define WOLFCRYPT_ONLY
+#endif /* !WOLFPSA_MBEDTLS_COMPAT */
 /* MBEDTLS_THREADING_C: thread safe, see src/psa_lock.h */
 #if defined(MBEDTLS_THREADING_C) && !defined(WOLFPSA_THREAD_SAFE)
 #define WOLFPSA_THREAD_SAFE
@@ -140,6 +142,23 @@
 #ifdef WOLFPSA_MBEDTLS_COMPAT
 /* Mbed TLS accepts NULL parameters after an ECDSA signature OID */
 #define WOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED
+/* wolfSSL TLS, with configure's TLS defaults. NO_DH: wolfPSA builds no
+ * dh.c. */
+#define HAVE_TLS_EXTENSIONS
+#define HAVE_SNI
+#define HAVE_SUPPORTED_CURVES
+#define HAVE_EXTENDED_MASTER
+#define HAVE_ENCRYPT_THEN_MAC
+#define HAVE_SERVER_RENEGOTIATION_INFO
+#define WOLFSSL_TLS13
+#define NO_OLD_TLS
+#define NO_DES3_TLS_SUITES
+#define NO_PSK
+#define NO_DH
+/* mbedtls_ssl_conf_ciphersuites() takes cipher suite IDs */
+#define WOLFSSL_SET_CIPHER_BYTES
+/* An IP address host name is checked against the certificate's IP SANs */
+#define WOLFSSL_IP_ALT_NAME
 #endif /* WOLFPSA_MBEDTLS_COMPAT */
 
 #endif /* __ZEPHYR__ */
