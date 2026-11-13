@@ -4,10 +4,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Prints what passes per group and what the rest waits on, then each case
-# whose outcome differs from cases.txt, and exits 1 if there is one.
+# whose outcome differs from cases.txt, and exits 1 if there is one. STATUS,
+# the suite's exit status, must be 1 if a case failed, else 0.
 # --all-pass: every case that runs must pass, as against Mbed TLS itself.
 #
-# Usage: check.py [--all-pass] CASES OUTCOME
+# Usage: check.py [--all-pass] CASES OUTCOME STATUS
 
 import collections
 import sys
@@ -22,9 +23,10 @@ def main():
     all_pass = args[:1] == ['--all-pass']
     if all_pass:
         args = args[1:]
-    if len(args) != 2:
-        sys.exit('Usage: check.py [--all-pass] CASES OUTCOME')
-    cases_path, outcome_path = args
+    if len(args) != 3:
+        sys.exit('Usage: check.py [--all-pass] CASES OUTCOME STATUS')
+    cases_path, outcome_path = args[:2]
+    status = int(args[2])
 
     listed = cases.read(cases_path)
     if all_pass:
@@ -40,6 +42,7 @@ def main():
                 results[fields[3]] = (fields[4], fields[5])
     except FileNotFoundError:
         pass
+    expect_status = int(any(r == 'FAIL' for r, _ in results.values()))
 
     bad = []
     for desc, (result, reason) in results.items():
@@ -76,6 +79,9 @@ def main():
     if bad:
         print('Not as in cases.txt:')
         print('\n'.join('  ' + b for b in bad))
+    if status != expect_status:
+        print('Exit status %d, expected %d' % (status, expect_status))
+    if bad or status != expect_status:
         sys.exit(1)
 
 
