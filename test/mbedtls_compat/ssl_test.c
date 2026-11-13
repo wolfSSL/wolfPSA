@@ -302,6 +302,61 @@ static int HostWrong(void)
         MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, MBEDTLS_X509_BADCERT_CN_MISMATCH);
 }
 
+/* A name wolfSSL refuses leaves the client without one */
+static int HostRefused(void)
+{
+    int s;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            0, NULL) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0 &&
+        mbedtls_ssl_set_hostname(&cli.ssl, "router") ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+        Handshake(&s) ==
+            MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME;
+
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+static int PipeHas(const Pipe* p, const char* s)
+{
+    size_t len = strlen(s);
+    size_t i;
+
+    for (i = 0; i + len <= p->len; i++) {
+        if (memcmp(p->buf + i, s, len) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* RFC 6066 has no IP addresses in server_name */
+static int ServerNameSent(void)
+{
+    static const struct {
+        const char* host;
+        int sent;
+    } hosts[] = {
+        { HOST_NAME, 1 },
+        { "97.98.99.100", 0 },
+        { "6162:6364:2e65:7861:6d70:6c65:2e63:6f6d", 0 }
+    };
+    size_t i;
+    int ok = 1;
+
+    for (i = 0; ok && i < sizeof(hosts) / sizeof(hosts[0]); i++) {
+        ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+                1, hosts[i].host) == 0 &&
+            mbedtls_ssl_handshake(&cli.ssl) == MBEDTLS_ERR_SSL_WANT_READ &&
+            PipeHas(&toServer, hosts[i].host) == hosts[i].sent;
+        PeerFree(&cli);
+    }
+    return ok;
+}
+
 /* The connection is kept, and the name applies from the next session reset */
 static int HostAfterHandshake(void)
 {
@@ -554,7 +609,8 @@ static int BioErrors(void)
 }
 
 /* A length that does not fit in an int. As in Mbed TLS, a write sends at
- * most one record, so only RECORD_SZ bytes of buf are used. */
+ * most one record, so each write and read uses only RECORD_SZ bytes of buf.
+ * A sanitizer report here means a write sent more than one record. */
 static int LargeLength(void)
 {
     static const size_t lens[] = {
@@ -636,7 +692,8 @@ static int SuitesAfterSetup(void)
     if (ok) {
         mbedtls_ssl_conf_ciphersuites(&cli.conf, suites);
         ok = Handshake(&s) == 0 && s == 0 &&
-            mbedtls_ssl_get_ciphersuite_id_from_ssl(&cli.ssl) == SUITE_ID;
+            mbedtls_ssl_get_ciphersuite_id_from_ssl(&cli.ssl) == SUITE_ID &&
+            strcmp(mbedtls_ssl_get_ciphersuite(&cli.ssl), SUITE_NAME) == 0;
     }
     PeerFree(&cli);
     PeerFree(&srv);
@@ -678,8 +735,11 @@ static int VersionsAfterSetup(void)
         if (ok) {
             mbedtls_ssl_conf_min_tls_version(&cli.conf, ranges[i][0]);
             mbedtls_ssl_conf_max_tls_version(&cli.conf, ranges[i][1]);
+            /* No connection is left to use */
             ok = mbedtls_ssl_handshake(&cli.ssl) ==
-                MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+                    MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+                mbedtls_ssl_close_notify(&cli.ssl) ==
+                    MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
         }
         PeerFree(&cli);
     }
@@ -799,6 +859,22 @@ static void ConfCrl(mbedtls_ssl_config* conf)
     mbedtls_ssl_conf_ca_chain(conf, &ca, (mbedtls_x509_crl*)&ca);
 }
 
+static void ConfCa(mbedtls_ssl_config* conf)
+{
+    mbedtls_ssl_conf_ca_chain(conf, &ca, NULL);
+}
+
+/* MBEDTLS_SSL_VERIFY_OPTIONAL in Mbed TLS */
+static void ConfAuthmodeOptional(mbedtls_ssl_config* conf)
+{
+    mbedtls_ssl_conf_authmode(conf, 1);
+}
+
+static void ConfAuthmodeNone(mbedtls_ssl_config* conf)
+{
+    mbedtls_ssl_conf_authmode(conf, MBEDTLS_SSL_VERIFY_NONE);
+}
+
 static void ConfEndpoint(mbedtls_ssl_config* conf)
 {
     mbedtls_ssl_conf_endpoint(conf, MBEDTLS_SSL_IS_CLIENT);
@@ -809,16 +885,21 @@ static void ConfTransport(mbedtls_ssl_config* conf)
     mbedtls_ssl_conf_transport(conf, MBEDTLS_SSL_TRANSPORT_DATAGRAM);
 }
 
-/* A conf_* failure after a server's mbedtls_ssl_setup, returned by next */
-static int ConfError(void (*fail)(mbedtls_ssl_config*),
-    int (*next)(mbedtls_ssl_context*))
+/* A conf_* failure after a server's mbedtls_ssl_setup, returned by next as
+ * err. Then fix, when set, clears it. */
+static int ConfError(void (*fail)(mbedtls_ssl_config*), int err,
+    int (*next)(mbedtls_ssl_context*), void (*fix)(mbedtls_ssl_config*))
 {
     int ok = PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
         NULL) == 0;
 
     if (ok) {
         fail(&srv.conf);
-        ok = next(&srv.ssl) == MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+        ok = next(&srv.ssl) == err;
+    }
+    if (ok && fix != NULL) {
+        fix(&srv.conf);
+        ok = next(&srv.ssl) == 0;
     }
     PeerFree(&srv);
     return ok;
@@ -842,39 +923,76 @@ static int CrlBeforeDefaults(void)
 
 static int ResetConfError(void)
 {
-    return ConfError(ConfCrl, mbedtls_ssl_session_reset);
+    return ConfError(ConfCrl, MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE,
+        mbedtls_ssl_session_reset, NULL);
 }
 
 static int HandshakeConfError(void)
 {
-    return ConfError(ConfCrl, mbedtls_ssl_handshake);
+    return ConfError(ConfCrl, MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE,
+        mbedtls_ssl_handshake, NULL);
+}
+
+static int CrlCleared(void)
+{
+    return ConfError(ConfCrl, MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE,
+        mbedtls_ssl_session_reset, ConfCa);
+}
+
+static int AuthmodeCleared(void)
+{
+    return ConfError(ConfAuthmodeOptional, MBEDTLS_ERR_SSL_BAD_INPUT_DATA,
+        mbedtls_ssl_session_reset, ConfAuthmodeNone);
 }
 
 static int EndpointChanged(void)
 {
-    return ConfError(ConfEndpoint, mbedtls_ssl_handshake);
+    return ConfError(ConfEndpoint, MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE,
+        mbedtls_ssl_handshake, NULL);
 }
 
 static int TransportChanged(void)
 {
-    return ConfError(ConfTransport, mbedtls_ssl_handshake);
+    return ConfError(ConfTransport, MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE,
+        mbedtls_ssl_handshake, NULL);
 }
 
-/* wolfSSL's own code for a key it refuses is not returned */
+/* wolfSSL makes no server connection without a certificate and key */
+static int ServerNoCert(void)
+{
+    int ok;
+
+    PeerInit(&srv, MBEDTLS_SSL_IS_SERVER);
+    ok = mbedtls_ssl_close_notify(&srv.ssl) ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+        mbedtls_ssl_config_defaults(&srv.conf, MBEDTLS_SSL_IS_SERVER,
+            MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) == 0 &&
+        mbedtls_ssl_setup(&srv.ssl, &srv.conf) == MBEDTLS_ERR_SSL_BAD_CONFIG &&
+        mbedtls_ssl_close_notify(&srv.ssl) == MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    PeerFree(&srv);
+    return ok;
+}
+
+/* wolfSSL's own code for a key it refuses is not returned. Setup fails until
+ * a certificate and key load. */
 static int OwnKeyTooSmall(void)
 {
     mbedtls_pk_context small;
     int ok;
 
     mbedtls_pk_init(&small);
-    mbedtls_ssl_config_init(&srv.conf);
+    PeerInit(&srv, MBEDTLS_SSL_IS_SERVER);
     ok = mbedtls_pk_parse_keyfile(&small, "rsa_pkcs1_768_clear.der",
             NULL) == 0 &&
         mbedtls_ssl_config_defaults(&srv.conf, MBEDTLS_SSL_IS_SERVER,
             MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) == 0 &&
         mbedtls_ssl_conf_own_cert(&srv.conf, &cert, &small) ==
-            MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
-    mbedtls_ssl_config_free(&srv.conf);
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+        mbedtls_ssl_setup(&srv.ssl, &srv.conf) ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+        mbedtls_ssl_conf_own_cert(&srv.conf, &cert, &key) == 0 &&
+        mbedtls_ssl_setup(&srv.ssl, &srv.conf) == 0;
+    PeerFree(&srv);
     mbedtls_pk_free(&small);
     return ok;
 }
@@ -1028,6 +1146,8 @@ static const struct {
     { "host name replaced", HostReplaced },
     { "IP address and DNS name replaced", HostKindReplaced },
     { "wrong host name", HostWrong },
+    { "host name refused", HostRefused },
+    { "server name, not an IP address", ServerNameSent },
     { "host name set after the handshake", HostAfterHandshake },
     { "chain with intermediate CAs", VerifyChain },
     { "untrusted chain", VerifyUntrusted },
@@ -1054,6 +1174,9 @@ static const struct {
     { "same endpoint and transport set again", EndpointSame },
     { "session reset after a conf error", ResetConfError },
     { "handshake after a conf error", HandshakeConfError },
+    { "CRL error cleared by a new CA list", CrlCleared },
+    { "authmode error cleared by a new authmode", AuthmodeCleared },
+    { "server without a certificate", ServerNoCert },
     { "CRL set before config_defaults", CrlBeforeDefaults },
     { "endpoint changed after config_defaults", EndpointChanged },
     { "transport changed after config_defaults", TransportChanged },

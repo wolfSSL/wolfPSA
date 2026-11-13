@@ -166,14 +166,16 @@ Known differences from Mbed TLS:
   `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`. wolfSSL makes its config for one
   endpoint and transport.
 - `mbedtls_ssl_conf_ca_chain` refuses a CRL: `mbedtls_ssl_setup` and the
-  handshake then return `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`.
+  handshake then return `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE` until a CA
+  list without one is set.
 - A server's config needs its `mbedtls_ssl_conf_own_cert` before
-  `mbedtls_ssl_setup`, which fails without it: wolfSSL makes a server
-  connection only with a certificate and key.
+  `mbedtls_ssl_setup`, which fails without it with
+  `MBEDTLS_ERR_SSL_BAD_CONFIG`: wolfSSL makes a server connection only with
+  a certificate and key.
 - A second `mbedtls_ssl_conf_own_cert` replaces the first. Mbed TLS keeps
-  both and picks one for each handshake.
-- `mbedtls_ssl_get_ciphersuite` returns IANA names, such as
-  `TLS_AES_128_GCM_SHA256`, where Mbed TLS has `TLS1-3-AES-128-GCM-SHA256`.
+  both and picks one for each handshake. After a failed one,
+  `mbedtls_ssl_setup` and the handshake return its error until one
+  succeeds, where Mbed TLS keeps the certificates set before.
 - `mbedtls_net_accept` is TCP only.
 - RSA keys are limited to 3072 bits, so a certificate chain with an RSA-4096
   CA does not verify.
@@ -188,7 +190,8 @@ Known differences from Mbed TLS:
   `Polarssl Test EC CA`.
 - An IP address host name is matched against the certificate's IP address
   SANs only. Mbed TLS also matches a DNS SAN with the same text, or the CN
-  of a certificate without SANs.
+  of a certificate without SANs. It is not sent as the server name, which
+  RFC 6066 does not allow and Mbed TLS does.
 - A host name without a dot, such as `router`, fails with
   `MBEDTLS_ERR_SSL_BAD_INPUT_DATA` from `mbedtls_ssl_set_hostname`, or from
   `mbedtls_ssl_setup` when set before it. wolfSSL takes only a fully

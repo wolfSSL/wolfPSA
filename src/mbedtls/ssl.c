@@ -50,10 +50,6 @@
 #include "mbedtls_compat_internal.h"
 #include "psa_tf_psa_internal.h"
 
-#if LIBWOLFSSL_VERSION_HEX < 0x05009004
-    #error "wolfPSA: MBEDTLS_COMPAT needs wolfSSL's master branch"
-#endif /* LIBWOLFSSL_VERSION_HEX < 0x05009004 */
-
 /* Unknown codes map to the last entry */
 int MbedIoErr(int code, int dir, int toWolf)
 {
@@ -153,11 +149,28 @@ static int MbedRet(int ret, int fallback)
         wolfPSA_MbedRet(ret, fallback);
 }
 
-static void MbedConfErr(mbedtls_ssl_config* conf, int err)
+/* conf->err index of each kind of conf call. Each call sets its own, 0 on
+ * success, apart from a method change, which only config_defaults clears. */
+enum {
+    MBED_CONF_ERR_METHOD,
+    MBED_CONF_ERR_AUTHMODE,
+    MBED_CONF_ERR_CA,
+    MBED_CONF_ERR_OWN_CERT,
+    MBED_CONF_ERR_KINDS
+};
+wc_static_assert(MBED_CONF_ERR_KINDS ==
+    XELEM_CNT(((mbedtls_ssl_config*)0)->err));
+
+static int MbedConfErr(const mbedtls_ssl_config* conf)
 {
-    if (conf->err == 0) {
-        conf->err = err;
+    size_t i;
+
+    for (i = 0; i < XELEM_CNT(conf->err); i++) {
+        if (conf->err[i] != 0) {
+            return conf->err[i];
+        }
     }
+    return 0;
 }
 
 /* The BIO call's result for wolfSSL. Keeps an error for MbedSslErr(). */
@@ -274,9 +287,10 @@ void mbedtls_ssl_conf_authmode(mbedtls_ssl_config* conf, int authmode)
     conf->changes++;
     if (authmode != MBEDTLS_SSL_VERIFY_NONE &&
             authmode != MBEDTLS_SSL_VERIFY_REQUIRED) {
-        MbedConfErr(conf, MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+        conf->err[MBED_CONF_ERR_AUTHMODE] = MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
         return;
     }
+    conf->err[MBED_CONF_ERR_AUTHMODE] = 0;
     conf->authmode = authmode;
     if (conf->ctx == NULL) {
         return;
@@ -311,9 +325,7 @@ static void MbedConfCAs(mbedtls_ssl_config* conf)
             ret = MBEDTLS_ERR_SSL_ALLOC_FAILED;
         }
     }
-    if (ret != 0) {
-        MbedConfErr(conf, ret);
-    }
+    conf->err[MBED_CONF_ERR_CA] = ret;
 }
 
 int mbedtls_ssl_config_defaults(mbedtls_ssl_config* conf,
@@ -363,7 +375,11 @@ int mbedtls_ssl_config_defaults(mbedtls_ssl_config* conf,
 
     wolfSSL_CTX_free(conf->ctx);
     conf->changes++;
-    conf->err = 0;
+    XMEMSET(conf->err, 0, sizeof(conf->err));
+    /* wolfSSL_new() fails for a server without a certificate and key */
+    if (endpoint == MBEDTLS_SSL_IS_SERVER) {
+        conf->err[MBED_CONF_ERR_OWN_CERT] = MBEDTLS_ERR_SSL_BAD_CONFIG;
+    }
     conf->endpoint = endpoint;
     conf->transport = transport;
     conf->min_tls_version = MBEDTLS_SSL_VERSION_TLS1_2;
@@ -385,7 +401,7 @@ int mbedtls_ssl_config_defaults(mbedtls_ssl_config* conf,
 static void MbedConfMethod(mbedtls_ssl_config* conf, int* field, int value)
 {
     if (conf->ctx != NULL && *field != value) {
-        MbedConfErr(conf, MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE);
+        conf->err[MBED_CONF_ERR_METHOD] = MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
     }
     *field = value;
     conf->changes++;
@@ -433,7 +449,8 @@ void mbedtls_ssl_conf_ca_chain(mbedtls_ssl_config* conf,
 }
 
 /* Mbed TLS sends every certificate in own_cert. A second call replaces the
- * first, where Mbed TLS keeps both and picks one per handshake. */
+ * first, where Mbed TLS keeps both and picks one per handshake. wolfSSL
+ * replaces each before checking it, so setup returns a failed load's error. */
 int mbedtls_ssl_conf_own_cert(mbedtls_ssl_config* conf,
     mbedtls_x509_crt* own_cert, mbedtls_pk_context* pk_key)
 {
@@ -472,6 +489,7 @@ int mbedtls_ssl_conf_own_cert(mbedtls_ssl_config* conf,
             pk_key->der, (long)pk_key->der_len, WOLFSSL_FILETYPE_ASN1),
             MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
     }
+    conf->err[MBED_CONF_ERR_OWN_CERT] = ret;
     return ret;
 }
 
@@ -699,7 +717,7 @@ static int MbedIpText(const char* host, char* text, size_t sz)
     return len;
 }
 
-/* As in Mbed TLS, an IP address is also sent as the server name */
+/* RFC 6066 has no IP addresses in server_name, which Mbed TLS sends anyway */
 static int MbedSetHostname(WOLFSSL* ssl, const char* hostname)
 {
     char ip[MBED_IP_TEXT_SZ];
@@ -708,13 +726,13 @@ static int MbedSetHostname(WOLFSSL* ssl, const char* hostname)
     if (hostname == NULL) {
         return 0;
     }
-    ret = MbedRet(wolfSSL_UseSNI(ssl, WOLFSSL_SNI_HOST_NAME, hostname,
-        (word16)XSTRLEN(hostname)), MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
-    if (ret == 0 && MbedIpText(hostname, ip, sizeof(ip)) > 0) {
-        ret = MbedRet(wolfSSL_check_ip_address(ssl, ip),
+    if (MbedIpText(hostname, ip, sizeof(ip)) > 0) {
+        return MbedRet(wolfSSL_check_ip_address(ssl, ip),
             MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
     }
-    else if (ret == 0) {
+    ret = MbedRet(wolfSSL_UseSNI(ssl, WOLFSSL_SNI_HOST_NAME, hostname,
+        (word16)XSTRLEN(hostname)), MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+    if (ret == 0) {
         ret = MbedRet(wolfSSL_check_domain_name(ssl, hostname),
             MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
     }
@@ -765,37 +783,38 @@ static int MbedSetSuites(WOLFSSL* ssl, const int* ids)
 }
 
 /* Replaces the WOLFSSL with a new one from the config, with this context's
- * callbacks, host name and session */
+ * callbacks, host name and session. Leaves none on failure. */
 static int MbedSslNew(mbedtls_ssl_context* ssl)
 {
     WOLFSSL_SESSION* session = NULL;
-    int ret;
+    int ret = MbedConfErr(ssl->conf);
 
-    if (ssl->conf->err != 0) {
-        return ssl->conf->err;
+    if (ret == 0 && ssl->conf->ctx == NULL) {
+        ret = MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
-    if (ssl->conf->ctx == NULL) {
-        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
-    }
-    if (ssl->session_set) {
+    if (ret == 0 && ssl->session_set) {
         session = wolfSSL_get1_session(ssl->ssl);
     }
     wolfSSL_free(ssl->ssl);
-    ssl->ssl = wolfSSL_new(ssl->conf->ctx);
-    if (ssl->ssl == NULL) {
-        wolfSSL_SESSION_free(session);
-        return MBEDTLS_ERR_SSL_ALLOC_FAILED;
+    ssl->ssl = NULL;
+    if (ret == 0) {
+        ssl->ssl = wolfSSL_new(ssl->conf->ctx);
+        if (ssl->ssl == NULL) {
+            ret = MBEDTLS_ERR_SSL_ALLOC_FAILED;
+        }
     }
-    ssl->started = 0;
-    ssl->authmode = ssl->conf->authmode;
-    ssl->verify_flags = 0;
-    ssl->io_err = 0;
-    wolfSSL_SSLSetIORecv(ssl->ssl, MbedRecvCb);
-    wolfSSL_SSLSetIOSend(ssl->ssl, MbedSendCb);
-    wolfSSL_SetIOReadCtx(ssl->ssl, ssl);
-    wolfSSL_SetIOWriteCtx(ssl->ssl, ssl);
-    wolfSSL_SetCertCbCtx(ssl->ssl, ssl);
-    ret = MbedSetVersion(ssl->ssl, ssl->conf);
+    if (ret == 0) {
+        ssl->started = 0;
+        ssl->authmode = ssl->conf->authmode;
+        ssl->verify_flags = 0;
+        ssl->io_err = 0;
+        wolfSSL_SSLSetIORecv(ssl->ssl, MbedRecvCb);
+        wolfSSL_SSLSetIOSend(ssl->ssl, MbedSendCb);
+        wolfSSL_SetIOReadCtx(ssl->ssl, ssl);
+        wolfSSL_SetIOWriteCtx(ssl->ssl, ssl);
+        wolfSSL_SetCertCbCtx(ssl->ssl, ssl);
+        ret = MbedSetVersion(ssl->ssl, ssl->conf);
+    }
     if (ret == 0) {
         ret = MbedSetSuites(ssl->ssl, ssl->conf->ciphersuites);
     }
@@ -809,6 +828,11 @@ static int MbedSslNew(mbedtls_ssl_context* ssl)
     wolfSSL_SESSION_free(session);
     if (ret == 0) {
         ssl->conf_changes = ssl->conf->changes;
+        ssl->hostname_changed = 0;
+    }
+    else {
+        wolfSSL_free(ssl->ssl);
+        ssl->ssl = NULL;
     }
     return ret;
 }
@@ -863,6 +887,7 @@ int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname)
 {
     char* copy = NULL;
     size_t len;
+    int ret = 0;
 
     WOLFSSL_ENTER("mbedtls_ssl_set_hostname");
 
@@ -883,21 +908,29 @@ int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname)
         }
         XMEMCPY(copy, hostname, len + 1);
     }
-    XFREE(ssl->hostname, NULL, DYNAMIC_TYPE_DOMAIN);
-    ssl->hostname = copy;
-    ssl->hostname_set = 1;
 
     /* Once the handshake starts, the name applies from the next reset */
-    if (ssl->ssl == NULL || ssl->started) {
-        return 0;
+    if (ssl->ssl != NULL && !ssl->started) {
+        ret = MbedSetHostname(ssl->ssl, hostname);
+        /* wolfSSL cannot remove a name: MbedSslStart() makes a new WOLFSSL */
+        if (ret != 0 || ssl->hostname != NULL) {
+            ssl->hostname_changed = 1;
+        }
     }
-    /* wolfSSL cannot remove a name check, so a new name needs a new WOLFSSL */
-    return MbedSslNew(ssl);
+    if (ret == 0) {
+        XFREE(ssl->hostname, NULL, DYNAMIC_TYPE_DOMAIN);
+        ssl->hostname = copy;
+        ssl->hostname_set = 1;
+    }
+    else {
+        XFREE(copy, NULL, DYNAMIC_TYPE_DOMAIN);
+    }
+    return ret;
 }
 
-/* Mbed TLS reads the config during the handshake, so conf_* calls made before
- * it starts apply to it. As in Mbed TLS 4.x, a client that verifies the
- * server needs mbedtls_ssl_set_hostname() first. */
+/* Mbed TLS reads the config during the handshake, so conf_* calls and a host
+ * name set before it starts apply to it. As in Mbed TLS 4.x, a client that
+ * verifies the server needs mbedtls_ssl_set_hostname() first. */
 static int MbedSslStart(mbedtls_ssl_context* ssl)
 {
     int ret = 0;
@@ -905,7 +938,8 @@ static int MbedSslStart(mbedtls_ssl_context* ssl)
     if (ssl == NULL || ssl->conf == NULL || ssl->ssl == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
-    if (!ssl->started && ssl->conf_changes != ssl->conf->changes) {
+    if (!ssl->started && (ssl->conf_changes != ssl->conf->changes ||
+            ssl->hostname_changed)) {
         ret = MbedSslNew(ssl);
     }
     if (ret == 0 && ssl->conf->endpoint == MBEDTLS_SSL_IS_CLIENT &&
@@ -966,8 +1000,6 @@ uint32_t mbedtls_ssl_get_verify_result(const mbedtls_ssl_context* ssl)
         0;
 }
 
-/* The IANA name, such as TLS_AES_128_GCM_SHA256, where Mbed TLS has its own,
- * TLS1-3-AES-128-GCM-SHA256 */
 const char* mbedtls_ssl_get_ciphersuite(const mbedtls_ssl_context* ssl)
 {
     WOLFSSL_ENTER("mbedtls_ssl_get_ciphersuite");
@@ -975,7 +1007,8 @@ const char* mbedtls_ssl_get_ciphersuite(const mbedtls_ssl_context* ssl)
     if (ssl == NULL || ssl->ssl == NULL) {
         return NULL;
     }
-    return wolfSSL_get_cipher(ssl->ssl);
+    return mbedtls_ssl_get_ciphersuite_name(
+        mbedtls_ssl_get_ciphersuite_id_from_ssl(ssl));
 }
 
 int mbedtls_ssl_get_ciphersuite_id_from_ssl(const mbedtls_ssl_context* ssl)
@@ -1072,7 +1105,7 @@ int mbedtls_ssl_close_notify(mbedtls_ssl_context* ssl)
 
     WOLFSSL_ENTER("mbedtls_ssl_close_notify");
 
-    if (ssl == NULL) {
+    if (ssl == NULL || ssl->ssl == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
     ret = wolfSSL_shutdown(ssl->ssl);

@@ -285,6 +285,25 @@ static void check_tracker(const memoryStats *stats)
     }
 }
 
+/* wolfCrypt_Init() restarts the tracker only when nothing kept a reference
+ * after mbedtls_psa_crypto_free() */
+static void check_released(const memoryStats *stats)
+{
+    long allocs;
+
+    if (stats == NULL) {
+        return;
+    }
+    allocs = stats->totalAllocs;
+    check("psa_crypto_init again", psa_crypto_init(), PSA_SUCCESS);
+    if (stats->totalAllocs >= allocs) {
+        printf("FAIL: wolfCrypt not released by mbedtls_psa_crypto_free\n");
+        failures++;
+    }
+    mbedtls_psa_crypto_free();
+    check_tracker(stats);
+}
+
 int main(void)
 {
     const memoryStats *stats;
@@ -296,6 +315,7 @@ int main(void)
     test_after_init();
     mbedtls_psa_crypto_free();
     check_tracker(stats);
+    check_released(stats);
 
     if (failures != 0) {
         printf("PSA track memory test: %d failure(s)\n", failures);

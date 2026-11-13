@@ -48,6 +48,7 @@
 #define MBEDTLS_SSL_MAX_HOST_NAME_LEN     255
 
 #define MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME -0x5D80
+#define MBEDTLS_ERR_SSL_BAD_CONFIG           -0x5E80
 #define MBEDTLS_ERR_SSL_TIMEOUT              -0x6800
 #define MBEDTLS_ERR_SSL_WANT_WRITE           -0x6880
 #define MBEDTLS_ERR_SSL_WANT_READ            -0x6900
@@ -86,7 +87,7 @@ typedef union {
 
 typedef struct mbedtls_ssl_config {
     struct WOLFSSL_CTX* ctx;
-    int err; /* first failed void conf call, returned at setup and reset */
+    int err[4]; /* by kind of conf call, returned at setup and reset */
     unsigned int changes; /* counts conf calls, see MbedSslStart() */
     int authmode;
     int endpoint;
@@ -110,7 +111,8 @@ typedef struct mbedtls_ssl_context {
     unsigned int conf_changes; /* conf->changes when ssl was made */
     int started; /* the handshake started on ssl */
     char* hostname; /* applied again by mbedtls_ssl_session_reset() */
-    int hostname_set; /* mbedtls_ssl_set_hostname() was called */
+    int hostname_set; /* mbedtls_ssl_set_hostname() succeeded */
+    int hostname_changed; /* ssl needs a new WOLFSSL for the host name */
     int session_set; /* mbedtls_ssl_set_session() was called */
     uint32_t session_verify; /* verify_result of the session set */
     void* p_bio;
