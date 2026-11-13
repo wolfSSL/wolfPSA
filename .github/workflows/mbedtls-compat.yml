@@ -14,8 +14,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The compatibility layer needs wolfSSL master, not a release
-        wolfssl-ref: [ master ]
+        # The compatibility layer needs wolfSSL master, not a release. The
+        # verify callbacks need this pull request until it merges.
+        wolfssl-ref: [ pull/11110/head ]
         options: [ "", "MBEDTLS_THREADING_C=1 ASAN=1" ]
 
     steps:
@@ -27,8 +28,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential autoconf automake libtool libtool-bin pkg-config python3-jinja2 faketime
 
-      - name: Clone sibling wolfSSL
-        run: git clone --depth 1 --branch ${{ matrix.wolfssl-ref }} https://github.com/wolfSSL/wolfssl ../wolfssl
+      # Fetched by ref, which may be a pull request's
+      - name: Fetch sibling wolfSSL
+        run: |
+          git init -q ../wolfssl
+          git -C ../wolfssl fetch -q --depth 1 https://github.com/wolfSSL/wolfssl ${{ matrix.wolfssl-ref }}
+          git -C ../wolfssl checkout -q FETCH_HEAD
 
       # The tests need framework's data files, and tf-psa-crypto's headers for
       # the test certificates

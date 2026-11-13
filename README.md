@@ -126,6 +126,9 @@ make MBEDTLS_COMPAT=1
   for example with `WOLFCRYPT_ONLY`, `MBEDTLS_SSL_TLS_C` is not defined.
   `MBEDTLS_NET_C` needs TLS and wolfSSL's socket I/O (no `WOLFSSL_USER_IO`).
   `MBEDTLS_PEM_PARSE_C` needs wolfCrypt's Base64 decoding (no `NO_CODING`).
+- The verify callbacks need `WOLFSSL_ALWAYS_VERIFY_CB`, which wolfPSA's
+  `user_settings.h` defines. A build with its own `USER_SETTINGS_PATH`
+  defines it too.
 
 Mapped so far:
 
@@ -133,29 +136,31 @@ Mapped so far:
 - pem: init, read_buffer, get_buffer, free
 - x509_crt: init, free, parse, parse_der, parse_file, parse_path; the
   default, next and suiteb profiles, as names only
-- ssl_config: init, free, defaults; ssl_conf: authmode, ca_chain, own_cert,
-  min_tls_version, max_tls_version, ciphersuites, cert_profile, dbg,
-  endpoint, transport, get_endpoint, set_user_data_p, set_user_data_n,
+- ssl_config: init, free, defaults; ssl_conf: authmode, verify, ca_chain,
+  own_cert, min_tls_version, max_tls_version, ciphersuites, cert_profile,
+  dbg, endpoint, transport, get_endpoint, set_user_data_p, set_user_data_n,
   get_user_data_p, get_user_data_n
 - ssl: init, free, setup, context_get_config, session_reset, set_bio,
-  set_hostname, set_session, get_session, handshake, is_handshake_over,
-  get_verify_result, get_ciphersuite, get_ciphersuite_id_from_ssl,
-  get_version, get_version_number, get_bytes_avail, read, write,
-  close_notify, set_user_data_p, set_user_data_n, get_user_data_p,
-  get_user_data_n; list_ciphersuites, get_ciphersuite_name,
-  get_ciphersuite_id
+  set_verify, set_hostname, set_session, get_session, handshake,
+  is_handshake_over, get_verify_result, get_ciphersuite,
+  get_ciphersuite_id_from_ssl, get_version, get_version_number,
+  get_bytes_avail, read, write, close_notify, set_user_data_p,
+  set_user_data_n, get_user_data_p, get_user_data_n; list_ciphersuites,
+  get_ciphersuite_name, get_ciphersuite_id
 - ssl_session: init, free; save and load return
   `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`
 
 Known differences from Mbed TLS:
 
-- `MBEDTLS_SSL_VERIFY_OPTIONAL`, `mbedtls_ssl_conf_verify` and
-  `mbedtls_ssl_set_verify` are not available yet, so an application that
-  uses them does not build.
-- With `MBEDTLS_SSL_VERIFY_REQUIRED`, the handshake stops at the first check
-  of the peer's chain that fails, and `mbedtls_ssl_get_verify_result` has
-  only its flag. Mbed TLS checks the whole chain first and reports the flag
-  of each failure.
+- The verify flags come from wolfSSL, which reports one failure from each
+  certificate's signature and date checks, and one from the later checks of
+  the peer's own, such as the host name. So the verify callback and
+  `mbedtls_ssl_get_verify_result` can report fewer flags than Mbed TLS: an
+  untrusted certificate that has also expired is only `NOT_TRUSTED`.
+- The verify callback gets the certificates the peer sent, in that order,
+  then above them the CA from the CA list that issued the last one. Mbed TLS
+  builds the chain itself, and leaves out a certificate the peer sent once
+  it reaches a CA from the list.
 - A wolfSSL error with no Mbed TLS match returns a general code for the
   call, such as `MBEDTLS_ERR_SSL_INTERNAL_ERROR`. wolfSSL's own codes are not
   returned: some Mbed TLS 4.x codes are PSA values (-128 to -160), which
@@ -232,14 +237,14 @@ runs these against `libwolfpsa.a`. Each is also a target of its own.
 
 - `mbedtls-compat-unit`: `test/mbedtls_compat/x509_crt_test.c`,
   `pk_test.c` and `pem_test.c` parse Mbed TLS's test certificates and keys.
-  `ssl_test.c` checks return codes and verify results, client and server in
-  one process.
+  `ssl_test.c` checks return codes, verify results and the verify
+  callbacks, client and server in one process.
 - `mbedtls-compat-programs`: the Mbed TLS migration guide client
   (`test/mbedtls_compat/client-tls-mbedtls.c`) and Mbed TLS's sample
   programs, built unchanged, run against the wolfSSL example server. Mbed
-  TLS's server programs run against the wolfSSL example client. With
-  `MBEDTLS_THREADING_C=1`, `ssl_pthread_server` serves clients at the same
-  time.
+  TLS's server programs run against the wolfSSL example client and
+  `ssl_client1`. With `MBEDTLS_THREADING_C=1`, `ssl_pthread_server` serves
+  clients at the same time.
 
 Notes:
 

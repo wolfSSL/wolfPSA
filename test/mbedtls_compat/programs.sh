@@ -6,8 +6,8 @@
 # macro prints "... not defined" and exits 0, so that output fails the case,
 # and a case can require a line of output. A case whose wrapper, such as
 # faketime, is not installed is skipped. Then Mbed TLS's server programs,
-# against the wolfSSL example client. WRAP prefixes the programs. Run by the
-# Makefile in this directory, which sets the paths.
+# against the wolfSSL example client and ssl_client1. WRAP prefixes the
+# programs. Run by the Makefile in this directory, which sets the paths.
 
 : "${BUILD_DIR:?}" "${WOLFSSL_PATH:?}" "${WOLFSSL_SERVER:?}" \
     "${WOLFSSL_CLIENT:?}" "${MBEDTLS_PATH:?}"
@@ -52,6 +52,11 @@ P=programs/ssl
 SERVER5="-p 4433 -d -c $DATA/server5-expired.crt -k $DATA/server5.key"
 # Inside both validity periods: the CA ends 2023-09-22, the server 2014-03-08
 CA2_DATE="faketime 2014-01-01"
+# Signed by test-ca-sha256.crt, in certs.c's mbedtls_test_cas_pem
+SERVER2="-p 4433 -d -c $DATA/server2-sha256.crt -k $DATA/server2.key"
+# The wolfSSL example server's own certificate, from another CA
+SERVER_WOLF="-p 4433 -d"
+VERIFY="Verifying peer X.509 certificate..."
 # A CA that wolfSSL refuses to load, then the server's CA
 BUNDLE=$BUILD_DIR/ca-bundle.pem
 cat "$WOLFSSL_PATH/certs/test/expired/expired-ca.pem" \
@@ -94,6 +99,8 @@ wrong IP address host, VERIFY_FAILED|$C|-S 127.0.0.2 $LO|$TLS13||1|$GOT -9984
 IPv6 address host, VERIFY_FAILED|$C|-S ::1 $LO|$TLS13||1|$GOT -9984
 mini_client|$P/mini_client||$SERVER5|$CA2_DATE|0|
 mini_client, expired CA, ssl_handshake_failed|$P/mini_client||$SERVER5||7|
+ssl_client1|$P/ssl_client1||$SERVER2||0|$VERIFY ok
+ssl_client1, untrusted, OPTIONAL|$P/ssl_client1||$SERVER_WOLF||0|$VERIFY failed
 CASES
 rm -f "$READY"
 
@@ -111,9 +118,12 @@ start_program() {
     done
 }
 
-# Options for the wolfSSL example client
+# Options for the wolfSSL example client, or a program
 run_client() {
-    "$WOLFSSL_CLIENT" -p 4433 -g -A "$CAS" "$@"
+    case "$1" in
+        -*) "$WOLFSSL_CLIENT" -p 4433 -g -A "$CAS" "$@" ;;
+        *) $WRAP "$BUILD_DIR/$1" ;;
+    esac
 }
 
 LOG=$BUILD_DIR/server.log
@@ -127,7 +137,7 @@ cat "$DATA/test-ca-sha256.crt" "$DATA/test-ca-sha1.crt" \
 THREADED=
 if [ "$MBEDTLS_THREADING_C" = 1 ]; then
     # ssl_pthread_server's limit, MAX_NUM_THREADS
-    FIVE="-v 4&-v 3&-v 4&-v 3&-v 4"
+    FIVE="-v 4&-v 3&-v 4&-v 3&$P/ssl_client1"
     THREADED="ssl_pthread_server, 5 clients at once|$P/ssl_pthread_server|$FIVE"
 fi
 
@@ -184,7 +194,7 @@ server: $(cat "$LOG")"
         FAILS=$((FAILS + 1))
     fi
 done <<CASES
-ssl_server, TLS 1.3 and 1.2|$P/ssl_server|-v 4;-v 3
+ssl_server, TLS 1.3 and 1.2|$P/ssl_server|-v 4;-v 3;$P/ssl_client1
 ssl_server, reset after a failure|$P/ssl_server|!-v 4 -A certs/ca-cert.pem;-v 4
 ssl_fork_server, TLS 1.3 and 1.2|$P/ssl_fork_server|-v 4;-v 3
 $THREADED

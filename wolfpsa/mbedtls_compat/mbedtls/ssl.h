@@ -42,8 +42,8 @@
 #define MBEDTLS_SSL_TRANSPORT_STREAM      0
 #define MBEDTLS_SSL_TRANSPORT_DATAGRAM    1
 #define MBEDTLS_SSL_PRESET_DEFAULT        0
-/* No MBEDTLS_SSL_VERIFY_OPTIONAL yet */
 #define MBEDTLS_SSL_VERIFY_NONE           0
+#define MBEDTLS_SSL_VERIFY_OPTIONAL       1
 #define MBEDTLS_SSL_VERIFY_REQUIRED       2
 #define MBEDTLS_SSL_MAX_HOST_NAME_LEN     255
 
@@ -96,7 +96,11 @@ typedef struct mbedtls_ssl_config {
     mbedtls_ssl_protocol_version max_tls_version;
     const int* ciphersuites; /* the application's, NULL for the default */
     mbedtls_x509_crt* ca_chain; /* the application's */
+    unsigned char* ca_loaded; /* per CA of ca_chain, 1 if wolfSSL loaded it */
+    size_t ca_count; /* of ca_loaded */
     mbedtls_x509_crl* ca_crl; /* not supported, an error when set */
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*);
+    void* p_vrfy;
     mbedtls_ssl_user_data_t user_data;
 } mbedtls_ssl_config;
 
@@ -121,7 +125,14 @@ typedef struct mbedtls_ssl_context {
     mbedtls_ssl_recv_timeout_t* f_recv_timeout;
     int io_err; /* the last BIO call's error, 0 after data */
     int authmode;
-    uint32_t verify_flags; /* MBEDTLS_X509_BADCERT_* of the failed check */
+    uint32_t verify_flags; /* MBEDTLS_X509_BADCERT_* from the handshake */
+    /* Used in place of the config's when set */
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*);
+    void* p_vrfy;
+    int verify_ret; /* the verify callback's error */
+    int peer_cert; /* the peer sent a certificate */
+    uint32_t* chain_flags; /* of each certificate, while the chain is checked */
+    int chain_len;
     mbedtls_ssl_user_data_t user_data;
 } mbedtls_ssl_context;
 
@@ -147,6 +158,8 @@ void mbedtls_ssl_conf_ciphersuites(mbedtls_ssl_config* conf,
     const int* ciphersuites);
 void mbedtls_ssl_conf_cert_profile(mbedtls_ssl_config* conf,
     const mbedtls_x509_crt_profile* profile);
+void mbedtls_ssl_conf_verify(mbedtls_ssl_config* conf,
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*), void* p_vrfy);
 
 static inline void mbedtls_ssl_conf_set_user_data_p(mbedtls_ssl_config* conf,
     void* p)
@@ -184,6 +197,8 @@ int mbedtls_ssl_session_reset(mbedtls_ssl_context* ssl);
 void mbedtls_ssl_set_bio(mbedtls_ssl_context* ssl, void* p_bio,
     mbedtls_ssl_send_t* f_send, mbedtls_ssl_recv_t* f_recv,
     mbedtls_ssl_recv_timeout_t* f_recv_timeout);
+void mbedtls_ssl_set_verify(mbedtls_ssl_context* ssl,
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*), void* p_vrfy);
 int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname);
 int mbedtls_ssl_handshake(mbedtls_ssl_context* ssl);
 int mbedtls_ssl_is_handshake_over(mbedtls_ssl_context* ssl);

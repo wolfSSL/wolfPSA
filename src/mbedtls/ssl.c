@@ -45,10 +45,16 @@
 #include <wolfssl/internal.h>
 #include <wolfssl/wolfio.h>
 #include <wolfssl/error-ssl.h>
+#include <wolfssl/wolfcrypt/asn.h>
 #include <wolfpsa/psa_engine.h>
 #include <mbedtls/net_sockets.h>
 #include "mbedtls_compat_internal.h"
 #include "psa_tf_psa_internal.h"
+
+/* MbedVerifyCb() needs the call for the peer's certificate when it passes */
+#ifndef WOLFSSL_ALWAYS_VERIFY_CB
+    #error "wolfPSA: MBEDTLS_COMPAT needs WOLFSSL_ALWAYS_VERIFY_CB"
+#endif /* !WOLFSSL_ALWAYS_VERIFY_CB */
 
 /* Unknown codes map to the last entry */
 int MbedIoErr(int code, int dir, int toWolf)
@@ -119,8 +125,12 @@ static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
     int err = wolfSSL_get_error(ssl->ssl, ret);
     size_t i;
 
-    /* A failed verify is what ended the handshake */
-    if (ssl->verify_flags != 0) {
+    if (ssl->verify_ret != 0) {
+        return ssl->verify_ret;
+    }
+    /* A failed verify with VERIFY_REQUIRED is what ended the handshake */
+    if (ssl->verify_flags != 0 &&
+            ssl->authmode == MBEDTLS_SSL_VERIFY_REQUIRED) {
         return ((ssl->verify_flags & ~MBED_USAGE_FLAGS) != 0) ?
             MBEDTLS_ERR_X509_CERT_VERIFY_FAILED :
             MBEDTLS_ERR_SSL_BAD_CERTIFICATE;
@@ -245,17 +255,175 @@ static uint32_t MbedVerifyFlag(int err)
     return map[i].mbed;
 }
 
-/* wolfSSL calls this for a failed check of the peer's chain. Keeps the
- * check's flag for mbedtls_ssl_get_verify_result() and lets the handshake
- * fail. */
+static int MbedChainNew(mbedtls_ssl_context* ssl, int len)
+{
+    const size_t sz = (size_t)len * sizeof(*ssl->chain_flags);
+
+    ssl->chain_flags = (uint32_t*)XMALLOC(sz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (ssl->chain_flags == NULL) {
+        return MBEDTLS_ERR_X509_ALLOC_FAILED;
+    }
+    XMEMSET(ssl->chain_flags, 0, sz);
+    ssl->chain_len = len;
+    return 0;
+}
+
+static void MbedChainFree(mbedtls_ssl_context* ssl)
+{
+    XFREE(ssl->chain_flags, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    ssl->chain_flags = NULL;
+    ssl->chain_len = 0;
+}
+
+/* Sets *ca to the CA, of those wolfSSL loaded from conf's CA list, that
+ * issued top, the last certificate the peer sent, matched as wolfSSL finds a
+ * signer. NULL when top is one of them. */
+static int MbedChainCA(const mbedtls_ssl_config* conf,
+    const WOLFSSL_BUFFER_INFO* top, mbedtls_x509_crt** ca)
+{
+    DecodedCert* cert;
+    DecodedCert* issuer;
+    mbedtls_x509_crt* crt;
+    size_t i;
+    int ret = 0;
+
+    *ca = NULL;
+    for (crt = conf->ca_chain, i = 0; crt != NULL && i < conf->ca_count;
+            crt = crt->next, i++) {
+        if (conf->ca_loaded[i] && crt->raw.len == top->length &&
+                XMEMCMP(crt->raw.p, top->buffer, top->length) == 0) {
+            return 0;
+        }
+    }
+
+    cert = (DecodedCert*)XMALLOC(sizeof(*cert), NULL, DYNAMIC_TYPE_DCERT);
+    issuer = (DecodedCert*)XMALLOC(sizeof(*issuer), NULL, DYNAMIC_TYPE_DCERT);
+    if (cert == NULL || issuer == NULL) {
+        ret = MBEDTLS_ERR_X509_ALLOC_FAILED;
+    }
+    if (ret == 0) {
+        ret = MbedCertDecode(cert, top->buffer, top->length);
+        for (crt = conf->ca_chain, i = 0; ret == 0 && *ca == NULL &&
+                crt != NULL && i < conf->ca_count; crt = crt->next, i++) {
+            if (!conf->ca_loaded[i]) {
+                continue;
+            }
+            ret = MbedCertDecode(issuer, crt->raw.p, (word32)crt->raw.len);
+            if (ret == 0 &&
+                    XMEMCMP(issuer->subjectHash, cert->issuerHash,
+                        KEYID_SIZE) == 0 &&
+                    (!cert->extAuthKeyIdSet ||
+                     XMEMCMP(issuer->extSubjKeyId, cert->extAuthKeyId,
+                        KEYID_SIZE) == 0)) {
+                *ca = crt;
+            }
+            wc_FreeDecodedCert(issuer);
+        }
+        wc_FreeDecodedCert(cert);
+        ret = wolfPSA_MbedRet(ret, MBEDTLS_ERR_X509_FATAL_ERROR);
+    }
+    XFREE(issuer, NULL, DYNAMIC_TYPE_DCERT);
+    XFREE(cert, NULL, DYNAMIC_TYPE_DCERT);
+    return ret;
+}
+
+/* As Mbed TLS does once it has checked the chain: calls the verify callback
+ * for each certificate from the top down, with its flags and the certificates
+ * the peer sent after it, the CA from the CA list first */
+static int MbedVerifyChain(mbedtls_ssl_context* ssl,
+    const WOLFSSL_X509_STORE_CTX* store)
+{
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*) = ssl->f_vrfy;
+    void* p_vrfy = ssl->p_vrfy;
+    const uint32_t* chain = ssl->chain_flags;
+    const int top = ssl->chain_len - 1;
+    mbedtls_x509_crt peer;
+    mbedtls_x509_crt* ca = NULL;
+    mbedtls_x509_crt* crt;
+    uint32_t flags = 0;
+    uint32_t usage;
+    int depth;
+    int i;
+    int ret = 0;
+
+    if (f_vrfy == NULL) {
+        f_vrfy = ssl->conf->f_vrfy;
+        p_vrfy = ssl->conf->p_vrfy;
+    }
+    mbedtls_x509_crt_init(&peer);
+    for (i = 0; f_vrfy != NULL && ret == 0 && i <= top; i++) {
+        ret = mbedtls_x509_crt_parse_der(&peer, store->certs[i].buffer,
+            store->certs[i].length);
+    }
+    if (f_vrfy != NULL && ret == 0 &&
+            (chain[top] & MBEDTLS_X509_BADCERT_NOT_TRUSTED) == 0) {
+        ret = MbedChainCA(ssl->conf, &store->certs[top], &ca);
+    }
+    if (ret == 0 && ca != NULL) {
+        ret = f_vrfy(p_vrfy, ca, top + 1, &flags);
+    }
+    ssl->verify_flags = flags;
+
+    for (depth = top; ret == 0 && depth >= 0; depth--) {
+        usage = (depth == 0) ? (chain[0] & MBED_USAGE_FLAGS) : 0;
+        flags = chain[depth] & ~usage;
+        if (f_vrfy != NULL) {
+            for (crt = &peer, i = 0; i < depth; i++) {
+                crt = crt->next;
+            }
+            ret = f_vrfy(p_vrfy, crt, depth, &flags);
+        }
+        ssl->verify_flags |= flags | usage;
+    }
+    mbedtls_x509_crt_free(&peer);
+
+    /* As in Mbed TLS, so it does not read as a failed verify */
+    return (ret == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) ?
+        MBEDTLS_ERR_X509_FATAL_ERROR : ret;
+}
+
+/* wolfSSL calls this for each failed check in the peer's chain, top down,
+ * then last for the peer's certificate. Until then it records the flag and
+ * accepts, so the app's callback and the result see the whole chain, as in
+ * Mbed TLS. A chain CA accepted here is trusted only by this connection. */
 static int MbedVerifyCb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 {
     mbedtls_ssl_context* s = (mbedtls_ssl_context*)store->userCtx;
+    const int depth = store->error_depth;
+    int ret = 0;
 
-    if (!preverify) {
-        s->verify_flags |= MbedVerifyFlag(store->error);
+    if (store->totalCerts <= 0) {
+        if (!preverify) {
+            s->verify_flags |= MbedVerifyFlag(store->error);
+        }
+        return preverify || s->authmode == MBEDTLS_SSL_VERIFY_OPTIONAL;
     }
-    return preverify;
+    s->peer_cert = 1;
+    if (s->chain_flags == NULL) {
+        ret = MbedChainNew(s, store->totalCerts);
+    }
+    if (ret == 0 && (s->chain_len != store->totalCerts || depth < 0 ||
+            depth >= s->chain_len)) {
+        ret = MBEDTLS_ERR_X509_FATAL_ERROR;
+    }
+    if (ret == 0 && !preverify) {
+        s->chain_flags[depth] |= MbedVerifyFlag(store->error);
+    }
+    if (ret == 0 && (depth > 0 ||
+            s->ssl->options.asyncState != TLS_ASYNC_FINALIZE)) {
+        return 1;
+    }
+
+    if (ret == 0) {
+        ret = MbedVerifyChain(s, store);
+    }
+    MbedChainFree(s);
+    if (ret != 0) {
+        s->verify_ret = ret;
+        s->verify_flags = 0xFFFFFFFF;
+    }
+    return ret == 0 && (s->verify_flags == 0 ||
+        s->authmode == MBEDTLS_SSL_VERIFY_OPTIONAL);
 }
 
 void mbedtls_ssl_config_init(mbedtls_ssl_config* conf)
@@ -273,57 +441,82 @@ void mbedtls_ssl_config_free(mbedtls_ssl_config* conf)
 
     if (conf != NULL) {
         wolfSSL_CTX_free(conf->ctx);
+        XFREE(conf->ca_loaded, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         XMEMSET(conf, 0, sizeof(*conf));
     }
 }
 
 void mbedtls_ssl_conf_authmode(mbedtls_ssl_config* conf, int authmode)
 {
+    static const struct {
+        int mbed;
+        int wolf;
+    } modes[] = {
+        { MBEDTLS_SSL_VERIFY_NONE, WOLFSSL_VERIFY_NONE },
+        { MBEDTLS_SSL_VERIFY_OPTIONAL, WOLFSSL_VERIFY_PEER },
+        { MBEDTLS_SSL_VERIFY_REQUIRED,
+            WOLFSSL_VERIFY_PEER | WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT }
+    };
+    size_t i;
+
     WOLFSSL_ENTER("mbedtls_ssl_conf_authmode");
 
     if (conf == NULL) {
         return;
     }
     conf->changes++;
-    if (authmode != MBEDTLS_SSL_VERIFY_NONE &&
-            authmode != MBEDTLS_SSL_VERIFY_REQUIRED) {
+    for (i = 0; i < XELEM_CNT(modes); i++) {
+        if (modes[i].mbed == authmode) {
+            break;
+        }
+    }
+    if (i == XELEM_CNT(modes)) {
         conf->err[MBED_CONF_ERR_AUTHMODE] = MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
         return;
     }
     conf->err[MBED_CONF_ERR_AUTHMODE] = 0;
     conf->authmode = authmode;
-    if (conf->ctx == NULL) {
-        return;
-    }
-    if (authmode == MBEDTLS_SSL_VERIFY_NONE) {
-        wolfSSL_CTX_set_verify(conf->ctx, WOLFSSL_VERIFY_NONE, NULL);
-    }
-    else {
-        wolfSSL_CTX_set_verify(conf->ctx,
-            WOLFSSL_VERIFY_PEER | WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-            MbedVerifyCb);
+    if (conf->ctx != NULL) {
+        wolfSSL_CTX_set_verify(conf->ctx, modes[i].wolf,
+            (authmode == MBEDTLS_SSL_VERIFY_NONE) ? NULL : MbedVerifyCb);
     }
 }
 
 /* Loads conf->ca_chain into the WOLFSSL_CTX. Mbed TLS checks a CA only when
  * it is used, so a CA that wolfSSL rejects on load, such as an expired one,
- * is left out. */
+ * is left out. ca_loaded records which were loaded. */
 static void MbedConfCAs(mbedtls_ssl_config* conf)
 {
     const mbedtls_x509_crt* crt;
+    size_t n = 0;
     int ret = (conf->ca_crl == NULL) ? 0 : MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+    int loaded;
 
+    XFREE(conf->ca_loaded, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    conf->ca_loaded = NULL;
+    conf->ca_count = 0;
+    for (crt = conf->ca_chain; crt != NULL; crt = crt->next) {
+        n++;
+    }
     if (ret == 0) {
         ret = MbedRet(wolfSSL_CTX_UnloadCAs(conf->ctx),
             MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
     }
-    for (crt = conf->ca_chain; ret == 0 && crt != NULL; crt = crt->next) {
-        if (crt->raw.p != NULL &&
-                wolfSSL_CTX_load_verify_buffer(conf->ctx, crt->raw.p,
-                    (long)crt->raw.len, WOLFSSL_FILETYPE_ASN1) ==
-                WC_NO_ERR_TRACE(MEMORY_E)) {
+    if (ret == 0 && n > 0) {
+        conf->ca_loaded = (unsigned char*)XMALLOC(n, NULL,
+            DYNAMIC_TYPE_TMP_BUFFER);
+        if (conf->ca_loaded == NULL) {
             ret = MBEDTLS_ERR_SSL_ALLOC_FAILED;
         }
+    }
+    for (crt = conf->ca_chain; ret == 0 && crt != NULL; crt = crt->next) {
+        loaded = (crt->raw.p == NULL) ? WOLFSSL_FAILURE :
+            wolfSSL_CTX_load_verify_buffer(conf->ctx, crt->raw.p,
+                (long)crt->raw.len, WOLFSSL_FILETYPE_ASN1);
+        if (loaded == WC_NO_ERR_TRACE(MEMORY_E)) {
+            ret = MBEDTLS_ERR_SSL_ALLOC_FAILED;
+        }
+        conf->ca_loaded[conf->ca_count++] = (loaded == WOLFSSL_SUCCESS);
     }
     conf->err[MBED_CONF_ERR_CA] = ret;
 }
@@ -547,6 +740,18 @@ void mbedtls_ssl_conf_cert_profile(mbedtls_ssl_config* conf,
     (void)profile;
 }
 
+void mbedtls_ssl_conf_verify(mbedtls_ssl_config* conf,
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*), void* p_vrfy)
+{
+    WOLFSSL_ENTER("mbedtls_ssl_conf_verify");
+
+    if (conf != NULL) {
+        conf->f_vrfy = f_vrfy;
+        conf->p_vrfy = p_vrfy;
+        conf->changes++;
+    }
+}
+
 #define MBED_SUITES_MAX     (WOLFSSL_MAX_SUITE_SZ / 2)
 #define MBED_SUITE_NAME_SZ  64
 
@@ -676,6 +881,7 @@ void mbedtls_ssl_free(mbedtls_ssl_context* ssl)
     WOLFSSL_ENTER("mbedtls_ssl_free");
 
     if (ssl != NULL) {
+        MbedChainFree(ssl);
         wolfSSL_free(ssl->ssl);
         XFREE(ssl->hostname, NULL, DYNAMIC_TYPE_DOMAIN);
         XMEMSET(ssl, 0, sizeof(*ssl));
@@ -816,6 +1022,9 @@ static int MbedSslNew(mbedtls_ssl_context* ssl)
         ssl->started = 0;
         ssl->authmode = ssl->conf->authmode;
         ssl->verify_flags = 0;
+        MbedChainFree(ssl);
+        ssl->verify_ret = 0;
+        ssl->peer_cert = 0;
         ssl->io_err = 0;
         wolfSSL_SSLSetIORecv(ssl->ssl, MbedRecvCb);
         wolfSSL_SSLSetIOSend(ssl->ssl, MbedSendCb);
@@ -888,6 +1097,17 @@ void mbedtls_ssl_set_bio(mbedtls_ssl_context* ssl, void* p_bio,
         ssl->f_send = f_send;
         ssl->f_recv = f_recv;
         ssl->f_recv_timeout = f_recv_timeout;
+    }
+}
+
+void mbedtls_ssl_set_verify(mbedtls_ssl_context* ssl,
+    int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*), void* p_vrfy)
+{
+    WOLFSSL_ENTER("mbedtls_ssl_set_verify");
+
+    if (ssl != NULL) {
+        ssl->f_vrfy = f_vrfy;
+        ssl->p_vrfy = p_vrfy;
     }
 }
 
@@ -1003,6 +1223,10 @@ uint32_t mbedtls_ssl_get_verify_result(const mbedtls_ssl_context* ssl)
     }
     if (ssl->authmode == MBEDTLS_SSL_VERIFY_NONE) {
         return MBEDTLS_X509_BADCERT_SKIP_VERIFY;
+    }
+    /* With VERIFY_OPTIONAL, a client may send no certificate */
+    if (!ssl->peer_cert) {
+        return MBEDTLS_X509_BADCERT_MISSING;
     }
     /* A server keeps no verify result with a session it resumes */
     return wolfSSL_session_reused(ssl->ssl) ? MBEDTLS_X509_BADCERT_MISSING :

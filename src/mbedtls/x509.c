@@ -35,6 +35,7 @@
 #include <wolfpsa/psa_engine.h>
 #include <mbedtls/x509_crt.h>
 #include "psa_tf_psa_internal.h"
+#include "mbedtls_compat_internal.h"
 
 /* The generated config has MBEDTLS_X509_CRT_PARSE_C when wolfCrypt parses
  * certificates */
@@ -52,9 +53,7 @@
     #include <sys/stat.h>
 #endif /* MBEDTLS_FS_IO && !NO_WOLFSSL_DIR && !_WIN32 */
 
-/* Decodes der without verifying it. Free cert with wc_FreeDecodedCert()
- * whatever the result. */
-static int MbedCertDecode(DecodedCert* cert, const byte* der, word32 len)
+int MbedCertDecode(DecodedCert* cert, const byte* der, word32 len)
 {
     wc_InitDecodedCert(cert, der, len, NULL);
     return wc_ParseCert(cert, CERT_TYPE, NO_VERIFY, NULL);

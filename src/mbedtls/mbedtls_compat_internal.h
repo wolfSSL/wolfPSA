@@ -19,13 +19,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-/* Shared by ssl.c and net.c. Not part of the public API. */
+/* Shared by ssl.c, net.c and x509.c. Not part of the public API. */
 
 #ifndef MBEDTLS_COMPAT_INTERNAL_H
 #define MBEDTLS_COMPAT_INTERNAL_H
 
 #include <stddef.h>
-#include <wolfssl/wolfcrypt/visibility.h>
+#include <wolfssl/wolfcrypt/types.h>
 
 enum {
     MBED_IO_RECV = 0,
@@ -36,5 +36,11 @@ enum {
 WOLFSSL_LOCAL int MbedIoErr(int code, int dir, int toWolf);
 /* An I/O length as an int, at most max */
 WOLFSSL_LOCAL int MbedIoLen(size_t len, int max);
+
+struct DecodedCert;
+/* Decodes der without verifying it. Free cert with wc_FreeDecodedCert()
+ * regardless of result. */
+WOLFSSL_LOCAL int MbedCertDecode(struct DecodedCert* cert, const byte* der,
+    word32 len);
 
 #endif /* MBEDTLS_COMPAT_INTERNAL_H */

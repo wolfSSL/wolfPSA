@@ -24,6 +24,7 @@
  * framework/data_files in an Mbed TLS checkout. */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 #include <stdint.h>
@@ -40,14 +41,19 @@
 #ifdef MBEDTLS_SSL_CACHE_C
     #include <mbedtls/ssl_cache.h>
 #endif /* MBEDTLS_SSL_CACHE_C */
+#include <wolfssl/wolfcrypt/settings.h>
+#include <wolfssl/wolfcrypt/memory.h>
 
 #define CA_FILE   "test-ca2.crt"
+/* A CA_FILE that is not valid until 2029, then CA_FILE */
+#define FUTURE_CA_FILE "test-ca2_cat-future-present.crt"
 #define CERT_FILE "server5.crt"
 #define KEY_FILE  "server5.key"
 /* server5.crt with server authentication as its only extended key usage */
 #define EKU_SRV_FILE "server5.eku-srv.crt"
 /* localhost, two intermediate CAs, then test-ca.crt */
 #define CHAIN_FILE "server10_int3_int-ca2.crt"
+#define LEAF_FILE  "server10.crt"
 #define LEAF_KEY_FILE "server10.key"
 #define ROOT_FILE  "test-ca.crt"
 /* Self-signed with server5.key, IP address SANs 97.98.99.100 and
@@ -57,6 +63,12 @@
 #define HOST_NAME "localhost"
 /* Handshake steps for each side */
 #define MAX_STEPS 20
+/* Verify callback calls recorded */
+#define MAX_CALLS 8
+/* A verify callback's own return code */
+#define VERIFY_CB_ERR -0x1234
+/* Allocations before the CA's verify callback that VerifyNoMemory fails */
+#define NO_MEMORY_TRIES 32
 /* TLS_AES_128_GCM_SHA256, which wolfSSL does not pick by default */
 #define SUITE_ID 0x1301
 #define SUITE_NAME "TLS1-3-AES-128-GCM-SHA256"
@@ -89,11 +101,27 @@ typedef struct {
     mbedtls_pk_context* key;
 } Certs;
 
+/* What a verify callback saw and what it does. want is the certificate
+ * list expected at each depth. */
+typedef struct {
+    const mbedtls_x509_crt* want[MAX_CALLS];
+    int depth[MAX_CALLS];
+    uint32_t flags[MAX_CALLS];
+    int calls;
+    int same; /* each certificate and the list after it was as expected */
+    uint32_t clear;
+    uint32_t set; /* at depth 0 */
+    int ret;
+    int ret2; /* the client's result in a second handshake */
+    uint32_t flags2; /* and its verify result */
+} Verify;
+
 static mbedtls_x509_crt ca;
 static mbedtls_x509_crt cert;
 static mbedtls_pk_context key;
 static mbedtls_x509_crt root;
 static mbedtls_x509_crt chain;
+static mbedtls_x509_crt leaf;
 static mbedtls_pk_context leafKey;
 static mbedtls_x509_crt ekuSrv;
 static mbedtls_x509_crt ipSan;
@@ -107,6 +135,11 @@ static Pipe toClient;
 static Pipe toServer;
 static Peer cli;
 static Peer srv;
+/* A second client and server, with pipes of their own */
+static Pipe toClient2;
+static Pipe toServer2;
+static Peer cli2;
+static Peer srv2;
 
 static int PipeSend(void* ctx, const unsigned char* buf, size_t len)
 {
@@ -147,10 +180,14 @@ static int PipeRecv(void* ctx, unsigned char* buf, size_t len)
 
 static void PeerInit(Peer* p, int endpoint)
 {
+    const int second = (p == &cli2 || p == &srv2);
+    Pipe* toCli = second ? &toClient2 : &toClient;
+    Pipe* toSrv = second ? &toServer2 : &toServer;
+
     mbedtls_ssl_config_init(&p->conf);
     mbedtls_ssl_init(&p->ssl);
-    p->rx = (endpoint == MBEDTLS_SSL_IS_CLIENT) ? &toClient : &toServer;
-    p->tx = (endpoint == MBEDTLS_SSL_IS_CLIENT) ? &toServer : &toClient;
+    p->rx = (endpoint == MBEDTLS_SSL_IS_CLIENT) ? toCli : toSrv;
+    p->tx = (endpoint == MBEDTLS_SSL_IS_CLIENT) ? toSrv : toCli;
     p->sendErr = 0;
     p->recvErr = 0;
     memset(p->tx, 0, sizeof(*p->tx));
@@ -200,8 +237,8 @@ static int Waiting(int ret)
         ret == MBEDTLS_ERR_SSL_WANT_WRITE;
 }
 
-/* The client's result. *srvRet gets the server's. */
-static int Handshake(int* srvRet)
+/* The result of client. *srvRet gets server's. */
+static int HandshakeOf(Peer* client, Peer* server, int* srvRet)
 {
     int c = MBEDTLS_ERR_SSL_WANT_READ;
     int s = MBEDTLS_ERR_SSL_WANT_READ;
@@ -209,14 +246,19 @@ static int Handshake(int* srvRet)
 
     for (i = 0; i < MAX_STEPS && (Waiting(c) || Waiting(s)); i++) {
         if (Waiting(c)) {
-            c = mbedtls_ssl_handshake(&cli.ssl);
+            c = mbedtls_ssl_handshake(&client->ssl);
         }
         if (Waiting(s)) {
-            s = mbedtls_ssl_handshake(&srv.ssl);
+            s = mbedtls_ssl_handshake(&server->ssl);
         }
     }
     *srvRet = s;
     return c;
+}
+
+static int Handshake(int* srvRet)
+{
+    return HandshakeOf(&cli, &srv, srvRet);
 }
 
 /* Connects a client with VERIFY_REQUIRED and HOST_NAME */
@@ -499,6 +541,440 @@ static int CaChainBeforeDefaults(void)
         Handshake(&s) == 0 && s == 0 &&
         mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
 
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+static int NoClientCertOptional(void)
+{
+    int ok = Connect(MBEDTLS_SSL_VERIFY_OPTIONAL) == 0 &&
+        mbedtls_ssl_get_verify_result(&cli.ssl) == 0 &&
+        mbedtls_ssl_get_verify_result(&srv.ssl) ==
+            MBEDTLS_X509_BADCERT_MISSING;
+
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* Compares crt and the certificates after it with want */
+static int SameList(const mbedtls_x509_crt* crt, const mbedtls_x509_crt* want)
+{
+    for (; crt != NULL && want != NULL; crt = crt->next, want = want->next) {
+        if (crt->raw.len != want->raw.len ||
+                memcmp(crt->raw.p, want->raw.p, crt->raw.len) != 0) {
+            return 0;
+        }
+    }
+    return crt == NULL && want == NULL;
+}
+
+static int VerifyCb(void* ctx, mbedtls_x509_crt* crt, int depth,
+    uint32_t* flags)
+{
+    Verify* v = (Verify*)ctx;
+
+    if (v->calls < MAX_CALLS) {
+        v->depth[v->calls] = depth;
+        v->flags[v->calls] = *flags;
+    }
+    if (depth >= 0 && depth < MAX_CALLS && v->want[depth] != NULL) {
+        v->same &= SameList(crt, v->want[depth]);
+    }
+    v->calls++;
+    *flags &= ~v->clear;
+    if (depth == 0) {
+        *flags |= v->set;
+    }
+    return v->ret;
+}
+
+static void VerifyInit(Verify* v)
+{
+    memset(v, 0, sizeof(*v));
+    v->same = 1;
+}
+
+/* The callback ran n times, from depth n - 1 down to 0 */
+static int TopDown(const Verify* v, int n)
+{
+    int i;
+
+    for (i = 0; i < n && i < MAX_CALLS; i++) {
+        if (v->depth[i] != n - 1 - i) {
+            return 0;
+        }
+    }
+    return v->calls == n;
+}
+
+/* Client trusts certs->ca and verifies with VerifyCb(v); server sends
+ * certs->own */
+static int VerifyPeers(int authmode, const Certs* certs, const char* host,
+    Verify* v)
+{
+    int ok = PeerNewCerts(&cli, MBEDTLS_SSL_IS_CLIENT, authmode, certs, 1,
+            host) == 0 &&
+        PeerNewCerts(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE,
+            certs, 0, NULL) == 0;
+
+    if (ok) {
+        mbedtls_ssl_conf_verify(&cli.conf, VerifyCb, v);
+    }
+    return ok;
+}
+
+/* From the root in the client's CA list down to the server's certificate,
+ * each with the certificates the server sent after it */
+static int VerifyTopDown(void)
+{
+    Verify v;
+    int s;
+    int ok;
+
+    VerifyInit(&v);
+    v.want[0] = &chain;
+    v.want[1] = chain.next;
+    v.want[2] = chain.next->next;
+    v.want[3] = &root;
+    ok = VerifyPeers(MBEDTLS_SSL_VERIFY_REQUIRED, &chainCerts, HOST_NAME,
+            &v) &&
+        Handshake(&s) == 0 && s == 0 && TopDown(&v, 4) && v.same &&
+        (v.flags[0] | v.flags[1] | v.flags[2] | v.flags[3]) == 0 &&
+        mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* The flags of the untrusted top of the chain, cleared */
+static int VerifyClear(void)
+{
+    Verify v;
+    int s;
+    int ok;
+
+    VerifyInit(&v);
+    v.clear = MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+    v.want[0] = &chain;
+    v.want[1] = chain.next;
+    v.want[2] = chain.next->next;
+    ok = VerifyPeers(MBEDTLS_SSL_VERIFY_REQUIRED, &untrustedCerts, HOST_NAME,
+            &v) &&
+        Handshake(&s) == 0 && s == 0 && TopDown(&v, 3) && v.same &&
+        v.flags[0] == MBEDTLS_X509_BADCERT_NOT_TRUSTED &&
+        (v.flags[1] | v.flags[2]) == 0 &&
+        mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* A name mismatch only, cleared, as for curl --no-verifyhost */
+static int VerifyClearHost(void)
+{
+    Verify v;
+    int s;
+    int ok;
+
+    VerifyInit(&v);
+    v.clear = MBEDTLS_X509_BADCERT_CN_MISMATCH;
+    v.want[0] = &cert;
+    v.want[1] = &ca;
+    ok = VerifyPeers(MBEDTLS_SSL_VERIFY_REQUIRED, &defaultCerts,
+            "wrong.example.org", &v) &&
+        Handshake(&s) == 0 && s == 0 && TopDown(&v, 2) && v.same &&
+        v.flags[0] == 0 && v.flags[1] == MBEDTLS_X509_BADCERT_CN_MISMATCH &&
+        mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* The CA list has a CA that is not valid yet, then the same CA that is. The
+ * callback gets the second, the one wolfSSL loaded. */
+static int VerifyCaLoaded(void)
+{
+    mbedtls_x509_crt cas;
+    const Certs certs = { &cas, &cert, &key };
+    Verify v;
+    int s;
+    int ok;
+
+    VerifyInit(&v);
+    v.want[0] = &cert;
+    v.want[1] = &ca;
+    mbedtls_x509_crt_init(&cas);
+    ok = mbedtls_x509_crt_parse_file(&cas, FUTURE_CA_FILE) == 0 &&
+        VerifyPeers(MBEDTLS_SSL_VERIFY_REQUIRED, &certs, HOST_NAME, &v) &&
+        Handshake(&s) == 0 && s == 0 && TopDown(&v, 2) && v.same &&
+        mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    mbedtls_x509_crt_free(&cas);
+    return ok;
+}
+
+static wolfSSL_Malloc_cb realMalloc;
+/* Allocations since the count was reset, and the one that fails, 0 for
+ * none */
+static int allocs;
+static int failAt;
+
+static void* FailMalloc(size_t size)
+{
+    if (++allocs == failAt) {
+        return NULL;
+    }
+    /* wolfSSL uses malloc() when no allocator is set */
+    return (realMalloc != NULL) ? realMalloc(size) : malloc(size);
+}
+
+/* Sets *ctx to the allocations before the CA's call */
+static int AllocsCb(void* ctx, mbedtls_x509_crt* crt, int depth,
+    uint32_t* flags)
+{
+    (void)crt;
+    (void)flags;
+    if (depth == 1) {
+        *(int*)ctx = allocs;
+    }
+    return 0;
+}
+
+/* Fails each of the last allocations before the CA's verify callback. The
+ * handshake fails, or passes after the callback for the CA. */
+static int VerifyNoMemory(void)
+{
+    wolfSSL_Free_cb ff;
+    wolfSSL_Realloc_cb rf;
+    int caAllocs = 0;
+    int at;
+    int ret;
+    int s;
+    int i;
+    int ok = 1;
+
+    (void)wolfSSL_GetAllocators(&realMalloc, &ff, &rf);
+    (void)wolfSSL_SetAllocators(FailMalloc, ff, rf);
+    for (i = 0; ok && i <= NO_MEMORY_TRIES && i <= caAllocs; i++) {
+        at = -1;
+        ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+                1, HOST_NAME) == 0 &&
+            PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+                NULL) == 0;
+        if (ok) {
+            mbedtls_ssl_conf_verify(&cli.conf, AllocsCb, &at);
+            allocs = 0;
+            failAt = (i == 0) ? 0 : caAllocs + 1 - i;
+            ret = Handshake(&s);
+            failAt = 0;
+            ok = (i == 0) ? (ret == 0 && at > 0) : (ret != 0 || at >= 0);
+        }
+        if (i == 0) {
+            caAllocs = at;
+        }
+        PeerFree(&cli);
+        PeerFree(&srv);
+    }
+    (void)wolfSSL_SetAllocators(realMalloc, ff, rf);
+    return ok;
+}
+
+/* The extended key usage of a client certificate is checked after the
+ * server's callback, which does not see it */
+static int VerifyUsage(void)
+{
+    Verify v;
+    int s = 0;
+    int ok;
+
+    VerifyInit(&v);
+    v.clear = 0xFFFFFFFF;
+    ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED, 1,
+            HOST_NAME) == 0 &&
+        mbedtls_ssl_conf_own_cert(&cli.conf, &ekuSrv, &key) == 0 &&
+        mbedtls_ssl_session_reset(&cli.ssl) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_REQUIRED, 0,
+            NULL) == 0;
+    if (ok) {
+        mbedtls_ssl_conf_verify(&srv.conf, VerifyCb, &v);
+        (void)Handshake(&s);
+        ok = s == MBEDTLS_ERR_SSL_BAD_CERTIFICATE && TopDown(&v, 2) &&
+            (v.flags[0] | v.flags[1]) == 0 &&
+            mbedtls_ssl_get_verify_result(&srv.ssl) ==
+                MBEDTLS_X509_BADCERT_EXT_KEY_USAGE;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* A flag set on a good chain fails the handshake */
+static int VerifySet(void)
+{
+    Verify v;
+    int s;
+    int ok;
+
+    VerifyInit(&v);
+    v.set = MBEDTLS_X509_BADCERT_OTHER;
+    ok = VerifyPeers(MBEDTLS_SSL_VERIFY_REQUIRED, &chainCerts, HOST_NAME,
+            &v) &&
+        Handshake(&s) == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED &&
+        TopDown(&v, 4) &&
+        mbedtls_ssl_get_verify_result(&cli.ssl) == MBEDTLS_X509_BADCERT_OTHER;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* A callback that fails stops the handshake, also with VERIFY_OPTIONAL */
+static int VerifyFails(int cbRet, int want)
+{
+    Verify v;
+    int s;
+    int ok;
+
+    VerifyInit(&v);
+    v.ret = cbRet;
+    ok = VerifyPeers(MBEDTLS_SSL_VERIFY_OPTIONAL, &chainCerts, HOST_NAME,
+            &v) &&
+        Handshake(&s) == want && v.calls == 1 &&
+        mbedtls_ssl_get_verify_result(&cli.ssl) == 0xFFFFFFFF;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+static int VerifyError(void)
+{
+    return VerifyFails(VERIFY_CB_ERR, VERIFY_CB_ERR);
+}
+
+static int VerifyErrorVerifyFailed(void)
+{
+    return VerifyFails(MBEDTLS_ERR_X509_CERT_VERIFY_FAILED,
+        MBEDTLS_ERR_X509_FATAL_ERROR);
+}
+
+/* The callback set on the context is used in place of the config's */
+static int VerifyContext(void)
+{
+    Verify vConf;
+    Verify v;
+    int s;
+    int ok;
+
+    VerifyInit(&vConf);
+    VerifyInit(&v);
+    ok = VerifyPeers(MBEDTLS_SSL_VERIFY_REQUIRED, &chainCerts, HOST_NAME,
+        &vConf);
+    if (ok) {
+        mbedtls_ssl_set_verify(&cli.ssl, VerifyCb, &v);
+        ok = Handshake(&s) == 0 && vConf.calls == 0 && TopDown(&v, 4);
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* After a handshake that accepted the untrusted CAs of the chain, or
+ * rejected them, the next handshake on the config does not trust them */
+static int VerifyNoCaCache(int authmode, uint32_t clear, int want)
+{
+    const Certs leafCerts = { &ca, &leaf, &leafKey };
+    Verify v;
+    int s;
+    int ok;
+
+    VerifyInit(&v);
+    v.clear = clear;
+    ok = VerifyPeers(authmode, &untrustedCerts, HOST_NAME, &v) &&
+        Handshake(&s) == want;
+    PeerFree(&srv);
+    if (ok) {
+        VerifyInit(&v);
+        memset(cli.tx, 0, sizeof(*cli.tx));
+        ok = mbedtls_ssl_session_reset(&cli.ssl) == 0 &&
+            PeerNewCerts(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE,
+                &leafCerts, 0, NULL) == 0;
+    }
+    if (ok) {
+        (void)Handshake(&s);
+        ok = (mbedtls_ssl_get_verify_result(&cli.ssl) &
+            MBEDTLS_X509_BADCERT_NOT_TRUSTED) != 0;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+static int NoCaCacheOptional(void)
+{
+    return VerifyNoCaCache(MBEDTLS_SSL_VERIFY_OPTIONAL, 0, 0);
+}
+
+static int NoCaCacheCleared(void)
+{
+    return VerifyNoCaCache(MBEDTLS_SSL_VERIFY_REQUIRED,
+        MBEDTLS_X509_BADCERT_NOT_TRUSTED, 0);
+}
+
+static int NoCaCacheRejected(void)
+{
+    return VerifyNoCaCache(MBEDTLS_SSL_VERIFY_REQUIRED, 0,
+        MBEDTLS_ERR_X509_CERT_VERIFY_FAILED);
+}
+
+/* Clears every flag. The first call runs a handshake of cli2, on the config
+ * of cli, with srv2, which sends only the chain's leaf. */
+static int VerifySecondCb(void* ctx, mbedtls_x509_crt* crt, int depth,
+    uint32_t* flags)
+{
+    const Certs leafCerts = { &ca, &leaf, &leafKey };
+    Verify* v = (Verify*)ctx;
+    int s;
+
+    (void)crt;
+    (void)depth;
+    *flags = 0;
+    if (v->calls++ > 0) {
+        return 0;
+    }
+    PeerInit(&cli2, MBEDTLS_SSL_IS_CLIENT);
+    if (mbedtls_ssl_setup(&cli2.ssl, &cli.conf) == 0 &&
+            mbedtls_ssl_set_hostname(&cli2.ssl, HOST_NAME) == 0 &&
+            PeerNewCerts(&srv2, MBEDTLS_SSL_IS_SERVER,
+                MBEDTLS_SSL_VERIFY_NONE, &leafCerts, 0, NULL) == 0) {
+        v->ret2 = HandshakeOf(&cli2, &srv2, &s);
+        v->flags2 = mbedtls_ssl_get_verify_result(&cli2.ssl);
+    }
+    PeerFree(&cli2);
+    PeerFree(&srv2);
+    return 0;
+}
+
+/* While the verify callback of a handshake runs, after wolfSSL accepted the
+ * untrusted CAs of its chain, a handshake on the same config does not trust
+ * them */
+static int NoCaCacheDuringVerify(void)
+{
+    Verify v;
+    int s;
+    int ok = PeerNewCerts(&cli, MBEDTLS_SSL_IS_CLIENT,
+            MBEDTLS_SSL_VERIFY_REQUIRED, &untrustedCerts, 1, HOST_NAME) == 0 &&
+        PeerNewCerts(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE,
+            &untrustedCerts, 0, NULL) == 0;
+
+    VerifyInit(&v);
+    if (ok) {
+        mbedtls_ssl_set_verify(&cli.ssl, VerifySecondCb, &v);
+        ok = Handshake(&s) == 0 && s == 0 && v.calls == 3 &&
+            v.ret2 == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED &&
+            v.flags2 == MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+    }
     PeerFree(&cli);
     PeerFree(&srv);
     return ok;
@@ -811,14 +1287,18 @@ static int AuthmodeNoneAfterSetup(void)
 }
 
 /* A TLS 1.2 handshake, then one with its session, set before conf_* calls as
- * curl does. The new CA list does not trust the server, so only a resumed
- * session passes, with the first result. want and flags are the client's. */
-static int Resume(int srvAuthmode, int want, uint32_t flags)
+ * curl does. The client verifies with authmode and the CAs of certs, then
+ * trusts only root, which changes the result of a full handshake. A resumed
+ * session keeps the first result and calls no verify callback. want and flags
+ * are the client's. */
+static int Resume(int authmode, const Certs* certs, int srvAuthmode,
+    int want, uint32_t flags)
 {
 #ifdef MBEDTLS_SSL_CACHE_C
     mbedtls_ssl_cache_context cache;
 #endif /* MBEDTLS_SSL_CACHE_C */
     mbedtls_ssl_session session;
+    Verify v;
     int s = 0;
     int ok;
 
@@ -826,10 +1306,11 @@ static int Resume(int srvAuthmode, int want, uint32_t flags)
     mbedtls_ssl_cache_init(&cache);
 #endif /* MBEDTLS_SSL_CACHE_C */
     mbedtls_ssl_session_init(&session);
-    ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED, 1,
+    VerifyInit(&v);
+    ok = PeerNewCerts(&cli, MBEDTLS_SSL_IS_CLIENT, authmode, certs, 1,
             HOST_NAME) == 0 &&
-        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
-            NULL) == 0;
+        PeerNewCerts(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE,
+            certs, 0, NULL) == 0;
     if (ok) {
         mbedtls_ssl_conf_max_tls_version(&cli.conf, MBEDTLS_SSL_VERSION_TLS1_2);
 #ifdef MBEDTLS_SSL_CACHE_C
@@ -849,9 +1330,11 @@ static int Resume(int srvAuthmode, int want, uint32_t flags)
             mbedtls_ssl_set_session(&cli.ssl, &session) == 0;
     }
     if (ok) {
+        mbedtls_ssl_set_verify(&cli.ssl, VerifyCb, &v);
         mbedtls_ssl_conf_ca_chain(&cli.conf, &root, NULL);
         mbedtls_ssl_conf_authmode(&srv.conf, srvAuthmode);
-        ok = Handshake(&s) == want && (want != 0 || s == 0) &&
+        ok = Handshake(&s) == want &&
+            (want != 0 || (s == 0 && v.calls == 0)) &&
             mbedtls_ssl_get_verify_result(&cli.ssl) == flags;
     }
     mbedtls_ssl_session_free(&session);
@@ -865,14 +1348,22 @@ static int Resume(int srvAuthmode, int want, uint32_t flags)
 
 static int ResumeRequired(void)
 {
-    return Resume(MBEDTLS_SSL_VERIFY_NONE, 0, 0);
+    return Resume(MBEDTLS_SSL_VERIFY_REQUIRED, &defaultCerts,
+        MBEDTLS_SSL_VERIFY_NONE, 0, 0);
+}
+
+static int ResumeOptional(void)
+{
+    return Resume(MBEDTLS_SSL_VERIFY_OPTIONAL, &untrustedCerts,
+        MBEDTLS_SSL_VERIFY_NONE, 0, MBEDTLS_X509_BADCERT_NOT_TRUSTED);
 }
 
 /* The session has no client certificate, so a full handshake */
 static int ResumeServerRequired(void)
 {
-    return Resume(MBEDTLS_SSL_VERIFY_REQUIRED,
-        MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, MBEDTLS_X509_BADCERT_NOT_TRUSTED);
+    return Resume(MBEDTLS_SSL_VERIFY_REQUIRED, &defaultCerts,
+        MBEDTLS_SSL_VERIFY_REQUIRED, MBEDTLS_ERR_X509_CERT_VERIFY_FAILED,
+        MBEDTLS_X509_BADCERT_NOT_TRUSTED);
 }
 
 /* The same endpoint and transport again keep the config */
@@ -910,10 +1401,10 @@ static void ConfCa(mbedtls_ssl_config* conf)
     mbedtls_ssl_conf_ca_chain(conf, &ca, NULL);
 }
 
-/* MBEDTLS_SSL_VERIFY_OPTIONAL in Mbed TLS */
-static void ConfAuthmodeOptional(mbedtls_ssl_config* conf)
+/* MBEDTLS_SSL_VERIFY_UNSET in Mbed TLS, only for SNI */
+static void ConfAuthmodeUnset(mbedtls_ssl_config* conf)
 {
-    mbedtls_ssl_conf_authmode(conf, 1);
+    mbedtls_ssl_conf_authmode(conf, 3);
 }
 
 static void ConfAuthmodeNone(mbedtls_ssl_config* conf)
@@ -987,7 +1478,7 @@ static int CrlCleared(void)
 
 static int AuthmodeCleared(void)
 {
-    return ConfError(ConfAuthmodeOptional, MBEDTLS_ERR_SSL_BAD_INPUT_DATA,
+    return ConfError(ConfAuthmodeUnset, MBEDTLS_ERR_SSL_BAD_INPUT_DATA,
         mbedtls_ssl_session_reset, ConfAuthmodeNone);
 }
 
@@ -1186,6 +1677,7 @@ static const struct {
     /* First: the list is made on the first lookup */
     { "cipher suite lookups, threads at once", SuitesThreads },
 #endif /* MBEDTLS_THREADING_C */
+    { "no client certificate, OPTIONAL", NoClientCertOptional },
     { "no client certificate, REQUIRED", NoClientCertRequired },
     { "host name not set", HostNotSet },
     { "host name cleared", HostCleared },
@@ -1202,6 +1694,21 @@ static const struct {
     { "client certificate for servers only", ClientCertUsage },
     { "VERIFY_NONE", VerifyNone },
     { "CA list set before config_defaults", CaChainBeforeDefaults },
+    { "verify callback, top down", VerifyTopDown },
+    { "verify callback clears NOT_TRUSTED", VerifyClear },
+    { "verify callback clears CN_MISMATCH", VerifyClearHost },
+    { "verify callback gets the CA wolfSSL loaded", VerifyCaLoaded },
+    { "allocation failures before the CA's verify callback", VerifyNoMemory },
+    { "verify callback cannot clear EXT_KEY_USAGE", VerifyUsage },
+    { "verify callback sets a flag", VerifySet },
+    { "verify callback error", VerifyError },
+    { "verify callback returns CERT_VERIFY_FAILED", VerifyErrorVerifyFailed },
+    { "verify callback on the context", VerifyContext },
+    { "untrusted chain CA not kept, OPTIONAL", NoCaCacheOptional },
+    { "untrusted chain CA not kept, cleared", NoCaCacheCleared },
+    { "untrusted chain CA not kept, rejected", NoCaCacheRejected },
+    { "untrusted chain CA not used during the verify callback",
+        NoCaCacheDuringVerify },
     { "write and read", ReadWrite },
     { "zero-length write", WriteZero },
     { "EOF without close_notify", ReadEof },
@@ -1216,6 +1723,7 @@ static const struct {
     { "version ranges", VersionRanges },
     { "VERIFY_NONE set after setup, no host name", AuthmodeNoneAfterSetup },
     { "session resumed, REQUIRED", ResumeRequired },
+    { "session resumed, OPTIONAL", ResumeOptional },
     { "session without a client certificate, server REQUIRED",
         ResumeServerRequired },
     { "same endpoint and transport set again", EndpointSame },
@@ -1244,6 +1752,7 @@ int main(void)
     mbedtls_pk_init(&key);
     mbedtls_x509_crt_init(&root);
     mbedtls_x509_crt_init(&chain);
+    mbedtls_x509_crt_init(&leaf);
     mbedtls_pk_init(&leafKey);
     mbedtls_x509_crt_init(&ekuSrv);
     mbedtls_x509_crt_init(&ipSan);
@@ -1253,6 +1762,7 @@ int main(void)
             mbedtls_pk_parse_keyfile(&key, KEY_FILE, NULL) != 0 ||
             mbedtls_x509_crt_parse_file(&root, ROOT_FILE) != 0 ||
             mbedtls_x509_crt_parse_file(&chain, CHAIN_FILE) != 0 ||
+            mbedtls_x509_crt_parse_file(&leaf, LEAF_FILE) != 0 ||
             mbedtls_pk_parse_keyfile(&leafKey, LEAF_KEY_FILE, NULL) != 0 ||
             mbedtls_x509_crt_parse_file(&ekuSrv, EKU_SRV_FILE) != 0 ||
             mbedtls_x509_crt_parse_file(&ipSan, IP_SAN_FILE) != 0) {
@@ -1271,6 +1781,7 @@ int main(void)
     mbedtls_x509_crt_free(&ipSan);
     mbedtls_x509_crt_free(&ekuSrv);
     mbedtls_pk_free(&leafKey);
+    mbedtls_x509_crt_free(&leaf);
     mbedtls_x509_crt_free(&chain);
     mbedtls_x509_crt_free(&root);
     mbedtls_pk_free(&key);
