@@ -739,7 +739,8 @@ static int MbedSetHostname(WOLFSSL* ssl, const char* hostname)
     return ret;
 }
 
-/* TLS 1.2, TLS 1.3, or both as wolfSSL's default range */
+/* TLS 1.2, TLS 1.3, or both. With a minimum set, wolfSSL_SetVersion() sets
+ * the top of the range. */
 static int MbedSetVersion(WOLFSSL* ssl, const mbedtls_ssl_config* conf)
 {
     static const struct {
@@ -749,20 +750,28 @@ static int MbedSetVersion(WOLFSSL* ssl, const mbedtls_ssl_config* conf)
         { MBEDTLS_SSL_VERSION_TLS1_2, WOLFSSL_TLSV1_2 },
         { MBEDTLS_SSL_VERSION_TLS1_3, WOLFSSL_TLSV1_3 }
     };
+    int minVer = -1;
+    int maxVer = -1;
+    int ret = MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     size_t i;
 
-    if (conf->min_tls_version == MBEDTLS_SSL_VERSION_TLS1_2 &&
-            conf->max_tls_version == MBEDTLS_SSL_VERSION_TLS1_3) {
-        return 0;
-    }
     for (i = 0; i < XELEM_CNT(map); i++) {
-        if (map[i].mbed == conf->min_tls_version &&
-                map[i].mbed == conf->max_tls_version) {
-            return MbedRet(wolfSSL_SetVersion(ssl, map[i].wolf),
-                MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+        if (map[i].mbed == conf->min_tls_version) {
+            minVer = map[i].wolf;
+        }
+        if (map[i].mbed == conf->max_tls_version) {
+            maxVer = map[i].wolf;
         }
     }
-    return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    if (minVer >= 0 && minVer <= maxVer) {
+        ret = MbedRet(wolfSSL_SetMinVersion(ssl, minVer),
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+    }
+    if (ret == 0) {
+        ret = MbedRet(wolfSSL_SetVersion(ssl, maxVer),
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+    }
+    return ret;
 }
 
 /* After MbedSetVersion, which resets the suites */

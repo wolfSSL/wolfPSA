@@ -746,6 +746,52 @@ static int VersionsAfterSetup(void)
     return ok;
 }
 
+#define V12 MBEDTLS_SSL_VERSION_TLS1_2
+#define V13 MBEDTLS_SSL_VERSION_TLS1_3
+/* The version negotiated by the client and server ranges, UNKNOWN for none */
+static int VersionRanges(void)
+{
+    static const struct {
+        mbedtls_ssl_protocol_version cli[2];
+        mbedtls_ssl_protocol_version srv[2];
+        mbedtls_ssl_protocol_version want;
+    } ranges[] = {
+        { { V12, V13 }, { V12, V13 }, V13 },
+        { { V12, V13 }, { V12, V12 }, V12 },
+        { { V12, V12 }, { V12, V13 }, V12 },
+        { { V13, V13 }, { V12, V13 }, V13 },
+        { { V12, V13 }, { V13, V13 }, V13 },
+        { { V13, V13 }, { V12, V12 }, MBEDTLS_SSL_VERSION_UNKNOWN },
+        { { V12, V12 }, { V13, V13 }, MBEDTLS_SSL_VERSION_UNKNOWN }
+    };
+    size_t i;
+    int s;
+    int c;
+    int ok = 1;
+
+    for (i = 0; ok && i < sizeof(ranges) / sizeof(ranges[0]); i++) {
+        ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+                1, HOST_NAME) == 0 &&
+            PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+                NULL) == 0;
+        if (ok) {
+            mbedtls_ssl_conf_min_tls_version(&cli.conf, ranges[i].cli[0]);
+            mbedtls_ssl_conf_max_tls_version(&cli.conf, ranges[i].cli[1]);
+            mbedtls_ssl_conf_min_tls_version(&srv.conf, ranges[i].srv[0]);
+            mbedtls_ssl_conf_max_tls_version(&srv.conf, ranges[i].srv[1]);
+            c = Handshake(&s);
+            ok = (ranges[i].want == MBEDTLS_SSL_VERSION_UNKNOWN) ?
+                c != 0 : c == 0 && s == 0 &&
+                mbedtls_ssl_get_version_number(&cli.ssl) == ranges[i].want;
+        }
+        PeerFree(&cli);
+        PeerFree(&srv);
+    }
+    return ok;
+}
+#undef V12
+#undef V13
+
 /* VERIFY_NONE needs no host name */
 static int AuthmodeNoneAfterSetup(void)
 {
@@ -1167,6 +1213,7 @@ static const struct {
     { "cipher suites set after setup", SuitesAfterSetup },
     { "authmode set after setup", AuthmodeAfterSetup },
     { "bad version range set after setup", VersionsAfterSetup },
+    { "version ranges", VersionRanges },
     { "VERIFY_NONE set after setup, no host name", AuthmodeNoneAfterSetup },
     { "session resumed, REQUIRED", ResumeRequired },
     { "session without a client certificate, server REQUIRED",
