@@ -90,15 +90,17 @@ REF_NAME := $(REF_BUILD)/test_suite_ssl_public
 
 # $(call run_suite,title,check.py options) runs the suite $< from the clone's
 # tests/, for the .data's ../framework/data_files paths. check.py compares
-# each case with cases.txt, not the suite's exit code.
+# each case with cases.txt, and the exit status with the outcomes.
+# exitcode=23 makes ASan exit 23 on an error or leak, instead of 1 as for a
+# failed case. 23 is arbitrary: any value other than 0 or 1 works.
 define run_suite
 @rm -f $(dir $<)outcome.csv
-cd $(MBEDTLS_CLONE)/tests && \
-	MBEDTLS_TEST_OUTCOME_FILE=$(dir $<)outcome.csv $(WRAP) $< \
-	$(SUITE_NAME).datax > $<.log 2>&1 || true
 @echo "$(1), $(MBEDTLS_REF)"
-@python3 $(SUITE)/check.py $(2) $(SUITE)/cases.txt $(dir $<)outcome.csv || \
-	{ echo "Log: $<.log"; exit 1; }
+cd $(MBEDTLS_CLONE)/tests && ASAN_OPTIONS=$$ASAN_OPTIONS:exitcode=23 \
+	MBEDTLS_TEST_OUTCOME_FILE=$(dir $<)outcome.csv $(WRAP) $< \
+	$(SUITE_NAME).datax > $<.log 2>&1; \
+	python3 $(SUITE)/check.py $(2) $(SUITE)/cases.txt \
+		$(dir $<)outcome.csv $$? || { echo "Log: $<.log"; exit 1; }
 endef
 
 # $(call link,flags,libraries) links the C source and objects among the
