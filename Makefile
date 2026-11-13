@@ -79,10 +79,18 @@ WOLFCRYPT_SRC := \
 WOLFCRYPT_OBJ := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 
-# MBEDTLS_COMPAT=1 adds the Mbed TLS 4.x X.509 API. See src/mbedtls/.
+# MBEDTLS_COMPAT=1 adds the Mbed TLS 4.x TLS, X.509 and network API, on
+# wolfSSL's TLS compiled from WOLFSSL_PATH like wolfCrypt. See src/mbedtls/.
+WOLFSSL_TLS_SRC :=
 ifeq ($(MBEDTLS_COMPAT),1)
 CPPFLAGS += -DWOLFPSA_MBEDTLS_COMPAT -I$(CURDIR)/wolfpsa/mbedtls_compat
+WOLFSSL_TLS_SRC := $(addprefix $(WOLFSSL_PATH)/src/,internal.c keys.c ssl.c \
+	tls.c tls13.c wolfio.c)
 endif
+WOLFSSL_TLS_OBJ := $(patsubst $(WOLFSSL_PATH)/src/%.c,$(OBJDIR)/wolfssl_%.o, \
+	$(WOLFSSL_TLS_SRC))
+WOLFSSL_TLS_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/src/%.c, \
+	$(OBJDIR_PIC)/wolfssl_%.o,$(WOLFSSL_TLS_SRC))
 
 # MBEDTLS_THREADING_C=1 builds a thread safe library, as in Mbed TLS. See
 # user_settings.h. Applications define MBEDTLS_THREADING_C too.
@@ -141,7 +149,7 @@ LDFLAGS += --coverage
 endif
 
 .PHONY: all clean psa-objects unit-run run-tests cov covclean \
-	want-surface-test mbedtls-compat-test
+	want-surface-test
 
 all: $(LIBNAME) $(SHLIBNAME)
 
@@ -151,11 +159,14 @@ all: $(LIBNAME) $(SHLIBNAME)
 # bundled wolfCrypt sources are out of scope.
 psa-objects: $(OBJ)
 
-$(LIBNAME): $(OBJ) $(WOLFCRYPT_OBJ)
+# Made again, so that objects of another MBEDTLS_COMPAT build are not kept
+$(LIBNAME): $(OBJ) $(WOLFCRYPT_OBJ) $(WOLFSSL_TLS_OBJ)
+	rm -f $@
 	$(AR) rcs $@ $^
 	$(RANLIB) $@
 
-$(SHLIBNAME): $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) $(EXPORT_MAP)
+$(SHLIBNAME): $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) $(WOLFSSL_TLS_OBJ_PIC) \
+		$(EXPORT_MAP)
 	$(CC) -shared -Wl,--version-script,$(EXPORT_MAP) -Wl,-Bsymbolic-functions -o $@ $(filter-out $(EXPORT_MAP),$^) $(LDFLAGS)
 
 # Build the PSA_WANT_* macros based on what the wolfCrypt build supports.
@@ -168,7 +179,8 @@ $(PSA_CONFIG): FORCE
 	$(PYTHON) tools/gen-crypto-config.py $@ "$(CC)" \
 		tools/psa_want_probe.c $(CPPFLAGS) $(CFLAGS)
 
-$(OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ) $(WOLFCRYPT_OBJ_PIC): $(PSA_CONFIG)
+$(OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ) $(WOLFCRYPT_OBJ_PIC) $(WOLFSSL_TLS_OBJ) \
+		$(WOLFSSL_TLS_OBJ_PIC): $(PSA_CONFIG)
 
 FORCE:
 
@@ -178,7 +190,8 @@ want-surface-test: $(LIBNAME) $(SHLIBNAME)
 		-lpthread -lm
 	$(BUILD_DIR)/psa_want_surface_test
 
-$(OBJ) $(WOLFCRYPT_OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC): $(OPTIONS_STAMP)
+$(OBJ) $(WOLFCRYPT_OBJ) $(WOLFSSL_TLS_OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) \
+		$(WOLFSSL_TLS_OBJ_PIC): $(OPTIONS_STAMP)
 
 $(OPTIONS_STAMP):
 	@mkdir -p $(@D)
@@ -198,6 +211,14 @@ $(OBJDIR_PIC)/%.o: src/%.c
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
 
 $(OBJDIR_PIC)/wolfcrypt_%.o: $(WOLFSSL_PATH)/wolfcrypt/src/%.c
+	@mkdir -p $(OBJDIR_PIC)
+	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
+
+$(OBJDIR)/wolfssl_%.o: $(WOLFSSL_PATH)/src/%.c
+	@mkdir -p $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR_PIC)/wolfssl_%.o: $(WOLFSSL_PATH)/src/%.c
 	@mkdir -p $(OBJDIR_PIC)
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
 
@@ -284,21 +305,27 @@ unit-run: all
 	@$(MAKE) -C test $(UNIT_TESTS)
 	@$(MAKE) run-tests
 
-# Mbed TLS repo, for its test data
+# Mbed TLS repo, for its test data and sample programs
 MBEDTLS_PATH ?= ../mbedtls
 
+# mbedtls-compat-test runs mbedtls-compat-unit, our own tests of the API, and
+# mbedtls-compat-programs, Mbed TLS's sample programs with wolfSSL peers. Each
+# runs the target of the same name in test/mbedtls_compat.
+MBEDTLS_COMPAT_TESTS := $(addprefix mbedtls-compat-,test unit programs)
+.PHONY: $(MBEDTLS_COMPAT_TESTS)
 ifeq ($(MBEDTLS_COMPAT),1)
-mbedtls-compat-test: $(LIBNAME)
+$(MBEDTLS_COMPAT_TESTS): mbedtls-compat-%: $(LIBNAME)
 	$(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
+		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
 		MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH)) \
 		BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
 		PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
 		WOLFSSL_FLAGS="-I$(abspath $(WOLFSSL_PATH)) \
 			-I$(abspath $(USER_SETTINGS_PATH)) $(WOLFSSL_CPPFLAGS)" \
-		SANITIZE_FLAGS="$(SANITIZE_FLAGS)" WOLFPSA_LDFLAGS="$(LDFLAGS)" check
+		SANITIZE_FLAGS="$(SANITIZE_FLAGS)" WOLFPSA_LDFLAGS="$(LDFLAGS)" $*
 else
-mbedtls-compat-test:
-	@echo "Run make MBEDTLS_COMPAT=1 mbedtls-compat-test"; exit 1
+$(MBEDTLS_COMPAT_TESTS):
+	@echo "Run make MBEDTLS_COMPAT=1 $@"; exit 1
 endif
 
 # Build everything with gcov instrumentation, run the unit tests, and emit an
@@ -349,5 +376,6 @@ covclean:
 clean:
 	rm -rf $(BUILD_DIR) $(LIBNAME) $(SHLIBNAME)
 
--include $(OBJ:.o=.d) $(WOLFCRYPT_OBJ:.o=.d)
--include $(OBJ_PIC:.o=.d) $(WOLFCRYPT_OBJ_PIC:.o=.d)
+-include $(OBJ:.o=.d) $(WOLFCRYPT_OBJ:.o=.d) $(WOLFSSL_TLS_OBJ:.o=.d)
+-include $(OBJ_PIC:.o=.d) $(WOLFCRYPT_OBJ_PIC:.o=.d) \
+	$(WOLFSSL_TLS_OBJ_PIC:.o=.d)

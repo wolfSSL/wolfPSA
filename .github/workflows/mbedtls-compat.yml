@@ -6,28 +6,53 @@ on:
 
 jobs:
   # make MBEDTLS_COMPAT=1 mbedtls-compat-test: the Mbed TLS 4.x API on
-  # wolfCrypt, tested with Mbed TLS's test data. See the README.
+  # wolfSSL, tested with Mbed TLS's sample programs and test data. See the
+  # README.
   mbedtls-compat:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        wolfssl-ref: [ master, v5.9.4-stable ]
+        # The compatibility layer needs wolfSSL master, not a release. The
+        # verify callbacks need this pull request until it merges.
+        wolfssl-ref: [ pull/11110/head ]
         options: [ "", "MBEDTLS_THREADING_C=1 ASAN=1" ]
 
     steps:
       - name: Check out wolfPSA
         uses: actions/checkout@v4
 
-      - name: Clone sibling wolfSSL
-        run: git clone --depth 1 --branch ${{ matrix.wolfssl-ref }} https://github.com/wolfSSL/wolfssl ../wolfssl
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake libtool libtool-bin pkg-config python3-jinja2 faketime
 
-      # The tests need only framework/data_files
+      # Fetched by ref, which may be a pull request's
+      - name: Fetch sibling wolfSSL
+        run: |
+          git init -q ../wolfssl
+          git -C ../wolfssl fetch -q --depth 1 https://github.com/wolfSSL/wolfssl ${{ matrix.wolfssl-ref }}
+          git -C ../wolfssl checkout -q FETCH_HEAD
+
+      # The tests need framework's data files, and tf-psa-crypto's headers for
+      # the test certificates
       - name: Clone sibling Mbed TLS
         run: |
           git clone --depth 1 --branch mbedtls-4.2.0 https://github.com/Mbed-TLS/mbedtls ../mbedtls
-          git -C ../mbedtls submodule update --init --depth 1 framework
+          git -C ../mbedtls submodule update --init --depth 1 framework tf-psa-crypto
 
       - name: Build and run the compatibility tests
         run: make MBEDTLS_COMPAT=1 ${{ matrix.options }} mbedtls-compat-test
+
+      # -z defs fails on undefined symbols
+      - name: Build client-only and server-only
+        if: matrix.options == ''
+        env:
+          LDFLAGS: -Wl,-z,defs
+        run: |
+          for side in CLIENT SERVER; do
+            make -j"$(nproc)" MBEDTLS_COMPAT=1 BUILD_DIR=build-no-$side \
+              WOLFSSL_CPPFLAGS="-DWOLFSSL_USER_SETTINGS -DNO_WOLFSSL_$side" \
+              want-surface-test
+          done
