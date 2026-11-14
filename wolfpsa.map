@@ -140,6 +140,9 @@ WOLFPSA_1.0 {
         wolfPSA_SetDefaultDevID;
         wolfPSA_GetDefaultDevID;
         /* Mbed TLS compatibility layer, MBEDTLS_COMPAT=1 */
+        mbedtls_net_*;
+        mbedtls_pem_*;
+        mbedtls_ssl_*;
         mbedtls_x509_*;
         /* The wolfCrypt objects a devId selects live inside this library,
          * so a shared-library user has to register the device against this

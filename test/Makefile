@@ -341,16 +341,20 @@ psa_tf_psa_threading_test: psa_server/psa_tf_psa_threading_test.c \
 		$(SANITIZE_FLAGS) -pthread -lm
 
 # The memory tracker is installed by the real wolfCrypt_Init(), so its test
-# has a library built with it, and with the X.509 API, which allocates too
+# has a library built with it. Here MBEDTLS_COMPAT=1 is the default and adds
+# the Mbed TLS API, which allocates too. It needs wolfSSL master: use
+# MBEDTLS_COMPAT=0 with a wolfSSL release.
+MBEDTLS_COMPAT ?= 1
 TRACK_BUILD_DIR := $(abspath .)/build-track$(if $(SANITIZE_FLAGS),-asan)
 TRACK_LIB := $(TRACK_BUILD_DIR)/libwolfpsa-track.a
 TRACK_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLFSSL_TRACK_MEMORY \
-	-DWOLFPSA_MBEDTLS_COMPAT $(VARIANT_INC) \
-	-I$(WOLFPSA_ABS)/wolfpsa/mbedtls_compat -I$(TRACK_BUILD_DIR)/include
+	$(if $(filter 1,$(MBEDTLS_COMPAT)),-DWOLFPSA_MBEDTLS_COMPAT) \
+	$(VARIANT_INC) -I$(WOLFPSA_ABS)/wolfpsa/mbedtls_compat \
+	-I$(TRACK_BUILD_DIR)/include
 
 $(TRACK_LIB): FORCE
 	$(call variant_lib,$(TRACK_BUILD_DIR),-DWOLFSSL_TRACK_MEMORY, \
-		MBEDTLS_COMPAT=1)
+		MBEDTLS_COMPAT=$(MBEDTLS_COMPAT))
 
 psa_track_memory_test: psa_server/psa_track_memory_test.c \
 		$(TRACK_LIB) FORCE

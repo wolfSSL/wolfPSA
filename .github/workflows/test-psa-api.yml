@@ -75,6 +75,10 @@ jobs:
         # master tracks upstream; the -stable tag is the release wolfPSA is
         # validated against. Bump it together with the wolfPSA version.
         wolfssl-ref: [ master, v5.9.4-stable ]
+        # MBEDTLS_COMPAT=1 needs wolfSSL master
+        include:
+          - wolfssl-ref: v5.9.4-stable
+            make-args: MBEDTLS_COMPAT=0
 
     steps:
       - name: Check out wolfPSA
@@ -92,7 +96,7 @@ jobs:
       - name: Build and run the PSA API tests
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}:${{ github.workspace }}/../wolfssl/src/.libs
-        run: make unit-run
+        run: make unit-run ${{ matrix.make-args }}
 
       # The crypto callback reads the HMAC key out of Hmac.keyRaw, which
       # wolfCrypt borrows rather than copies. Only a sanitizer notices when
