@@ -382,8 +382,16 @@ int mbedtls_ssl_config_defaults(mbedtls_ssl_config* conf,
     }
     conf->endpoint = endpoint;
     conf->transport = transport;
+#ifdef MBEDTLS_SSL_PROTO_TLS1_2
     conf->min_tls_version = MBEDTLS_SSL_VERSION_TLS1_2;
+#else
+    conf->min_tls_version = MBEDTLS_SSL_VERSION_TLS1_3;
+#endif /* MBEDTLS_SSL_PROTO_TLS1_2 */
+#ifdef MBEDTLS_SSL_PROTO_TLS1_3
     conf->max_tls_version = MBEDTLS_SSL_VERSION_TLS1_3;
+#else
+    conf->max_tls_version = MBEDTLS_SSL_VERSION_TLS1_2;
+#endif /* MBEDTLS_SSL_PROTO_TLS1_3 */
     conf->ciphersuites = NULL;
     conf->ctx = wolfSSL_CTX_new(methods[i].method());
     if (conf->ctx == NULL) {
