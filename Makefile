@@ -1,5 +1,7 @@
-# Simple static build for wolfPSA
+# Simple static build for wolfPSA. make help lists the "## " lines: options
+# and targets.
 
+## WOLFSSL_PATH=dir: wolfSSL source tree, default ../wolfssl
 WOLFSSL_PATH ?= ../wolfssl
 USER_SETTINGS_PATH ?= $(CURDIR)/wolfpsa
 PSA_INCLUDE ?=
@@ -79,13 +81,22 @@ WOLFCRYPT_SRC := \
 WOLFCRYPT_OBJ := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 
-# MBEDTLS_COMPAT=1 adds the Mbed TLS 4.x X.509 API. See src/mbedtls/.
+## MBEDTLS_COMPAT=1: add the Mbed TLS 4.x API, for mbedtls-compat-*
+# The TLS, X.509 and network API, on wolfSSL's TLS compiled from WOLFSSL_PATH
+# like wolfCrypt. See src/mbedtls/.
+WOLFSSL_TLS_SRC :=
 ifeq ($(MBEDTLS_COMPAT),1)
 CPPFLAGS += -DWOLFPSA_MBEDTLS_COMPAT -I$(CURDIR)/wolfpsa/mbedtls_compat
+WOLFSSL_TLS_SRC := $(addprefix $(WOLFSSL_PATH)/src/,internal.c keys.c ssl.c \
+	tls.c tls13.c wolfio.c)
 endif
+WOLFSSL_TLS_OBJ := $(patsubst $(WOLFSSL_PATH)/src/%.c,$(OBJDIR)/wolfssl_%.o, \
+	$(WOLFSSL_TLS_SRC))
+WOLFSSL_TLS_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/src/%.c, \
+	$(OBJDIR_PIC)/wolfssl_%.o,$(WOLFSSL_TLS_SRC))
 
-# MBEDTLS_THREADING_C=1 builds a thread safe library, as in Mbed TLS. See
-# user_settings.h. Applications define MBEDTLS_THREADING_C too.
+## MBEDTLS_THREADING_C=1: thread safe library, as in Mbed TLS
+# See user_settings.h. Applications define MBEDTLS_THREADING_C too.
 ifeq ($(MBEDTLS_THREADING_C),1)
 CPPFLAGS += -DMBEDTLS_THREADING_C
 LDFLAGS += -pthread
@@ -109,20 +120,23 @@ DEPFLAGS := -MMD -MP
 CFLAGS ?= -O2
 WARNFLAGS ?= -Wall -Wextra -Werror
 CFLAGS += $(WARNFLAGS)
+## DEBUG=1: build with -ggdb
 DEBUG_FLAGS :=
 ifeq ($(DEBUG),1)
 DEBUG_FLAGS = -ggdb
 endif
+## ASAN=1: build with AddressSanitizer
 SANITIZE_FLAGS :=
 ifeq ($(ASAN),1)
 SANITIZE_FLAGS = -fsanitize=address
 endif
-# AES_FAST=1 waives the PSA constant-time AES requirement and takes
-# wolfCrypt's faster T-table core instead. See src/psa_config.h.
+## AES_FAST=1: faster AES, not constant time
+# Waives the PSA constant-time AES requirement and takes wolfCrypt's faster
+# T-table core instead. See src/psa_config.h.
 ifeq ($(AES_FAST),1)
 CPPFLAGS += -DWOLFPSA_AES_FAST
 endif
-# ENROLLMENT_ALG=1 allows the Mbed TLS enrollment algorithm on volatile keys
+## ENROLLMENT_ALG=1: Mbed TLS enrollment algorithm on volatile keys
 ifeq ($(ENROLLMENT_ALG),1)
 CPPFLAGS += -DWOLFPSA_ENROLLMENT_ALG
 endif
@@ -141,21 +155,26 @@ LDFLAGS += --coverage
 endif
 
 .PHONY: all clean psa-objects unit-run run-tests cov covclean \
-	want-surface-test mbedtls-compat-test
+	want-surface-test help
 
+## all: build libwolfpsa.a and libwolfpsa.so
 all: $(LIBNAME) $(SHLIBNAME)
 
+## psa-objects: compile wolfPSA's own sources only
 # Compile only wolfPSA's own sources, skipping the wolfCrypt sources pulled
 # in from WOLFSSL_PATH. Used by build-config-matrix lanes that exercise a
 # configuration where wolfPSA's own exclusions are the point and the
 # bundled wolfCrypt sources are out of scope.
 psa-objects: $(OBJ)
 
-$(LIBNAME): $(OBJ) $(WOLFCRYPT_OBJ)
+# Made again, so that objects of another MBEDTLS_COMPAT build are not kept
+$(LIBNAME): $(OBJ) $(WOLFCRYPT_OBJ) $(WOLFSSL_TLS_OBJ)
+	rm -f $@
 	$(AR) rcs $@ $^
 	$(RANLIB) $@
 
-$(SHLIBNAME): $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) $(EXPORT_MAP)
+$(SHLIBNAME): $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) $(WOLFSSL_TLS_OBJ_PIC) \
+		$(EXPORT_MAP)
 	$(CC) -shared -Wl,--version-script,$(EXPORT_MAP) -Wl,-Bsymbolic-functions -o $@ $(filter-out $(EXPORT_MAP),$^) $(LDFLAGS)
 
 # Build the PSA_WANT_* macros based on what the wolfCrypt build supports.
@@ -168,17 +187,20 @@ $(PSA_CONFIG): FORCE
 	$(PYTHON) tools/gen-crypto-config.py $@ "$(CC)" \
 		tools/psa_want_probe.c $(CPPFLAGS) $(CFLAGS)
 
-$(OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ) $(WOLFCRYPT_OBJ_PIC): $(PSA_CONFIG)
+$(OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ) $(WOLFCRYPT_OBJ_PIC) $(WOLFSSL_TLS_OBJ) \
+		$(WOLFSSL_TLS_OBJ_PIC): $(PSA_CONFIG)
 
 FORCE:
 
+## want-surface-test: build and run psa_want_surface_test
 want-surface-test: $(LIBNAME) $(SHLIBNAME)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(BUILD_DIR)/psa_want_surface_test \
 		test/psa_server/psa_want_surface_test.c $(LIBNAME) $(LDFLAGS) \
 		-lpthread -lm
 	$(BUILD_DIR)/psa_want_surface_test
 
-$(OBJ) $(WOLFCRYPT_OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC): $(OPTIONS_STAMP)
+$(OBJ) $(WOLFCRYPT_OBJ) $(WOLFSSL_TLS_OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ_PIC) \
+		$(WOLFSSL_TLS_OBJ_PIC): $(OPTIONS_STAMP)
 
 $(OPTIONS_STAMP):
 	@mkdir -p $(@D)
@@ -198,6 +220,14 @@ $(OBJDIR_PIC)/%.o: src/%.c
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
 
 $(OBJDIR_PIC)/wolfcrypt_%.o: $(WOLFSSL_PATH)/wolfcrypt/src/%.c
+	@mkdir -p $(OBJDIR_PIC)
+	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
+
+$(OBJDIR)/wolfssl_%.o: $(WOLFSSL_PATH)/src/%.c
+	@mkdir -p $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR_PIC)/wolfssl_%.o: $(WOLFSSL_PATH)/src/%.c
 	@mkdir -p $(OBJDIR_PIC)
 	$(CC) $(CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
 
@@ -270,8 +300,9 @@ UNIT_TESTS := psa_api_test \
 	psa_tf_psa_threading_test \
 	psa_track_memory_test
 
-# Run the unit test loop from the repo root (psa_rsa_pss_interop_test reads
-# its certificate relative to the root). Assumes the tests are already built.
+## run-tests: run the unit tests, already built
+# From the repo root: psa_rsa_pss_interop_test reads its certificate relative
+# to the root.
 run-tests:
 	@for t in $(UNIT_TESTS); do \
 	    echo "=== $$t ==="; \
@@ -279,28 +310,43 @@ run-tests:
 	    ./test/$$t || exit 1; \
 	done
 
-# Build the library and the unit tests, then run every unit test.
+## unit-run: build the library and the unit tests, run them
 unit-run: all
 	@$(MAKE) -C test $(UNIT_TESTS)
 	@$(MAKE) run-tests
 
-# Mbed TLS repo, for its test data
-MBEDTLS_PATH ?= ../mbedtls
-
+## MBEDTLS_PATH=dir: Mbed TLS tree for unit and programs, or a clone
+## WRAP=cmd: compat test programs run under cmd, like valgrind
+## mbedtls-compat-test: unit, programs and suite
+## mbedtls-compat-unit: our own tests of the Mbed TLS API
+## mbedtls-compat-programs: Mbed TLS's sample programs, with wolfSSL peers
+## mbedtls-compat-suite: Mbed TLS's ssl tests, as we modified them
+## mbedtls-compat-suite-ref: the modified ssl tests, on Mbed TLS itself
+## mbedtls-compat-suite-patch: save the clone's edits to mbedtls.patch
+MBEDTLS_COMPAT_MAKE = $(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
+	WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
+	$(if $(MBEDTLS_PATH),MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH))) \
+	BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
+	PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
+	WOLFSSL_FLAGS="-I$(abspath $(WOLFSSL_PATH)) \
+		-I$(abspath $(USER_SETTINGS_PATH)) $(WOLFSSL_CPPFLAGS)" \
+	SANITIZE_FLAGS="$(SANITIZE_FLAGS)" WOLFPSA_LDFLAGS="$(LDFLAGS)"
+# mbedtls-compat-<name> runs <name> in test/mbedtls_compat. These test
+# libwolfpsa.a; suite-ref and suite-patch do not use it.
+MBEDTLS_COMPAT_TESTS := $(addprefix mbedtls-compat-,test unit programs suite)
+MBEDTLS_COMPAT_TARGETS := $(MBEDTLS_COMPAT_TESTS) \
+	$(addprefix mbedtls-compat-,suite-ref suite-patch)
+.PHONY: $(MBEDTLS_COMPAT_TARGETS)
 ifeq ($(MBEDTLS_COMPAT),1)
-mbedtls-compat-test: $(LIBNAME)
-	$(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
-		MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH)) \
-		BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
-		PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
-		WOLFSSL_FLAGS="-I$(abspath $(WOLFSSL_PATH)) \
-			-I$(abspath $(USER_SETTINGS_PATH)) $(WOLFSSL_CPPFLAGS)" \
-		SANITIZE_FLAGS="$(SANITIZE_FLAGS)" WOLFPSA_LDFLAGS="$(LDFLAGS)" check
+$(MBEDTLS_COMPAT_TESTS): $(LIBNAME)
+$(MBEDTLS_COMPAT_TARGETS): mbedtls-compat-%:
+	$(MBEDTLS_COMPAT_MAKE) $*
 else
-mbedtls-compat-test:
-	@echo "Run make MBEDTLS_COMPAT=1 mbedtls-compat-test"; exit 1
+$(MBEDTLS_COMPAT_TARGETS):
+	@echo "Run make MBEDTLS_COMPAT=1 $@"; exit 1
 endif
 
+## cov: unit test coverage report, in build/coverage
 # Build everything with gcov instrumentation, run the unit tests, and emit an
 # HTML coverage report for src/*.c (the bundled wolfCrypt sources are
 # excluded by the -f filter). The instrumented objects are dropped once the
@@ -340,14 +386,24 @@ cov:
 	    exit 1; \
 	fi
 
-# Remove gcov artifacts and the coverage report.
+## covclean: remove gcov files and the coverage report
 covclean:
 	find $(wildcard $(OBJDIR) $(OBJDIR_PIC)) test \
 	    \( -name '*.gcda' -o -name '*.gcno' \) -delete
 	rm -rf $(COV_DIR)
 
+## clean: remove the build directory and the libraries
 clean:
 	rm -rf $(BUILD_DIR) $(LIBNAME) $(SHLIBNAME)
 
--include $(OBJ:.o=.d) $(WOLFCRYPT_OBJ:.o=.d)
--include $(OBJ_PIC:.o=.d) $(WOLFCRYPT_OBJ_PIC:.o=.d)
+## help: list these options and targets
+help:
+	@awk '/^## / { i = index($$0, ": "); n = substr($$0, 4, i - 4); \
+		l = sprintf("  %-27s %s\n", n, substr($$0, i + 2)); \
+		if (n ~ /=/) o = o l; else t = t l } \
+		END { printf "Options:\n%sTargets:\n%s", o, t }' \
+		$(firstword $(MAKEFILE_LIST))
+
+-include $(OBJ:.o=.d) $(WOLFCRYPT_OBJ:.o=.d) $(WOLFSSL_TLS_OBJ:.o=.d)
+-include $(OBJ_PIC:.o=.d) $(WOLFCRYPT_OBJ_PIC:.o=.d) \
+	$(WOLFSSL_TLS_OBJ_PIC:.o=.d)

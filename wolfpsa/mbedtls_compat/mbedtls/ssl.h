@@ -1,0 +1,314 @@
+/* ssl.h
+ *
+ * Copyright (C) 2026 wolfSSL Inc.
+ *
+ * This file is part of wolfPSA.
+ *
+ * wolfPSA is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfPSA is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
+ */
+
+#ifndef MBEDTLS_SSL_H
+#define MBEDTLS_SSL_H
+
+#include "mbedtls/build_info.h"
+#include "mbedtls/platform_util.h"
+#include "mbedtls/ssl_ciphersuites.h"
+#include "mbedtls/x509_crt.h"
+/* From wolfPSA, as Mbed TLS takes it from TF-PSA-Crypto */
+#include "psa/crypto.h"
+/* Mbed TLS includes it through ssl_cache.h, on by default there */
+#include "mbedtls/threading.h"
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+    extern "C" {
+#endif /* __cplusplus */
+
+#define MBEDTLS_SSL_IS_CLIENT             0
+#define MBEDTLS_SSL_IS_SERVER             1
+#define MBEDTLS_SSL_TRANSPORT_STREAM      0
+#define MBEDTLS_SSL_TRANSPORT_DATAGRAM    1
+#define MBEDTLS_SSL_PRESET_DEFAULT        0
+/* No MBEDTLS_SSL_VERIFY_OPTIONAL yet */
+#define MBEDTLS_SSL_VERIFY_NONE           0
+#define MBEDTLS_SSL_VERIFY_REQUIRED       2
+#define MBEDTLS_SSL_MAX_HOST_NAME_LEN     255
+#define MBEDTLS_SSL_MAX_FRAG_LEN_NONE     0
+#define MBEDTLS_SSL_MAX_FRAG_LEN_512      1
+#define MBEDTLS_SSL_MAX_FRAG_LEN_1024     2
+#define MBEDTLS_SSL_MAX_FRAG_LEN_2048     3
+#define MBEDTLS_SSL_MAX_FRAG_LEN_4096     4
+#define MBEDTLS_SSL_MAX_FRAG_LEN_INVALID  5
+#define MBEDTLS_SSL_LEGACY_NO_RENEGOTIATION    0
+#define MBEDTLS_SSL_LEGACY_ALLOW_RENEGOTIATION 1
+#define MBEDTLS_SSL_LEGACY_BREAK_HANDSHAKE     2
+#define MBEDTLS_SSL_EARLY_DATA_DISABLED   0
+#define MBEDTLS_SSL_EARLY_DATA_ENABLED    1
+
+#define MBEDTLS_SSL_MSG_CHANGE_CIPHER_SPEC  20
+#define MBEDTLS_SSL_MSG_ALERT               21
+#define MBEDTLS_SSL_MSG_HANDSHAKE           22
+#define MBEDTLS_SSL_MSG_APPLICATION_DATA    23
+#define MBEDTLS_SSL_ALERT_LEVEL_WARNING     1
+#define MBEDTLS_SSL_ALERT_LEVEL_FATAL       2
+#define MBEDTLS_SSL_ALERT_MSG_NO_RENEGOTIATION 100
+
+/* IANA TLS NamedGroup values */
+#define MBEDTLS_SSL_IANA_TLS_GROUP_NONE       0
+#define MBEDTLS_SSL_IANA_TLS_GROUP_SECP256K1  0x0016
+#define MBEDTLS_SSL_IANA_TLS_GROUP_SECP256R1  0x0017
+#define MBEDTLS_SSL_IANA_TLS_GROUP_SECP384R1  0x0018
+#define MBEDTLS_SSL_IANA_TLS_GROUP_SECP521R1  0x0019
+#define MBEDTLS_SSL_IANA_TLS_GROUP_BP256R1    0x001A
+#define MBEDTLS_SSL_IANA_TLS_GROUP_BP384R1    0x001B
+#define MBEDTLS_SSL_IANA_TLS_GROUP_BP512R1    0x001C
+#define MBEDTLS_SSL_IANA_TLS_GROUP_X25519     0x001D
+#define MBEDTLS_SSL_IANA_TLS_GROUP_X448       0x001E
+#define MBEDTLS_SSL_IANA_TLS_GROUP_FFDHE2048  0x0100
+#define MBEDTLS_SSL_IANA_TLS_GROUP_FFDHE3072  0x0101
+#define MBEDTLS_SSL_IANA_TLS_GROUP_FFDHE4096  0x0102
+#define MBEDTLS_SSL_IANA_TLS_GROUP_FFDHE6144  0x0103
+#define MBEDTLS_SSL_IANA_TLS_GROUP_FFDHE8192  0x0104
+
+#define MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME -0x5D80
+#define MBEDTLS_ERR_SSL_BAD_CONFIG           -0x5E80
+#define MBEDTLS_ERR_SSL_VERSION_MISMATCH     -0x5F00
+#define MBEDTLS_ERR_SSL_TIMEOUT              -0x6800
+#define MBEDTLS_ERR_SSL_WANT_WRITE           -0x6880
+#define MBEDTLS_ERR_SSL_WANT_READ            -0x6900
+#define MBEDTLS_ERR_SSL_INTERNAL_ERROR       -0x6C00
+#define MBEDTLS_ERR_SSL_HANDSHAKE_FAILURE    -0x6E00
+#define MBEDTLS_ERR_SSL_BAD_PROTOCOL_VERSION -0x6E80
+#define MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE  -0x7080
+#define MBEDTLS_ERR_SSL_CONN_EOF             -0x7280
+#define MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE -0x7480
+#define MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY    -0x7880
+#define MBEDTLS_ERR_SSL_BAD_CERTIFICATE      -0x7A00
+#define MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET -0x7B00
+#define MBEDTLS_ERR_SSL_HW_ACCEL_FAILED      -0x7F80
+#define MBEDTLS_ERR_SSL_BAD_INPUT_DATA       PSA_ERROR_INVALID_ARGUMENT
+#define MBEDTLS_ERR_SSL_BUFFER_TOO_SMALL     PSA_ERROR_BUFFER_TOO_SMALL
+#define MBEDTLS_ERR_SSL_ALLOC_FAILED         PSA_ERROR_INSUFFICIENT_MEMORY
+
+typedef enum {
+    MBEDTLS_SSL_VERSION_UNKNOWN,
+    MBEDTLS_SSL_VERSION_TLS1_2 = 0x0303,
+    MBEDTLS_SSL_VERSION_TLS1_3 = 0x0304
+} mbedtls_ssl_protocol_version;
+
+/* Handshake states, in Mbed TLS's order */
+typedef enum {
+    MBEDTLS_SSL_HELLO_REQUEST,
+    MBEDTLS_SSL_CLIENT_HELLO,
+    MBEDTLS_SSL_SERVER_HELLO,
+    MBEDTLS_SSL_SERVER_CERTIFICATE,
+    MBEDTLS_SSL_SERVER_KEY_EXCHANGE,
+    MBEDTLS_SSL_CERTIFICATE_REQUEST,
+    MBEDTLS_SSL_SERVER_HELLO_DONE,
+    MBEDTLS_SSL_CLIENT_CERTIFICATE,
+    MBEDTLS_SSL_CLIENT_KEY_EXCHANGE,
+    MBEDTLS_SSL_CERTIFICATE_VERIFY,
+    MBEDTLS_SSL_CLIENT_CHANGE_CIPHER_SPEC,
+    MBEDTLS_SSL_CLIENT_FINISHED,
+    MBEDTLS_SSL_SERVER_CHANGE_CIPHER_SPEC,
+    MBEDTLS_SSL_SERVER_FINISHED,
+    MBEDTLS_SSL_FLUSH_BUFFERS,
+    MBEDTLS_SSL_HANDSHAKE_WRAPUP,
+    MBEDTLS_SSL_NEW_SESSION_TICKET,
+    MBEDTLS_SSL_SERVER_HELLO_VERIFY_REQUEST_SENT,
+    MBEDTLS_SSL_HELLO_RETRY_REQUEST,
+    MBEDTLS_SSL_ENCRYPTED_EXTENSIONS,
+    MBEDTLS_SSL_END_OF_EARLY_DATA,
+    MBEDTLS_SSL_CLIENT_CERTIFICATE_VERIFY,
+    MBEDTLS_SSL_CLIENT_CCS_AFTER_SERVER_FINISHED,
+    MBEDTLS_SSL_CLIENT_CCS_BEFORE_2ND_CLIENT_HELLO,
+    MBEDTLS_SSL_SERVER_CCS_AFTER_SERVER_HELLO,
+    MBEDTLS_SSL_CLIENT_CCS_AFTER_CLIENT_HELLO,
+    MBEDTLS_SSL_SERVER_CCS_AFTER_HELLO_RETRY_REQUEST,
+    MBEDTLS_SSL_HANDSHAKE_OVER,
+    MBEDTLS_SSL_TLS1_3_NEW_SESSION_TICKET,
+    MBEDTLS_SSL_TLS1_3_NEW_SESSION_TICKET_FLUSH
+} mbedtls_ssl_states;
+
+/* wolfSSL objects, opaque to the application */
+struct WOLFSSL_CTX;
+struct WOLFSSL;
+struct WOLFSSL_SESSION;
+
+typedef int mbedtls_ssl_send_t(void* ctx, const unsigned char* buf,
+    size_t len);
+typedef int mbedtls_ssl_recv_t(void* ctx, unsigned char* buf, size_t len);
+typedef int mbedtls_ssl_recv_timeout_t(void* ctx, unsigned char* buf,
+    size_t len, uint32_t timeout);
+
+typedef union {
+    uintptr_t n;
+    void* p;
+} mbedtls_ssl_user_data_t;
+
+typedef struct mbedtls_ssl_config {
+    struct WOLFSSL_CTX* ctx;
+    int err[4]; /* by kind of conf call, returned at setup and reset */
+    unsigned int changes; /* counts conf calls, see MbedSslStart() */
+    int authmode;
+    int endpoint;
+    int transport;
+    mbedtls_ssl_protocol_version min_tls_version;
+    mbedtls_ssl_protocol_version max_tls_version;
+    const int* ciphersuites; /* the application's, NULL for the default */
+    mbedtls_x509_crt* ca_chain; /* the application's */
+    mbedtls_x509_crl* ca_crl; /* not supported, an error when set */
+    mbedtls_ssl_user_data_t user_data;
+} mbedtls_ssl_config;
+
+typedef struct mbedtls_ssl_session {
+    struct WOLFSSL_SESSION* session;
+    uint32_t verify_result; /* of the handshake the session is from */
+} mbedtls_ssl_session;
+
+typedef struct mbedtls_ssl_context {
+    const mbedtls_ssl_config* conf;
+    struct WOLFSSL* ssl;
+    unsigned int conf_changes; /* conf->changes when ssl was made */
+    int started; /* the handshake started on ssl */
+    char* hostname; /* applied again by mbedtls_ssl_session_reset() */
+    int hostname_set; /* mbedtls_ssl_set_hostname() succeeded */
+    int hostname_changed; /* ssl needs a new WOLFSSL for the host name */
+    int session_set; /* mbedtls_ssl_set_session() was called */
+    uint32_t session_verify; /* verify_result of the session set */
+    void* p_bio;
+    mbedtls_ssl_send_t* f_send;
+    mbedtls_ssl_recv_t* f_recv;
+    mbedtls_ssl_recv_timeout_t* f_recv_timeout;
+    int io_err; /* the last BIO call's error, 0 after data */
+    int authmode;
+    uint32_t verify_flags; /* MBEDTLS_X509_BADCERT_* of the failed check */
+    mbedtls_ssl_user_data_t user_data;
+} mbedtls_ssl_context;
+
+void mbedtls_ssl_config_init(mbedtls_ssl_config* conf);
+void mbedtls_ssl_config_free(mbedtls_ssl_config* conf);
+int mbedtls_ssl_config_defaults(mbedtls_ssl_config* conf,
+    int endpoint, int transport, int preset);
+void mbedtls_ssl_conf_endpoint(mbedtls_ssl_config* conf, int endpoint);
+void mbedtls_ssl_conf_transport(mbedtls_ssl_config* conf, int transport);
+int mbedtls_ssl_conf_get_endpoint(const mbedtls_ssl_config* conf);
+void mbedtls_ssl_conf_authmode(mbedtls_ssl_config* conf, int authmode);
+void mbedtls_ssl_conf_ca_chain(mbedtls_ssl_config* conf,
+    mbedtls_x509_crt* ca_chain, mbedtls_x509_crl* ca_crl);
+int mbedtls_ssl_conf_own_cert(mbedtls_ssl_config* conf,
+    mbedtls_x509_crt* own_cert, mbedtls_pk_context* pk_key);
+void mbedtls_ssl_conf_dbg(mbedtls_ssl_config* conf,
+    void (*f_dbg)(void*, int, const char*, int, const char*), void* p_dbg);
+void mbedtls_ssl_conf_min_tls_version(mbedtls_ssl_config* conf,
+    mbedtls_ssl_protocol_version tls_version);
+void mbedtls_ssl_conf_max_tls_version(mbedtls_ssl_config* conf,
+    mbedtls_ssl_protocol_version tls_version);
+void mbedtls_ssl_conf_ciphersuites(mbedtls_ssl_config* conf,
+    const int* ciphersuites);
+void mbedtls_ssl_conf_cert_profile(mbedtls_ssl_config* conf,
+    const mbedtls_x509_crt_profile* profile);
+
+static inline void mbedtls_ssl_conf_set_user_data_p(mbedtls_ssl_config* conf,
+    void* p)
+{
+    conf->user_data.p = p;
+}
+
+static inline void mbedtls_ssl_conf_set_user_data_n(mbedtls_ssl_config* conf,
+    uintptr_t n)
+{
+    conf->user_data.n = n;
+}
+
+static inline void* mbedtls_ssl_conf_get_user_data_p(mbedtls_ssl_config* conf)
+{
+    return conf->user_data.p;
+}
+
+static inline uintptr_t mbedtls_ssl_conf_get_user_data_n(
+    mbedtls_ssl_config* conf)
+{
+    return conf->user_data.n;
+}
+
+const int* mbedtls_ssl_list_ciphersuites(void);
+const char* mbedtls_ssl_get_ciphersuite_name(const int ciphersuite_id);
+int mbedtls_ssl_get_ciphersuite_id(const char* ciphersuite_name);
+
+void mbedtls_ssl_init(mbedtls_ssl_context* ssl);
+void mbedtls_ssl_free(mbedtls_ssl_context* ssl);
+int mbedtls_ssl_setup(mbedtls_ssl_context* ssl, const mbedtls_ssl_config* conf);
+const mbedtls_ssl_config* mbedtls_ssl_context_get_config(
+    const mbedtls_ssl_context* ssl);
+int mbedtls_ssl_session_reset(mbedtls_ssl_context* ssl);
+void mbedtls_ssl_set_bio(mbedtls_ssl_context* ssl, void* p_bio,
+    mbedtls_ssl_send_t* f_send, mbedtls_ssl_recv_t* f_recv,
+    mbedtls_ssl_recv_timeout_t* f_recv_timeout);
+int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname);
+int mbedtls_ssl_handshake(mbedtls_ssl_context* ssl);
+int mbedtls_ssl_is_handshake_over(mbedtls_ssl_context* ssl);
+uint32_t mbedtls_ssl_get_verify_result(const mbedtls_ssl_context* ssl);
+const char* mbedtls_ssl_get_ciphersuite(const mbedtls_ssl_context* ssl);
+int mbedtls_ssl_get_ciphersuite_id_from_ssl(const mbedtls_ssl_context* ssl);
+const char* mbedtls_ssl_get_version(const mbedtls_ssl_context* ssl);
+mbedtls_ssl_protocol_version mbedtls_ssl_get_version_number(
+    const mbedtls_ssl_context* ssl);
+size_t mbedtls_ssl_get_bytes_avail(const mbedtls_ssl_context* ssl);
+int mbedtls_ssl_read(mbedtls_ssl_context* ssl, unsigned char* buf, size_t len);
+int mbedtls_ssl_write(mbedtls_ssl_context* ssl,
+    const unsigned char* buf, size_t len);
+int mbedtls_ssl_close_notify(mbedtls_ssl_context* ssl);
+
+static inline void mbedtls_ssl_set_user_data_p(mbedtls_ssl_context* ssl,
+    void* p)
+{
+    ssl->user_data.p = p;
+}
+
+static inline void mbedtls_ssl_set_user_data_n(mbedtls_ssl_context* ssl,
+    uintptr_t n)
+{
+    ssl->user_data.n = n;
+}
+
+static inline void* mbedtls_ssl_get_user_data_p(mbedtls_ssl_context* ssl)
+{
+    return ssl->user_data.p;
+}
+
+static inline uintptr_t mbedtls_ssl_get_user_data_n(mbedtls_ssl_context* ssl)
+{
+    return ssl->user_data.n;
+}
+
+void mbedtls_ssl_session_init(mbedtls_ssl_session* session);
+void mbedtls_ssl_session_free(mbedtls_ssl_session* session);
+int mbedtls_ssl_get_session(const mbedtls_ssl_context* ssl,
+    mbedtls_ssl_session* session);
+int mbedtls_ssl_set_session(mbedtls_ssl_context* ssl,
+    const mbedtls_ssl_session* session);
+int mbedtls_ssl_session_save(const mbedtls_ssl_session* session,
+    unsigned char* buf, size_t buf_len, size_t* olen);
+int mbedtls_ssl_session_load(mbedtls_ssl_session* session,
+    const unsigned char* buf, size_t len);
+
+#ifdef __cplusplus
+    } /* extern "C" */
+#endif /* __cplusplus */
+
+#endif /* MBEDTLS_SSL_H */

@@ -28,6 +28,12 @@
 #include <psa/crypto.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/x509_crt.h>
+#ifdef MBEDTLS_PEM_PARSE_C
+    #include <mbedtls/pem.h>
+#endif /* MBEDTLS_PEM_PARSE_C */
+#ifdef MBEDTLS_SSL_TLS_C
+    #include <mbedtls/ssl.h>
+#endif /* MBEDTLS_SSL_TLS_C */
 #include <stdio.h>
 #include <string.h>
 
@@ -37,6 +43,9 @@
 static int failures;
 
 static const uint8_t msg[] = "abc";
+#ifdef MBEDTLS_PEM_PARSE_C
+static const unsigned char pem_abc[] = "^\nYWJj\n$";
+#endif /* MBEDTLS_PEM_PARSE_C */
 static const uint8_t sha256_abc[] = {
     0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
     0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
@@ -73,6 +82,45 @@ static void check_bytes(const char *what, const uint8_t *got, size_t got_len,
         failures++;
     }
 }
+
+#ifdef MBEDTLS_PEM_PARSE_C
+static void test_pem(int want, const char *what)
+{
+    mbedtls_pem_context pem;
+    size_t used = 0;
+
+    mbedtls_pem_init(&pem);
+    check(what, mbedtls_pem_read_buffer(&pem, "^", "$", pem_abc, NULL, 0,
+                                        &used), want);
+    mbedtls_pem_free(&pem);
+}
+#endif /* MBEDTLS_PEM_PARSE_C */
+
+#ifdef MBEDTLS_SSL_TLS_C
+/* The calls that allocate what the config or context keeps */
+static void test_ssl(int want, const char *when)
+{
+    mbedtls_ssl_config conf;
+    mbedtls_ssl_context ssl;
+    const int *ids = mbedtls_ssl_list_ciphersuites();
+    char what[64];
+
+    mbedtls_ssl_config_init(&conf);
+    mbedtls_ssl_init(&ssl);
+    snprintf(what, sizeof(what), "mbedtls_ssl_config_defaults %s", when);
+    check(what, mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT,
+                                            MBEDTLS_SSL_TRANSPORT_STREAM,
+                                            MBEDTLS_SSL_PRESET_DEFAULT), want);
+    snprintf(what, sizeof(what), "mbedtls_ssl_set_hostname %s", when);
+    check(what, mbedtls_ssl_set_hostname(&ssl, "localhost"), want);
+    /* Allocates nothing, so works before init too, as in Mbed TLS */
+    snprintf(what, sizeof(what), "mbedtls_ssl_list_ciphersuites %s", when);
+    check(what, ids[0] != 0 && mbedtls_ssl_get_ciphersuite_id(
+              mbedtls_ssl_get_ciphersuite_name(ids[0])) == ids[0], 1);
+    mbedtls_ssl_free(&ssl);
+    mbedtls_ssl_config_free(&conf);
+}
+#endif /* MBEDTLS_SSL_TLS_C */
 
 static void test_before_init(void)
 {
@@ -127,6 +175,12 @@ static void test_before_init(void)
 #endif /* MBEDTLS_FS_IO */
     mbedtls_x509_crt_free(&crt);
 #endif /* MBEDTLS_X509_CRT_PARSE_C */
+#ifdef MBEDTLS_PEM_PARSE_C
+    test_pem(PSA_ERROR_BAD_STATE, "mbedtls_pem_read_buffer before init");
+#endif /* MBEDTLS_PEM_PARSE_C */
+#ifdef MBEDTLS_SSL_TLS_C
+    test_ssl(PSA_ERROR_BAD_STATE, "before init");
+#endif /* MBEDTLS_SSL_TLS_C */
 
     (void)psa_hash_abort(&op);
     (void)psa_xof_abort(&xof);
@@ -208,6 +262,12 @@ static void test_after_init(void)
           PSA_SUCCESS);
     mbedtls_x509_crt_free(&crt);
 #endif /* MBEDTLS_X509_CRT_PARSE_C */
+#ifdef MBEDTLS_PEM_PARSE_C
+    test_pem(0, "mbedtls_pem_read_buffer after init");
+#endif /* MBEDTLS_PEM_PARSE_C */
+#ifdef MBEDTLS_SSL_TLS_C
+    test_ssl(0, "after init");
+#endif /* MBEDTLS_SSL_TLS_C */
 }
 
 /* Leaks, and frees of memory the tracker did not allocate, unbalance it */
@@ -225,6 +285,25 @@ static void check_tracker(const memoryStats *stats)
     }
 }
 
+/* wolfCrypt_Init() restarts the tracker only when nothing kept a reference
+ * after mbedtls_psa_crypto_free() */
+static void check_released(const memoryStats *stats)
+{
+    long allocs;
+
+    if (stats == NULL) {
+        return;
+    }
+    allocs = stats->totalAllocs;
+    check("psa_crypto_init again", psa_crypto_init(), PSA_SUCCESS);
+    if (stats->totalAllocs >= allocs) {
+        printf("FAIL: wolfCrypt not released by mbedtls_psa_crypto_free\n");
+        failures++;
+    }
+    mbedtls_psa_crypto_free();
+    check_tracker(stats);
+}
+
 int main(void)
 {
     const memoryStats *stats;
@@ -236,6 +315,7 @@ int main(void)
     test_after_init();
     mbedtls_psa_crypto_free();
     check_tracker(stats);
+    check_released(stats);
 
     if (failures != 0) {
         printf("PSA track memory test: %d failure(s)\n", failures);

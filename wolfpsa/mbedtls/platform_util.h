@@ -26,6 +26,38 @@
 
 #include <stddef.h>
 
+#if !defined(MBEDTLS_DEPRECATED_REMOVED)
+#if defined(MBEDTLS_DEPRECATED_WARNING)
+    #define MBEDTLS_DEPRECATED __attribute__((deprecated))
+#else
+    #define MBEDTLS_DEPRECATED
+#endif /* MBEDTLS_DEPRECATED_WARNING */
+#endif /* !MBEDTLS_DEPRECATED_REMOVED */
+
+#if !defined(MBEDTLS_CHECK_RETURN)
+#if defined(__GNUC__)
+    #define MBEDTLS_CHECK_RETURN __attribute__((__warn_unused_result__))
+#elif defined(_MSC_VER) && _MSC_VER >= 1700
+    #include <sal.h>
+    #define MBEDTLS_CHECK_RETURN _Check_return_
+#else
+    #define MBEDTLS_CHECK_RETURN
+#endif /* __GNUC__ */
+#endif /* !MBEDTLS_CHECK_RETURN */
+
+#define MBEDTLS_CHECK_RETURN_CRITICAL MBEDTLS_CHECK_RETURN
+#if defined(MBEDTLS_CHECK_RETURN_WARNING)
+    #define MBEDTLS_CHECK_RETURN_TYPICAL MBEDTLS_CHECK_RETURN
+#else
+    #define MBEDTLS_CHECK_RETURN_TYPICAL
+#endif /* MBEDTLS_CHECK_RETURN_WARNING */
+#define MBEDTLS_CHECK_RETURN_OPTIONAL
+
+/* (void) alone does not silence GCC's warn_unused_result */
+#if !defined(MBEDTLS_IGNORE_RETURN)
+    #define MBEDTLS_IGNORE_RETURN(result) ((void)!(result))
+#endif /* !MBEDTLS_IGNORE_RETURN */
+
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
