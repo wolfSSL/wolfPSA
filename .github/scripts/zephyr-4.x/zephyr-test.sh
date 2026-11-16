@@ -17,6 +17,7 @@
 #   -z, --zephyr <version> Zephyr version tag (>= v4.3.0)
 #   --wolfssl-repo <url>   wolfSSL repo URL   (default: wolfSSL/wolfssl)
 #   --wolfssl-ref  <ref>   wolfSSL revision   (default: master)
+#   --module-config-args <args>  extra west-build args for psa_consumer_mod
 #   -h, --help             Show this help
 #
 # Examples:
@@ -35,6 +36,7 @@ WOLFPSA_BRANCH="master"
 ZEPHYR_VERSION="v4.4.0"
 WOLFSSL_REPO="https://github.com/wolfSSL/wolfssl"
 WOLFSSL_REF="master"
+MODULE_CONFIG_ARGS=""
 
 GHCR="ghcr.io/zephyrproject-rtos/zephyr-build"
 
@@ -64,6 +66,7 @@ while [[ $# -gt 0 ]]; do
         -z|--zephyr)      ZEPHYR_VERSION="$2"; shift 2 ;;
         --wolfssl-repo)   WOLFSSL_REPO="$2"; shift 2 ;;
         --wolfssl-ref)    WOLFSSL_REF="$2"; shift 2 ;;
+        --module-config-args) MODULE_CONFIG_ARGS="$2"; shift 2 ;;
         -h|--help)        usage ;;
         *) echo "Unknown option: $1"; usage ;;
     esac
@@ -89,6 +92,7 @@ WOLFPSA_REPO="__WOLFPSA_REPO__"
 WOLFPSA_BRANCH="__WOLFPSA_BRANCH__"
 WOLFSSL_REPO="__WOLFSSL_REPO__"
 WOLFSSL_REF="__WOLFSSL_REF__"
+MODULE_CONFIG_ARGS="__MODULE_CONFIG_ARGS__"
 
 cd /workdir
 
@@ -128,7 +132,7 @@ fi
 # Both modules are in the manifest now, so the runner must NOT also add wolfPSA
 # via EXTRA_ZEPHYR_MODULES.
 echo "==> [container] Running the wolfPSA test suite..."
-EXTRA_MODULE_ARG="" \
+EXTRA_MODULE_ARG="" MODULE_CONFIG_ARGS="${MODULE_CONFIG_ARGS}" \
   bash modules/crypto/wolfPSA/.github/scripts/run-tests.sh
 INNER_SCRIPT
 )
@@ -138,6 +142,7 @@ BUILD_SCRIPT="${BUILD_SCRIPT//__WOLFPSA_REPO__/$WOLFPSA_REPO}"
 BUILD_SCRIPT="${BUILD_SCRIPT//__WOLFPSA_BRANCH__/$WOLFPSA_BRANCH}"
 BUILD_SCRIPT="${BUILD_SCRIPT//__WOLFSSL_REPO__/$WOLFSSL_REPO}"
 BUILD_SCRIPT="${BUILD_SCRIPT//__WOLFSSL_REF__/$WOLFSSL_REF}"
+BUILD_SCRIPT="${BUILD_SCRIPT//__MODULE_CONFIG_ARGS__/$MODULE_CONFIG_ARGS}"
 
 cleanup() { docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true; }
 trap cleanup EXIT

@@ -35,6 +35,11 @@ jobs:
         exclude:
           - zephyr-ref: v4.5.0
             wolfssl-ref: v5.9.4-stable
+        # wolfSSL 5.9.4's module config hard-codes GCM_SMALL, which wolfPSA
+        # accepts only with its waiver.
+        include:
+          - wolfssl-ref: v5.9.4-stable
+            module-config-args: -DCONFIG_WOLFPSA_AES_FAST=y
     steps:
       - name: Checkout wolfPSA CI driver
         uses: actions/checkout@v5
@@ -62,4 +67,5 @@ jobs:
             -r "${{ steps.src.outputs.repo }}" \
             -b "${{ steps.src.outputs.ref }}" \
             -z "${{ matrix.zephyr-ref }}" \
-            --wolfssl-ref "${{ matrix.wolfssl-ref }}"
+            --wolfssl-ref "${{ matrix.wolfssl-ref }}" \
+            --module-config-args "${{ matrix.module-config-args }}"

@@ -22,6 +22,7 @@
 #                     wolfPSA is already a manifest module (e.g. CI, where
 #                     zephyr-test.sh injects it into the manifest), to avoid
 #                     registering it twice.
+#   MODULE_CONFIG_ARGS  extra west-build args for psa_consumer_mod
 
 set -u
 
@@ -37,10 +38,13 @@ EXTRA_MODULE_ARG="${EXTRA_MODULE_ARG--DEXTRA_ZEPHYR_MODULES=${WOLFPSA_ROOT}}"
 # psa_consumer_st reruns the consumer with CONFIG_WOLFPSA_THREAD_SAFE=n so the
 # single-threaded baseline path (SINGLE_THREADED, no-op lock macros) is built
 # and run in CI, not just the default thread-safe (=y) path.
+# psa_consumer_mod reruns it on the wolfSSL module's own config, plus
+# MODULE_CONFIG_ARGS (CI sets CONFIG_WOLFPSA_AES_FAST=y for wolfSSL 5.9.4).
 TARGETS="
 psa_smoke|${WOLFPSA_ROOT}/zephyr/samples/psa_smoke|sample
 psa_consumer|${WOLFPSA_ROOT}/zephyr/tests/psa_consumer|ztest
 psa_consumer_st|${WOLFPSA_ROOT}/zephyr/tests/psa_consumer|ztest|-DCONFIG_WOLFPSA_THREAD_SAFE=n
+psa_consumer_mod|${WOLFPSA_ROOT}/zephyr/tests/psa_consumer|ztest|-DEXTRA_CONF_FILE=module_config.conf ${MODULE_CONFIG_ARGS:-}
 psa_concurrency|${WOLFPSA_ROOT}/zephyr/tests/psa_concurrency|ztest
 psa_entropy|${WOLFPSA_ROOT}/zephyr/tests/psa_entropy|ztest
 psa_transform|${WOLFPSA_ROOT}/zephyr/tests/psa_transform|ztest
