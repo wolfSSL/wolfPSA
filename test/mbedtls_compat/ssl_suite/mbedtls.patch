@@ -253,10 +253,10 @@ index ebb9103..6608d62 100644
 
  #endif /* MBEDTLS_SSL_TLS_C */
 diff --git a/tests/suites/test_suite_ssl.function b/tests/suites/test_suite_ssl.function
-index 7a9a03a..903815e 100644
+index c1cf9ba..f768640 100644
 --- a/tests/suites/test_suite_ssl.function
 +++ b/tests/suites/test_suite_ssl.function
-@@ -1,18 +1,11 @@
+@@ -1,17 +1,11 @@
  /* BEGIN_HEADER */
 -#include <ssl_misc.h>
 +#include <mbedtls/ssl.h>
@@ -268,7 +268,6 @@ index 7a9a03a..903815e 100644
 -#endif /* MBEDTLS_PK_HAVE_PRIVATE_HEADER */
 -#include <ssl_tls13_keys.h>
 -#include <ssl_tls13_invasive.h>
--#include <psa_crypto_slot_management.h>
  #include <test/ssl_helpers.h>
 -#include <test/ssl_helpers_internal.h>
 
@@ -276,7 +275,7 @@ index 7a9a03a..903815e 100644
  #include <test/constant_flow.h>
 
  #define SSL_MESSAGE_QUEUE_INIT      { NULL, 0, 0, 0 }
-@@ -97,6 +90,8 @@ static int failing_ticket_write_unset_lifetime(
+@@ -61,6 +55,8 @@ static int failing_ticket_write_unset_lifetime(
            PSA_WANT_ALG_SHA_256 && PSA_WANT_KEY_TYPE_ECC_PUBLIC_KEY &&
            MBEDTLS_CAN_HANDLE_RSA_TEST_KEY */
 
@@ -285,7 +284,7 @@ index 7a9a03a..903815e 100644
  #if defined(MBEDTLS_SSL_TLS_C) && defined(MBEDTLS_DEBUG_C) && \
      defined(MBEDTLS_SSL_CLI_C) && defined(MBEDTLS_SSL_SRV_C) && \
      defined(MBEDTLS_SSL_HANDSHAKE_WITH_CERT_ENABLED) && \
-@@ -143,6 +138,7 @@ static void tls_abort_transcript(void *ctx, int level,
+@@ -107,6 +103,7 @@ static void tls_abort_transcript(void *ctx, int level,
  #endif
  }
  #endif
@@ -293,7 +292,7 @@ index 7a9a03a..903815e 100644
 
  #if (!defined(MBEDTLS_SSL_PROTO_TLS1_2)) && \
      defined(MBEDTLS_SSL_EARLY_DATA) && defined(MBEDTLS_SSL_CLI_C) && \
-@@ -203,8 +199,9 @@ typedef struct {
+@@ -167,8 +164,9 @@ typedef struct {
  static void pre_handshake_tweak_context(mbedtls_ssl_context *ssl,
                                          int tweaks)
  {
@@ -304,7 +303,7 @@ index 7a9a03a..903815e 100644
      }
  }
 
-@@ -274,12 +271,12 @@ static void simulate_badmac_seen_on(mbedtls_test_ssl_endpoint *client,
+@@ -238,12 +236,12 @@ static void simulate_badmac_seen_on(mbedtls_test_ssl_endpoint *client,
                                      void *param)
  {
      int on = *(int *) param;

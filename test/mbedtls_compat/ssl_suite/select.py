@@ -11,6 +11,7 @@
 # Usage: select.py CASES SUITES_DIR OUT_DIR (SUITES_DIR: the clone's
 # tests/suites)
 
+import collections
 import os
 import re
 import sys
@@ -61,8 +62,11 @@ def main():
 
     upstream = {desc: func for desc, func, _ in data}
     listed_funcs = {func for desc, func, _ in data if desc in listed}
-    errors = ['listed, not in Mbed TLS: ' + desc
-              for desc in listed if desc not in upstream]
+    count = collections.Counter(desc for desc, _, _ in data)
+    errors = ['in Mbed TLS twice: ' + desc
+              for desc in listed if count[desc] > 1]
+    errors += ['listed, not in Mbed TLS: ' + desc
+               for desc in listed if desc not in upstream]
     errors += ['function is %s in Mbed TLS: %s' % (upstream[desc], desc)
                for desc, case in listed.items()
                if desc in upstream and case.function != upstream[desc]]

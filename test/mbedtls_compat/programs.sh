@@ -16,6 +16,8 @@ DATA=$MBEDTLS_PATH/framework/data_files
 READY=$BUILD_DIR/server-ready
 FAILS=0
 SKIPS=0
+# A sanitizer report fails a case, whatever the exit code
+SANITIZER="ERROR: [A-Za-z]*Sanitizer"
 
 if [ ! -f "$DATA/server5.crt" ]; then
     echo "$DATA not found, run git submodule update --init in $MBEDTLS_PATH"
@@ -69,7 +71,8 @@ while IFS='|' read -r name prog args sopts wrap expect want; do
     start_server "$sopts"
     out=$(cd "$WOLFSSL_PATH" && $wrap $WRAP "$BUILD_DIR/$prog" $args 2>&1)
     rc=$?
-    if [ $rc -eq "$expect" ] && ! echo "$out" | grep -q "not defined" &&
+    if [ $rc -eq "$expect" ] &&
+            ! echo "$out" | grep -q -e "not defined" -e "$SANITIZER" &&
             echo "$out" | grep -qF -- "$want"; then
         echo "PASS: $name"
     else
@@ -98,7 +101,7 @@ CASES
 rm -f "$READY"
 
 # The server programs listen on port 4433 until stopped. The exit code of a
-# server is not checked.
+# server is not checked, only its log for sanitizer reports.
 start_program() {
     rm -f "$LOG"
     (cd "$WOLFSSL_PATH" && exec $WRAP "$BUILD_DIR/$1") >"$LOG" 2>&1 &
@@ -174,9 +177,15 @@ while IFS='|' read -r name prog clients; do
         rm -f "$LOG".*
     done
     unset IFS
+    # ssl_fork_server's children exit at their next write, a second later
+    i=0
+    while pgrep -P $srv >/dev/null && [ $i -lt 50 ]; do
+        i=$((i + 1))
+        sleep 0.1
+    done
     kill $srv 2>/dev/null
     wait $srv 2>/dev/null
-    if [ -z "$out" ]; then
+    if [ -z "$out" ] && ! grep -q "$SANITIZER" "$LOG"; then
         echo "PASS: $name"
     else
         echo "FAIL: $name:$out

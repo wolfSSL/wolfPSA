@@ -2,7 +2,7 @@
 # targets in the wolfPSA root (make help there), which set the paths, all
 # absolute.
 
-ifndef WOLFPSA_PATH
+ifeq ($(and $(WOLFPSA_PATH),$(BUILD_DIR)),)
 $(error Run make MBEDTLS_COMPAT=1 mbedtls-compat-test in the wolfPSA root)
 endif
 
@@ -23,9 +23,10 @@ LAYER_FLAGS += -DMBEDTLS_THREADING_C
 LAYER_LIBS += -pthread
 endif
 
-# Mbed TLS 4.x: MBEDTLS_PATH, or by default a shallow clone of MBEDTLS_REF
+# Mbed TLS 4.x: MBEDTLS_PATH, or by default a shallow clone of MBEDTLS_REF,
+# the release in MBEDTLS_VERSION_STRING
 MBEDTLS_URL := https://github.com/Mbed-TLS/mbedtls.git
-MBEDTLS_REF := ba07f72f934a002021731a2bb5e564e5905f6569
+MBEDTLS_REF := mbedtls-4.2.0
 MBEDTLS_CLONE := $(BUILD_DIR)/mbedtls
 MBEDTLS_PATH ?= $(MBEDTLS_CLONE)
 # Named with the ref, so a new MBEDTLS_REF clones again
@@ -58,13 +59,13 @@ ifeq ($(MBEDTLS_THREADING_C),1)
 PROGRAMS += $(BUILD_DIR)/programs/ssl/ssl_pthread_server
 endif
 # Mbed TLS test certificates, data only. certs.c and the generated
-# test_certs.h build against the Mbed TLS checkout's own headers.
+# test_certs.h build against the headers of their Mbed TLS tree, CERTS_TREE:
+# MBEDTLS_PATH for unit and programs, the clone for the suite.
 CERTS := $(BUILD_DIR)/certs.o
 CERTS_H := $(BUILD_DIR)/include/test/test_certs.h
-MBEDTLS_FLAGS := -I$(BUILD_DIR)/include -I$(MBEDTLS_PATH)/include \
-	-I$(MBEDTLS_PATH)/tests/include \
-	$(addprefix -I$(MBEDTLS_PATH)/tf-psa-crypto/,include core \
-		drivers/builtin/include)
+MBEDTLS_FLAGS = -I$(@D)/include $(addprefix -I$(CERTS_TREE)/,include \
+	tests/include $(addprefix tf-psa-crypto/,include core \
+		drivers/builtin/include))
 
 # Mbed TLS's ssl suite: the cases in cases.txt, on the clone and its patch
 SUITE := $(CURDIR)/ssl_suite
@@ -76,14 +77,21 @@ SUITE_HELPERS := $(addprefix $(SUITE_BUILD)/,helpers.o random.o \
 SUITE_OBJS := $(SUITE_NAME).o $(SUITE_BUILD)/ssl_helpers.o \
 	$(SUITE_BUILD)/ssl_helpers_port.o $(SUITE_BUILD)/psa_crypto_helpers.o \
 	$(SUITE_HELPERS)
+SUITE_CERTS := $(SUITE_BUILD)/certs.o
+SUITE_CERTS_H := $(SUITE_BUILD)/include/test/test_certs.h
 SUITE_TEMPLATES := $(MBEDTLS_CLONE)/tf-psa-crypto/tests/suites
 # wolfPSA's headers first; Mbed TLS's public headers are not on the path.
 # TEST_WOLFPSA leaves out the helpers' calls that wolfPSA does not have yet.
-SUITE_FLAGS := $(LAYER_FLAGS) -DTEST_WOLFPSA -I$(SUITE) -I$(SUITE)/shim \
+# Cases depend on the X.509 options, which wolfPSA does not define since it
+# lacks the functions they enable.
+SUITE_FLAGS := $(LAYER_FLAGS) -DTEST_WOLFPSA -DMBEDTLS_X509_USE_C \
+	-DMBEDTLS_X509_RSASSA_PSS_SUPPORT -I$(SUITE) -I$(SUITE)/shim \
 	$(addprefix -I$(MBEDTLS_CLONE)/,framework/tests/include tests/include \
 		tf-psa-crypto/tests/include framework/tests/src) \
 	-idirafter $(MBEDTLS_CLONE)/tf-psa-crypto/core
-SUITE_PUBLIC_HEADERS := $(MBEDTLS_CLONE)/(tf-psa-crypto/)?include/
+# grep -F options for headers in Mbed TLS's public include directories
+SUITE_PUBLIC_HEADERS := $(foreach d,include tf-psa-crypto/include, \
+	-e '$(MBEDTLS_CLONE)/$(d)/')
 # The same suite and ssl_helpers_port.c on Mbed TLS's CMake build of the clone
 REF_BUILD := $(BUILD_DIR)/ssl_suite_ref
 REF_NAME := $(REF_BUILD)/test_suite_ssl_public
@@ -141,8 +149,12 @@ suite: $(SUITE_NAME)
 suite-ref: $(REF_NAME)
 	$(call run_suite,Mbed TLS ssl suite on Mbed TLS,--all-pass)
 
-# Saves the clone's changes to mbedtls.patch, below its license lines
+# Saves the clone's changes to mbedtls.patch, below its license lines. A
+# clone that only unit or programs used has none.
 suite-patch:
+	@if git -C $(MBEDTLS_CLONE) diff --quiet HEAD; then \
+		echo "No changes in $(MBEDTLS_CLONE)"; exit 1; \
+	fi
 	@mkdir -p $(SUITE_BUILD)
 	{ sed '/^diff --git/,$$d' $(SUITE)/mbedtls.patch; \
 		git -C $(MBEDTLS_CLONE) -c diff.suppressBlankEmpty=true \
@@ -171,15 +183,20 @@ $(CLIENT) $(UNIT) $(PROGRAMS): $(WOLFPSA_LIB)
 	@mkdir -p $(@D)
 	$(call link,$(LAYER_FLAGS),$(LAYER_LIBS))
 
-$(CERTS_H):
+$(CERTS) $(CERTS_H): CERTS_TREE := $(MBEDTLS_PATH)
+$(SUITE_CERTS) $(SUITE_CERTS_H): CERTS_TREE := $(MBEDTLS_CLONE)
+$(SUITE_CERTS_H): $(MBEDTLS_STAMP)
+$(CERTS_H) $(SUITE_CERTS_H):
 	@mkdir -p $(@D)
-	PYTHONPATH=$(MBEDTLS_PATH)/framework/scripts python3 \
-		$(MBEDTLS_PATH)/framework/scripts/generate_test_cert_macros.py \
+	PYTHONPATH=$(CERTS_TREE)/framework/scripts python3 \
+		$(CERTS_TREE)/framework/scripts/generate_test_cert_macros.py \
 		--output $@
 
 $(CERTS): $(MBEDTLS_PATH)/tests/src/certs.c $(CERTS_H)
+$(SUITE_CERTS): $(MBEDTLS_CLONE)/tests/src/certs.c $(SUITE_CERTS_H)
+$(CERTS) $(SUITE_CERTS):
 	$(CC) $(MBEDTLS_FLAGS) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) \
-		$(WARNFLAGS) -c -o $@ $<
+		$(WARNFLAGS) -c -o $@ $(filter %.c,$^)
 
 $(MBEDTLS_STAMP):
 	rm -rf $(MBEDTLS_CLONE) $(MBEDTLS_CLONE)-*
@@ -227,13 +244,15 @@ $(SUITE_OBJS): $(SUITE_PATCHED)
 	@mkdir -p $(@D)
 	$(CC) $(SUITE_FLAGS) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) \
 		$(WARNFLAGS) -MD -MP -c -o $@ $(filter %.c,$^)
-	@if grep -q -E '$(SUITE_PUBLIC_HEADERS)' $(@:.o=.d); then \
-		grep -o -E '$(SUITE_PUBLIC_HEADERS)[^ :]*' $(@:.o=.d) | \
-			sort -u; \
+	@hdrs=$$(sed -n 's/:$$//p' $(@:.o=.d) | \
+		grep -F $(SUITE_PUBLIC_HEADERS) | sort -u); \
+	if [ -n "$$hdrs" ]; then \
+		echo "$$hdrs"; \
 		echo "$@: uses Mbed TLS's public headers"; rm $@; exit 1; \
 	fi
 
-$(SUITE_NAME): $(SUITE_OBJS) $(CERTS) $(WOLFPSA_LIB) $(SUITE_NAME).datax
+$(SUITE_NAME): $(SUITE_OBJS) $(SUITE_CERTS) $(WOLFPSA_LIB) \
+		$(SUITE_NAME).datax
 	$(call link,,$(LAYER_LIBS))
 
 # Mbed TLS's CMake build needs tf-psa-crypto's own framework submodule, and
