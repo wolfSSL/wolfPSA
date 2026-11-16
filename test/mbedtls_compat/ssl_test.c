@@ -29,6 +29,8 @@
 #include <limits.h>
 #include <stdint.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include <sys/socket.h>
 #ifdef MBEDTLS_THREADING_C
     #include <pthread.h>
 #endif /* MBEDTLS_THREADING_C */
@@ -1607,8 +1609,8 @@ static int AuthmodeNoneAfterSetup(void)
 /* A TLS 1.2 handshake, then one with its session, set before conf_* calls as
  * curl does. The client verifies with authmode and the CAs of certs, then
  * trusts only root, which changes the result of a full handshake. A resumed
- * session keeps the first result and calls no verify callback. want and flags
- * are the client's. */
+ * session keeps the first result, calls no verify callback and is exported
+ * into the same session. want and flags are the client's. */
 static int Resume(int authmode, const Certs* certs, int srvAuthmode,
     int want, uint32_t flags)
 {
@@ -1652,7 +1654,8 @@ static int Resume(int authmode, const Certs* certs, int srvAuthmode,
         mbedtls_ssl_conf_ca_chain(&cli.conf, &root, NULL);
         mbedtls_ssl_conf_authmode(&srv.conf, srvAuthmode);
         ok = Handshake(&s) == want &&
-            (want != 0 || (s == 0 && v.calls == 0)) &&
+            (want != 0 || (s == 0 && v.calls == 0 &&
+                mbedtls_ssl_get_session(&cli.ssl, &session) == 0)) &&
             mbedtls_ssl_get_verify_result(&cli.ssl) == flags;
     }
     mbedtls_ssl_session_free(&session);
@@ -1925,6 +1928,59 @@ static int AcceptWouldBlock(void)
     return ok;
 }
 
+/* Accepts two clients of host, with client_ip one byte short of ip's size,
+ * then of its size */
+static int AcceptIp(const char* host, const unsigned char* ip, size_t ipLen)
+{
+    mbedtls_net_context bound;
+    mbedtls_net_context conn;
+    mbedtls_net_context client;
+    struct sockaddr_storage addr;
+    socklen_t addrLen = (socklen_t)sizeof(addr);
+    unsigned char buf[16];
+    char port[8];
+    size_t bufSz;
+    size_t len;
+    int ok;
+
+    mbedtls_net_init(&bound);
+    ok = mbedtls_net_bind(&bound, host, "0", MBEDTLS_NET_PROTO_TCP) == 0 &&
+        getsockname(bound.fd, (struct sockaddr*)&addr, &addrLen) == 0 &&
+        getnameinfo((struct sockaddr*)&addr, addrLen, NULL, 0, port,
+            sizeof(port), NI_NUMERICSERV) == 0;
+    for (bufSz = ipLen - 1; ok && bufSz <= ipLen; bufSz++) {
+        mbedtls_net_init(&conn);
+        mbedtls_net_init(&client);
+        memset(buf, 0, sizeof(buf));
+        len = 0;
+        ok = mbedtls_net_connect(&conn, host, port, MBEDTLS_NET_PROTO_TCP) ==
+                0 &&
+            mbedtls_net_accept(&bound, &client, buf, bufSz, &len) ==
+                ((bufSz < ipLen) ? MBEDTLS_ERR_NET_BUFFER_TOO_SMALL : 0) &&
+            len == ipLen && (bufSz < ipLen || memcmp(buf, ip, ipLen) == 0);
+        mbedtls_net_free(&client);
+        mbedtls_net_free(&conn);
+    }
+    mbedtls_net_free(&bound);
+    return ok;
+}
+
+static int AcceptIpv4(void)
+{
+    static const unsigned char ip[] = { 127, 0, 0, 1 };
+
+    return AcceptIp("127.0.0.1", ip, sizeof(ip));
+}
+
+static int AcceptIpv6(void)
+{
+    static const unsigned char ip[] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+    };
+
+    return AcceptIp("::1", ip, sizeof(ip));
+}
+
 /* Each listed suite's name gives back its ID */
 static int SuiteIdFromName(void)
 {
@@ -2093,6 +2149,8 @@ static const struct {
     { "transport changed after config_defaults", TransportChanged },
     { "own key too small", OwnKeyTooSmall },
     { "accept would block", AcceptWouldBlock },
+    { "accept, IPv4 client address", AcceptIpv4 },
+    { "accept, IPv6 client address", AcceptIpv6 },
     { "cipher suite ID from its name", SuiteIdFromName },
     { "handshake over", HandshakeOver },
 #ifdef MBEDTLS_TIMING_C

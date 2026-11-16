@@ -1513,10 +1513,10 @@ int mbedtls_ssl_get_session(const mbedtls_ssl_context* ssl,
 {
     WOLFSSL_ENTER("mbedtls_ssl_get_session");
 
-    if (ssl == NULL || ssl->ssl == NULL || session == NULL ||
-            session->session != NULL) {
+    if (ssl == NULL || ssl->ssl == NULL || session == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
+    mbedtls_ssl_session_free(session);
     session->session = wolfSSL_get1_session(ssl->ssl);
     session->verify_result = mbedtls_ssl_get_verify_result(ssl);
     return (session->session != NULL) ? 0 : MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
