@@ -148,6 +148,7 @@ typedef enum {
 struct WOLFSSL_CTX;
 struct WOLFSSL;
 struct WOLFSSL_SESSION;
+struct wolfPSA_MbedCaId;
 
 typedef int mbedtls_ssl_send_t(void* ctx, const unsigned char* buf,
     size_t len);
@@ -175,8 +176,8 @@ typedef struct mbedtls_ssl_config {
     unsigned char mfl_code; /* MBEDTLS_SSL_MAX_FRAG_LEN_* */
     const int* ciphersuites; /* the application's, NULL for the default */
     mbedtls_x509_crt* ca_chain; /* the application's */
-    unsigned char* ca_loaded; /* per CA of ca_chain, 1 if wolfSSL loaded it */
-    size_t ca_count; /* of ca_loaded */
+    struct wolfPSA_MbedCaId* ca_ids; /* per CA of ca_chain */
+    size_t ca_count; /* of ca_ids */
     mbedtls_x509_crl* ca_crl; /* not supported, an error when set */
     int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*);
     void* p_vrfy;

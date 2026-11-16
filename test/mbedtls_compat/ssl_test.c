@@ -449,7 +449,7 @@ static int VerifyChain(void)
     return ClientVerify(&chainCerts, HOST_NAME, 0, 0);
 }
 
-/* The handshake ends at the first failed check, the one flag reported */
+/* The whole chain is checked, then the handshake fails */
 static int VerifyUntrusted(void)
 {
     return ClientVerify(&untrustedCerts, HOST_NAME,
@@ -591,6 +591,57 @@ static int NoClientCertOptional(void)
     return ok;
 }
 
+/* Replaces the Certificate record of a TLS 1.2 server's flight in p with an
+ * empty one */
+static int EmptyCertRecord(Pipe* p)
+{
+    static const unsigned char empty[] = {
+        0x16, 0x03, 0x03, 0x00, 0x07, 0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00
+    };
+    size_t i;
+    size_t len;
+
+    for (i = 0; i + 6 <= p->len; i += len) {
+        len = 5 + ((size_t)p->buf[i + 3] << 8 | p->buf[i + 4]);
+        if (i + len > p->len) {
+            break;
+        }
+        if (p->buf[i] == 0x16 && p->buf[i + 5] == 0x0b) {
+            memmove(p->buf + i + sizeof(empty), p->buf + i + len,
+                p->len - i - len);
+            memcpy(p->buf + i, empty, sizeof(empty));
+            p->len -= len - sizeof(empty);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Unlike a server, a client with VERIFY_OPTIONAL fails on no certificate */
+static int NoServerCertOptional(void)
+{
+    int s = 0;
+    int c;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_OPTIONAL,
+            1, HOST_NAME) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+
+    if (ok) {
+        mbedtls_ssl_conf_max_tls_version(&cli.conf, MBEDTLS_SSL_VERSION_TLS1_2);
+        ok = mbedtls_ssl_handshake(&cli.ssl) == MBEDTLS_ERR_SSL_WANT_READ &&
+            mbedtls_ssl_handshake(&srv.ssl) == MBEDTLS_ERR_SSL_WANT_READ &&
+            EmptyCertRecord(&toClient);
+    }
+    if (ok) {
+        c = Handshake(&s);
+        ok = c != 0 && !Waiting(c);
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
 /* Compares crt and the certificates after it with want */
 static int SameList(const mbedtls_x509_crt* crt, const mbedtls_x509_crt* want)
 {
@@ -698,6 +749,27 @@ static int VerifyClear(void)
         Handshake(&s) == 0 && s == 0 && TopDown(&v, 3) && v.same &&
         v.flags[0] == MBEDTLS_X509_BADCERT_NOT_TRUSTED &&
         (v.flags[1] | v.flags[2]) == 0 &&
+        mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* The flags of an untrusted self-signed certificate, cleared */
+static int VerifyClearSelfSigned(void)
+{
+    const Certs certs = { &ca, &ipSan, &key };
+    Verify v;
+    int s;
+    int ok;
+
+    VerifyInit(&v);
+    v.clear = MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+    v.want[0] = &ipSan;
+    ok = VerifyPeers(MBEDTLS_SSL_VERIFY_REQUIRED, &certs, "97.98.99.100",
+            &v) &&
+        Handshake(&s) == 0 && s == 0 && TopDown(&v, 1) && v.same &&
+        v.flags[0] == MBEDTLS_X509_BADCERT_NOT_TRUSTED &&
         mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
     PeerFree(&cli);
     PeerFree(&srv);
@@ -1947,6 +2019,7 @@ static const struct {
 #endif /* MBEDTLS_THREADING_C */
     { "no client certificate, OPTIONAL", NoClientCertOptional },
     { "no client certificate, REQUIRED", NoClientCertRequired },
+    { "no server certificate, OPTIONAL", NoServerCertOptional },
     { "host name not set", HostNotSet },
     { "host name cleared", HostCleared },
     { "host name replaced", HostReplaced },
@@ -1965,6 +2038,8 @@ static const struct {
     { "CA list set before config_defaults", CaChainBeforeDefaults },
     { "verify callback, top down", VerifyTopDown },
     { "verify callback clears NOT_TRUSTED", VerifyClear },
+    { "verify callback clears NOT_TRUSTED, self-signed",
+        VerifyClearSelfSigned },
     { "verify callback clears CN_MISMATCH", VerifyClearHost },
     { "verify callback gets the CA wolfSSL loaded", VerifyCaLoaded },
     { "allocation failures before the CA's verify callback", VerifyNoMemory },
