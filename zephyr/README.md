@@ -85,9 +85,11 @@ config, wolfPSA's Kconfig turns both on; a settings file must set them itself:
   instead. `zephyr/user_settings_example.h` selects `WOLFSSL_AES_TOUCH_LINES`:
   it leaves `sizeof(Aes)` at 416 bytes, where `WC_AES_BITSLICED` would grow it
   to 123,296 at the default `WC_AES_BS_WORD_SIZE` of 64. AES-GCM also needs
-  the masked GHASH, which the wolfSSL module builds by default outside FIPS v2;
-  a GCM table, `GCM_SMALL`, `GCM_WORD32`, `AES_GCM_GMULT_NCT` or a build
-  without a 64-bit type fails the check unless `WOLFPSA_AES_FAST` is set. The
+  the masked GHASH, which the wolfSSL module builds by default outside FIPS v2
+  from the release after 5.9.4 on; a GCM table, `GCM_SMALL`, `GCM_WORD32`,
+  `AES_GCM_GMULT_NCT` or a build without a 64-bit type fails the check unless
+  `WOLFPSA_AES_FAST` is set. The wolfSSL 5.9.4 module always sets `GCM_SMALL`,
+  so there a build needs a settings file or `WOLFPSA_AES_FAST`. The
   Arm symmetric assembly (`CONFIG_WOLFCRYPT_ARM_SYMMETRIC_ASM`, which
   `CONFIG_WOLFCRYPT_ASM` turns on for AArch64, ARMv7-M, ARMv8-M mainline and
   32-bit Cortex-A/R) is not constant time either and needs `WOLFPSA_AES_FAST`.
