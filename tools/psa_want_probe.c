@@ -269,6 +269,30 @@ __WPSA_EMIT__MBEDTLS_CTR_DRBG_C
 #endif
 
 /* ----- Mbed TLS options, MBEDTLS_COMPAT=1 ----- */
+#if defined(WOLFPSA_MBEDTLS_COMPAT) && !defined(NO_CODING) && \
+    defined(WOLFSSL_BASE64_DECODE)
+__WPSA_EMIT__MBEDTLS_PEM_PARSE_C
+#endif
 #if defined(WOLFPSA_MBEDTLS_COMPAT) && !defined(NO_ASN) && !defined(NO_CERTS)
 __WPSA_EMIT__MBEDTLS_X509_CRT_PARSE_C
+#if !defined(WOLFCRYPT_ONLY) && defined(HAVE_SNI)
+/* USE_WOLFSSL_IO, when wolfSSL has socket I/O */
+#include <wolfssl/wolfio.h>
+#if defined(USE_WOLFSSL_IO)
+__WPSA_EMIT__MBEDTLS_NET_C
+#endif
+__WPSA_EMIT__MBEDTLS_SSL_TLS_C
+#if !defined(NO_WOLFSSL_CLIENT)
+__WPSA_EMIT__MBEDTLS_SSL_CLI_C
+#endif
+#if !defined(NO_WOLFSSL_SERVER)
+__WPSA_EMIT__MBEDTLS_SSL_SRV_C
+#endif
+#if !defined(WOLFSSL_NO_TLS12)
+__WPSA_EMIT__MBEDTLS_SSL_PROTO_TLS1_2
+#endif
+#if defined(WOLFSSL_TLS13)
+__WPSA_EMIT__MBEDTLS_SSL_PROTO_TLS1_3
+#endif
+#endif
 #endif

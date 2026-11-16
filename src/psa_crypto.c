@@ -34,6 +34,23 @@
 #include <wolfpsa/psa_key_storage.h>
 #include <wolfssl/wolfcrypt/wc_port.h>
 
+#ifdef MBEDTLS_SSL_TLS_C
+#include <wolfssl/ssl.h>
+
+/* Takes wolfSSL's reference, which includes wolfCrypt's. Without it,
+ * wolfSSL_CTX_new() takes one that is never released. */
+static int wolfPSA_LibInit(void)
+{
+    int ret = wolfSSL_Init();
+
+    return (ret == WOLFSSL_SUCCESS) ? 0 : ret;
+}
+#define wolfPSA_LibCleanup() wolfSSL_Cleanup()
+#else
+#define wolfPSA_LibInit()    wolfCrypt_Init()
+#define wolfPSA_LibCleanup() wolfCrypt_Cleanup()
+#endif /* MBEDTLS_SSL_TLS_C */
+
 /* Init latch. psa_crypto_init() must complete single-threaded (per the PSA
  * contract) before any concurrent PSA use: the mutex-creation bootstrap in
  * wolfpsa_lock_ensure_init() is a plain, non-atomic flag guard. Once the lock
@@ -84,7 +101,7 @@ psa_status_t psa_crypto_init(void)
 
     WOLFPSA_LOCK();
     if (!g_psa_crypto_initialized) {
-        ret = wolfCrypt_Init();
+        ret = wolfPSA_LibInit();
         if (ret != 0) {
             status = wc_error_to_psa_status(ret);
         }
@@ -116,7 +133,7 @@ void wolfPSA_CryptoCleanup(void)
     psa_key_storage_cleanup();
 
     if (initialized) {
-        (void)wolfCrypt_Cleanup();
+        (void)wolfPSA_LibCleanup();
     }
 }
 
