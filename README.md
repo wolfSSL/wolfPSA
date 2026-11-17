@@ -266,17 +266,16 @@ make MBEDTLS_COMPAT=1 mbedtls-compat-test
 runs these against `libwolfpsa.a`. Each is also a target of its own;
 `make help` lists them all.
 
-- `mbedtls-compat-unit`: `test/mbedtls_compat/timing_test.c` checks the
-  timers. `x509_crt_test.c`,
+- `mbedtls-compat-unit`: `test/mbedtls_compat/x509_crt_test.c`,
   `pk_test.c` and `pem_test.c` parse Mbed TLS's test certificates and keys.
   `ssl_test.c` checks return codes and verify results, client and server in
-  one process.
+  one process. `timing_test.c` checks the timers.
 - `mbedtls-compat-programs`: the Mbed TLS migration guide client
   (`test/mbedtls_compat/client-tls-mbedtls.c`) and Mbed TLS's sample
-  programs, built unchanged, run against the wolfSSL example server. Mbed
-  TLS's server programs run against the wolfSSL example client. With
-  `MBEDTLS_THREADING_C=1`, `ssl_pthread_server` serves clients at the same
-  time.
+  programs, built unchanged. The clients run against the wolfSSL example
+  server and the servers against the wolfSSL example client. `load_roots`
+  needs neither. With `MBEDTLS_THREADING_C=1`, `ssl_pthread_server` serves
+  clients at the same time.
 - `mbedtls-compat-suite`: Mbed TLS's TLS unit tests, the cases that test
   the public API (below).
 

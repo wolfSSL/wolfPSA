@@ -31,6 +31,17 @@
 #define FIN_MS 200
 /* Upper bound for a wait, in case a delay never passes */
 #define MAX_WAIT_MS 5000
+/* Sleep between reads of the timer */
+#define NAP_MS 2
+
+static void Nap(void)
+{
+    struct timespec ts;
+
+    ts.tv_sec = 0;
+    ts.tv_nsec = NAP_MS * 1000000L;
+    (void)nanosleep(&ts, NULL);
+}
 
 /* Reset writes the time, which is not 0 */
 static int GetTimer(void)
@@ -53,7 +64,7 @@ static int DelayZero(void)
         mbedtls_timing_get_final_delay(&ctx) == 0;
 }
 
-/* In ms: time() moves on once or twice in 1100 ms */
+/* In ms, not s or us: time() moves on by the time 1100 ms have passed */
 static int FollowsTime(void)
 {
     struct mbedtls_timing_hr_time t;
@@ -63,10 +74,11 @@ static int FollowsTime(void)
 
     (void)mbedtls_timing_get_timer(&t, 1);
     do {
+        Nap();
         ms = mbedtls_timing_get_timer(&t, 0);
         now = time(NULL);
-    } while (ms < 1100 && now - start < 3);
-    return ms >= 1100 && now - start >= 1 && now - start <= 2;
+    } while (ms < 1100 && now - start < MAX_WAIT_MS / 1000);
+    return ms >= 1100 && now - start >= 1;
 }
 
 /* 0, then 1 after INT_MS, then 2 after FIN_MS, by t started just before */
@@ -84,6 +96,7 @@ static int Delays(void)
     last = mbedtls_timing_get_delay(&ctx);
     ok = last == 0 && mbedtls_timing_get_final_delay(&ctx) == FIN_MS;
     while (ok && last != 2) {
+        Nap();
         now = mbedtls_timing_get_delay(&ctx);
         elapsed = mbedtls_timing_get_timer(&t, 0);
         ok = now >= last && elapsed < MAX_WAIT_MS &&

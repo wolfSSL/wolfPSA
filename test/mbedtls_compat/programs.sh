@@ -1,13 +1,13 @@
 #!/bin/sh
 
 # Run the Mbed TLS migration guide client, client-tls-mbedtls.c, and Mbed
-# TLS's sample programs, built unchanged from MBEDTLS_PATH, against the
-# wolfSSL example server, one server per case. A program missing a feature
-# macro prints "... not defined" and exits 0, so that output fails the case,
-# and a case can require a line of output. A case whose wrapper, such as
-# faketime, is not installed is skipped. Then Mbed TLS's server programs,
-# against the wolfSSL example client. WRAP prefixes the programs. Run by the
-# Makefile in this directory, which sets the paths.
+# TLS's sample programs, built unchanged from MBEDTLS_PATH. A case with
+# server options runs against its own wolfSSL example server. A program
+# missing a feature macro prints "... not defined" and exits 0, so that
+# output fails the case, and a case can require a line of output. A case
+# whose wrapper, such as faketime, is not installed is skipped. Then Mbed
+# TLS's server programs, against the wolfSSL example client. WRAP prefixes
+# the programs. Run by the Makefile in this directory, which sets the paths.
 
 : "${BUILD_DIR:?}" "${WOLFSSL_PATH:?}" "${WOLFSSL_SERVER:?}" \
     "${WOLFSSL_CLIENT:?}" "${MBEDTLS_PATH:?}"

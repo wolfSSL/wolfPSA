@@ -49,6 +49,12 @@
     #include <windows.h>
 #else
     #include <time.h>
+    /* As in Mbed TLS, on Linux the timers count time suspended too */
+    #if defined(__linux__) && defined(CLOCK_BOOTTIME)
+        #define MBED_TIMING_CLOCK CLOCK_BOOTTIME
+    #else
+        #define MBED_TIMING_CLOCK CLOCK_MONOTONIC
+    #endif /* __linux__ && CLOCK_BOOTTIME */
 #endif /* USE_WINDOWS_API */
 
 /* Milliseconds from a monotonic clock, else from time() as in Mbed TLS */
@@ -59,7 +65,7 @@ static int64_t MbedTimingNow(void)
 #else
     struct timespec ts;
 
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+    if (clock_gettime(MBED_TIMING_CLOCK, &ts) != 0) {
         return (int64_t)time(NULL) * 1000;
     }
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
