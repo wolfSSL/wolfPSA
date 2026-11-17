@@ -645,114 +645,70 @@ int wc_psa_get_rsa_padding(psa_algorithm_t alg)
 #endif
 }
 
-/* Get wolfCrypt ECC curve ID from PSA key type and size */
 #if defined(HAVE_ECC)
+/* The PSA curves the build has */
+static const struct {
+    psa_ecc_family_t family;
+    size_t bits;
+    int curve_id;
+} psa_ecc_curves[] = {
+#ifdef HAVE_ECC192
+    { PSA_ECC_FAMILY_SECP_R1, 192, ECC_SECP192R1 },
+#endif /* HAVE_ECC192 */
+#ifdef HAVE_ECC224
+    { PSA_ECC_FAMILY_SECP_R1, 224, ECC_SECP224R1 },
+#endif /* HAVE_ECC224 */
+    { PSA_ECC_FAMILY_SECP_R1, 256, ECC_SECP256R1 },
+    { PSA_ECC_FAMILY_SECP_R1, 384, ECC_SECP384R1 },
+    { PSA_ECC_FAMILY_SECP_R1, 521, ECC_SECP521R1 },
+#ifdef HAVE_ECC_KOBLITZ
+#ifdef HAVE_ECC192
+    { PSA_ECC_FAMILY_SECP_K1, 192, ECC_SECP192K1 },
+#endif /* HAVE_ECC192 */
+#ifdef HAVE_ECC224
+    { PSA_ECC_FAMILY_SECP_K1, 224, ECC_SECP224K1 },
+#endif /* HAVE_ECC224 */
+    { PSA_ECC_FAMILY_SECP_K1, 256, ECC_SECP256K1 },
+#endif /* HAVE_ECC_KOBLITZ */
+#ifdef HAVE_ECC_BRAINPOOL
+    { PSA_ECC_FAMILY_BRAINPOOL_P_R1, 256, ECC_BRAINPOOLP256R1 },
+    { PSA_ECC_FAMILY_BRAINPOOL_P_R1, 384, ECC_BRAINPOOLP384R1 },
+    { PSA_ECC_FAMILY_BRAINPOOL_P_R1, 512, ECC_BRAINPOOLP512R1 },
+#endif /* HAVE_ECC_BRAINPOOL */
+#ifdef HAVE_CURVE25519
+    { PSA_ECC_FAMILY_MONTGOMERY, 255, ECC_X25519 },
+#endif /* HAVE_CURVE25519 */
+#ifdef HAVE_CURVE448
+    { PSA_ECC_FAMILY_MONTGOMERY, 448, ECC_X448 },
+#endif /* HAVE_CURVE448 */
+};
+
+/* Get wolfCrypt ECC curve ID from PSA key type and size */
 int wc_psa_get_ecc_curve_id(psa_key_type_t type, size_t bits)
 {
-    psa_ecc_family_t curve = PSA_KEY_TYPE_ECC_GET_FAMILY(type);
-    
-    switch (curve) {
-        case PSA_ECC_FAMILY_SECP_R1:
-            switch (bits) {
-                case 192:
-                #ifdef HAVE_ECC192
-                    return ECC_SECP192R1;
-                #else
-                    return ECC_CURVE_INVALID;
-                #endif
-                
-                case 224:
-                #ifdef HAVE_ECC224
-                    return ECC_SECP224R1;
-                #else
-                    return ECC_CURVE_INVALID;
-                #endif
-                
-                case 256:
-                    return ECC_SECP256R1;
-                
-                case 384:
-                    return ECC_SECP384R1;
-                
-                case 521:
-                    return ECC_SECP521R1;
-                
-                default:
-                    return ECC_CURVE_INVALID;
-            }
-        
-        case PSA_ECC_FAMILY_SECP_K1:
-            switch (bits) {
-                case 192:
-                #if defined(HAVE_ECC192) && defined(HAVE_ECC_KOBLITZ)
-                    return ECC_SECP192K1;
-                #else
-                    return ECC_CURVE_INVALID;
-                #endif
-                
-                case 224:
-                #if defined(HAVE_ECC224) && defined(HAVE_ECC_KOBLITZ)
-                    return ECC_SECP224K1;
-                #else
-                    return ECC_CURVE_INVALID;
-                #endif
-                
-                case 256:
-                    /* Honour the compile-time capability flags so
-                     * callers can rely on ECC_CURVE_INVALID to reject
-                     * unsupported curves. */
-                #if defined(HAVE_ECC_KOBLITZ)
-                    return ECC_SECP256K1;
-                #else
-                    return ECC_CURVE_INVALID;
-                #endif
-                
-                default:
-                    return ECC_CURVE_INVALID;
-            }
-        
-        case PSA_ECC_FAMILY_BRAINPOOL_P_R1:
-        #if defined(HAVE_ECC_BRAINPOOL)
-            switch (bits) {
-                case 256:
-                    return ECC_BRAINPOOLP256R1;
-                
-                case 384:
-                    return ECC_BRAINPOOLP384R1;
-                
-                case 512:
-                    return ECC_BRAINPOOLP512R1;
-                
-                default:
-                    return ECC_CURVE_INVALID;
-            }
-        #else
-            return ECC_CURVE_INVALID;
-        #endif
+    psa_ecc_family_t family = PSA_KEY_TYPE_ECC_GET_FAMILY(type);
+    size_t i;
 
-        case PSA_ECC_FAMILY_MONTGOMERY:
-            switch (bits) {
-                case 255:
-                #ifdef HAVE_CURVE25519
-                    return ECC_X25519;
-                #else
-                    return ECC_CURVE_INVALID;
-                #endif
-
-                case 448:
-                #ifdef HAVE_CURVE448
-                    return ECC_X448;
-                #else
-                    return ECC_CURVE_INVALID;
-                #endif
-
-                default:
-                    return ECC_CURVE_INVALID;
-            }
-        
-        default:
-            return ECC_CURVE_INVALID;
+    for (i = 0; i < XELEM_CNT(psa_ecc_curves); i++) {
+        if (psa_ecc_curves[i].family == family &&
+                psa_ecc_curves[i].bits == bits) {
+            return psa_ecc_curves[i].curve_id;
+        }
     }
+    return ECC_CURVE_INVALID;
+}
+
+/* Get the PSA key size of a wolfCrypt ECC curve ID, 0 if PSA has no curve */
+size_t wc_psa_get_ecc_curve_bits(int curve_id)
+{
+    size_t i;
+
+    for (i = 0; i < XELEM_CNT(psa_ecc_curves); i++) {
+        if (psa_ecc_curves[i].curve_id == curve_id) {
+            return psa_ecc_curves[i].bits;
+        }
+    }
+    return 0;
 }
 #else
 int wc_psa_get_ecc_curve_id(psa_key_type_t type, size_t bits)

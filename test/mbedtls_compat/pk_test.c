@@ -34,6 +34,7 @@
 #define ENCRYPTED MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE
 #define NO_CURVE MBEDTLS_ERR_PK_UNKNOWN_NAMED_CURVE
 #define EC_KEY "ec_256_prv.pem"
+#define EC_PK8 "ec_prv.pk8param"
 #define RSA_PUB "rsa_pkcs8_2048_public.der"
 #define EC_PUB "ec_256_pub.der"
 #define X25519_PUB "ec_x25519_pub.der"
@@ -213,19 +214,27 @@ static size_t ReadFile(const char* file, unsigned char* buf, size_t size)
     return len;
 }
 
-/* The context has SubjectPublicKeyInfo DER, also from PKCS #1 */
-static void PublicDer(void)
+/* The context has PKCS #8 DER from PKCS #8 PEM, and SubjectPublicKeyInfo
+ * DER, also from PKCS #1 */
+static void KeyDer(void)
 {
+    unsigned char pk8[256];
     unsigned char spki[512];
     unsigned char ec[128];
+    size_t pk8Len;
     size_t spkiLen;
     size_t ecLen;
     mbedtls_pk_context pk;
 
+    pk8Len = ReadFile(EC_PK8 ".der", pk8, sizeof(pk8));
     spkiLen = ReadFile(RSA_PUB, spki, sizeof(spki));
     ecLen = ReadFile(EC_PUB, ec, sizeof(ec));
 
     mbedtls_pk_init(&pk);
+    Check(pk8Len > 0 && mbedtls_pk_parse_keyfile(&pk, EC_PK8 ".pem", NULL) ==
+        0 && pk.der_len == pk8Len && memcmp(pk.der, pk8, pk8Len) == 0,
+        "PKCS #8 private key DER");
+    mbedtls_pk_free(&pk);
     Check(spkiLen > 0 && mbedtls_pk_parse_public_keyfile(&pk,
         "rsa_pkcs1_2048_public.der") == 0 && pk.pub_len == spkiLen &&
         memcmp(pk.pub, spki, spkiLen) == 0, "PKCS #1 public key DER");
@@ -250,10 +259,19 @@ static void PublicDer(void)
     mbedtls_pk_free(&pk);
 }
 
-/* Empty buffers, NULL and empty contexts, and a second key into one context */
+/* Empty buffers, NULL and empty contexts, an RSASSA-PSS key, and a second
+ * key into one context */
 static void BadInput(void)
 {
     static const unsigned char der[] = { 0x30, 0x00 };
+    static const unsigned char rsaPss[] =
+        "-----BEGIN PUBLIC KEY-----\n"
+        "MIHTMEEGCSqGSIb3DQEBCjA0oA8wDQYJYIZIAWUDBAIBBQChHDAaBgkqhkiG9w0B\n"
+        "AQgwDQYJYIZIAWUDBAIBBQCiAwIBIAOBjQAwgYkCgYEAy08/NMNh/8IdfsRtpvho\n"
+        "sx/Ml0BZTwMzSvCF9iwIU5ecOdsLdSwBVwQYckTd+Ig1IpQnCw4gTM4MI81F/VPI\n"
+        "RbINzCFFK/q28GffbQn6rlbP0RjfZh/3usV8MF6E7emSfNvkZQ92bSMsdhf5V6k9\n"
+        "A2cQ5j8v4If99tR7Y6yA/YECAwEAAQ==\n"
+        "-----END PUBLIC KEY-----\n";
     mbedtls_pk_context pk;
 
     mbedtls_pk_init(&pk);
@@ -263,6 +281,8 @@ static void BadInput(void)
         "parse_public_key empty");
     Check(mbedtls_pk_parse_public_key(NULL, der, sizeof(der)) ==
         PSA_ERROR_INVALID_ARGUMENT, "parse_public_key NULL");
+    Check(mbedtls_pk_parse_public_key(&pk, rsaPss, sizeof(rsaPss)) ==
+        MBEDTLS_ERR_PK_UNKNOWN_PK_ALG, "RSASSA-PSS public key");
     Check(mbedtls_pk_get_bitlen(&pk) == 0 && mbedtls_pk_get_bitlen(NULL) == 0,
         "get_bitlen without a key");
     Check(mbedtls_pk_parse_keyfile(&pk, "server2.key", NULL) == 0 &&
@@ -290,7 +310,7 @@ int main(void)
     Parse(publicCases, sizeof(publicCases) / sizeof(publicCases[0]),
         mbedtls_pk_parse_public_keyfile, "parse_public_keyfile");
     CanDo();
-    PublicDer();
+    KeyDer();
     BadInput();
     mbedtls_psa_crypto_free();
     return (fails == 0) ? 0 : 1;

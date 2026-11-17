@@ -36,7 +36,7 @@
 #include <mbedtls/platform_util.h>
 #include <mbedtls/threading.h>
 #include <wolfssl/wolfcrypt/memory.h>
-#include <wolfssl/wolfcrypt/asn_public.h>
+#include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/curve25519.h>
@@ -118,40 +118,13 @@ static int PkDecodeRet(int wcRet, word32 idx, word32 len)
 }
 
 #ifdef HAVE_ECC
-extern int wc_psa_get_ecc_curve_id(psa_key_type_t type, size_t bits);
-
-/* The Weierstrass curves of PSA */
-static const struct {
-    psa_ecc_family_t family;
-    size_t bits;
-} pkCurves[] = {
-    { PSA_ECC_FAMILY_SECP_R1, 192 },
-    { PSA_ECC_FAMILY_SECP_R1, 224 },
-    { PSA_ECC_FAMILY_SECP_R1, 256 },
-    { PSA_ECC_FAMILY_SECP_R1, 384 },
-    { PSA_ECC_FAMILY_SECP_R1, 521 },
-    { PSA_ECC_FAMILY_SECP_K1, 192 },
-    { PSA_ECC_FAMILY_SECP_K1, 224 },
-    { PSA_ECC_FAMILY_SECP_K1, 256 },
-    { PSA_ECC_FAMILY_BRAINPOOL_P_R1, 256 },
-    { PSA_ECC_FAMILY_BRAINPOOL_P_R1, 384 },
-    { PSA_ECC_FAMILY_BRAINPOOL_P_R1, 512 }
-};
+extern size_t wc_psa_get_ecc_curve_bits(int curve_id);
 
 /* The size of the key's curve, if the PSA engine has the curve */
 static int PkEccBits(const ecc_key* ecc, size_t* bits)
 {
-    size_t i;
-
-    for (i = 0; i < sizeof(pkCurves) / sizeof(pkCurves[0]); i++) {
-        if (wc_psa_get_ecc_curve_id(
-                PSA_KEY_TYPE_ECC_PUBLIC_KEY(pkCurves[i].family),
-                pkCurves[i].bits) == ecc->dp->id) {
-            *bits = pkCurves[i].bits;
-            return 0;
-        }
-    }
-    return MBEDTLS_ERR_PK_UNKNOWN_NAMED_CURVE;
+    *bits = wc_psa_get_ecc_curve_bits(ecc->dp->id);
+    return (*bits == 0) ? MBEDTLS_ERR_PK_UNKNOWN_NAMED_CURVE : 0;
 }
 #endif /* HAVE_ECC */
 
@@ -208,6 +181,19 @@ static int PkCheckKey(mbedtls_pk_context* ctx)
 }
 
 #ifndef NO_RSA
+/* A SubjectPublicKeyInfo of id-RSASSA-PSS, which Mbed TLS does not parse */
+static int PkRsaIsPss(const byte* der, word32 len)
+{
+    word32 idx = 0;
+    word32 oid = 0;
+    int seqLen;
+
+    return GetSequence(der, &idx, &seqLen, len) >= 0 &&
+        GetSequence(der, &idx, &seqLen, len) >= 0 &&
+        GetObjectId(der, &idx, &oid, oidKeyType, len) == 0 &&
+        oid == RSAPSSk;
+}
+
 /* Replaces pub, which can be PKCS #1, with the key's SubjectPublicKeyInfo */
 static int PkRsaSetSpki(mbedtls_pk_context* ctx, RsaKey* rsa)
 {
@@ -248,12 +234,12 @@ static int PkCheckPublicKey(mbedtls_pk_context* ctx)
 #ifdef HAVE_ECC
     ecc_key* ecc;
 #endif /* HAVE_ECC */
-#ifdef HAVE_CURVE25519
+#if defined(HAVE_CURVE25519) && defined(HAVE_CURVE25519_KEY_IMPORT)
     curve25519_key* x25519;
-#endif /* HAVE_CURVE25519 */
-#ifdef HAVE_CURVE448
+#endif /* HAVE_CURVE25519 && HAVE_CURVE25519_KEY_IMPORT */
+#if defined(HAVE_CURVE448) && defined(HAVE_CURVE448_KEY_IMPORT)
     curve448_key* x448;
-#endif /* HAVE_CURVE448 */
+#endif /* HAVE_CURVE448 && HAVE_CURVE448_KEY_IMPORT */
 
 #ifndef NO_RSA
     rsa = wc_NewRsaKey(NULL, INVALID_DEVID, NULL);
@@ -263,6 +249,9 @@ static int PkCheckPublicKey(mbedtls_pk_context* ctx)
     idx = 0;
     ret = wc_RsaPublicKeyDecode(der, &idx, rsa, len);
     ret = PkDecodeRet(ret, idx, len);
+    if (ret == 0 && PkRsaIsPss(der, len)) {
+        ret = MBEDTLS_ERR_PK_UNKNOWN_PK_ALG;
+    }
     if (ret == 0) {
         ret = PkRsaSetSpki(ctx, rsa);
     }
@@ -290,7 +279,7 @@ static int PkCheckPublicKey(mbedtls_pk_context* ctx)
         wc_ecc_key_free(ecc);
     }
 #endif /* HAVE_ECC */
-#ifdef HAVE_CURVE25519
+#if defined(HAVE_CURVE25519) && defined(HAVE_CURVE25519_KEY_IMPORT)
     if (ret == MBEDTLS_ERR_PK_KEY_INVALID_FORMAT) {
         x25519 = wc_curve25519_new(NULL, INVALID_DEVID, NULL);
         if (x25519 == NULL) {
@@ -305,8 +294,8 @@ static int PkCheckPublicKey(mbedtls_pk_context* ctx)
         }
         wc_curve25519_delete(x25519, &x25519);
     }
-#endif /* HAVE_CURVE25519 */
-#ifdef HAVE_CURVE448
+#endif /* HAVE_CURVE25519 && HAVE_CURVE25519_KEY_IMPORT */
+#if defined(HAVE_CURVE448) && defined(HAVE_CURVE448_KEY_IMPORT)
     if (ret == MBEDTLS_ERR_PK_KEY_INVALID_FORMAT) {
         x448 = wc_curve448_new(NULL, INVALID_DEVID, NULL);
         if (x448 == NULL) {
@@ -321,7 +310,7 @@ static int PkCheckPublicKey(mbedtls_pk_context* ctx)
         }
         wc_curve448_delete(x448, &x448);
     }
-#endif /* HAVE_CURVE448 */
+#endif /* HAVE_CURVE448 && HAVE_CURVE448_KEY_IMPORT */
     (void)der;
     (void)len;
     (void)idx;
@@ -339,7 +328,7 @@ static int PkIsEncrypted(const unsigned char* key, size_t keylen)
     size_t i;
     size_t j;
 
-    for (i = 0; i < sizeof(marks) / sizeof(marks[0]); i++) {
+    for (i = 0; i < XELEM_CNT(marks); i++) {
         markLen = XSTRLEN(marks[i]);
         for (j = 0; j + markLen <= keylen; j++) {
             if (XMEMCMP(key + j, marks[i], markLen) == 0) {
@@ -374,31 +363,38 @@ static int PkPemToDer(const unsigned char* key, size_t keylen, int type,
     if (!wolfPSA_CryptoReady()) {
         return PSA_ERROR_BAD_STATE;
     }
+    /* Big enough for the DER of a PEM key */
+    *out = (unsigned char*)XMALLOC(keylen, NULL, dynType);
+    if (*out == NULL) {
+        return PSA_ERROR_INSUFFICIENT_MEMORY;
+    }
 #ifdef WOLFSSL_PEM_TO_DER
-    ret = wc_PemToDer(key, (long)keylen, type, &der, NULL, NULL, NULL);
+    if (type == PRIVATEKEY_TYPE) {
+        /* Keeps a PKCS #8 header, which names the curve of an EC key */
+        ret = wc_KeyPemToDer(key, (int)keylen, *out, (int)keylen, NULL);
+    }
+    else {
+        ret = wc_PemToDer(key, (long)keylen, type, &der, NULL, NULL, NULL);
+        if (ret == 0) {
+            XMEMCPY(*out, der->buffer, der->length);
+            ret = (int)der->length;
+        }
+    }
 #else
     (void)type;
     ret = WC_NO_ERR_TRACE(ASN_NO_PEM_HEADER);
 #endif /* WOLFSSL_PEM_TO_DER */
-    if (ret == 0) {
-        key = der->buffer;
-        keylen = der->length;
+    if (ret > 0) {
+        *outLen = (size_t)ret;
+        ret = 0;
     }
     else if (ret == WC_NO_ERR_TRACE(ASN_NO_PEM_HEADER)) {
+        XMEMCPY(*out, key, keylen);
+        *outLen = keylen;
         ret = 0;
     }
     else {
         ret = wolfPSA_MbedRet(ret, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
-    }
-    if (ret == 0) {
-        *out = (unsigned char*)XMALLOC(keylen, NULL, dynType);
-        if (*out == NULL) {
-            ret = PSA_ERROR_INSUFFICIENT_MEMORY;
-        }
-    }
-    if (ret == 0) {
-        XMEMCPY(*out, key, keylen);
-        *outLen = keylen;
     }
     wc_FreeDer(&der);
     return ret;
@@ -506,7 +502,7 @@ int mbedtls_pk_can_do_psa(const mbedtls_pk_context* pk, psa_algorithm_t alg,
     if (pk->pub != NULL && PSA_ALG_IS_KEY_AGREEMENT(alg)) {
         alg = PSA_ALG_KEY_AGREEMENT_GET_BASE(alg);
     }
-    for (i = 0; i < sizeof(pkPolicy) / sizeof(pkPolicy[0]); i++) {
+    for (i = 0; i < XELEM_CNT(pkPolicy); i++) {
         if (pkPolicy[i].type == pk->type && pkPolicy[i].usage == usage &&
                 PkAlgMatches(alg, pkPolicy[i].alg)) {
             return 1;
