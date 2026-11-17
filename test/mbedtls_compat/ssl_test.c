@@ -633,6 +633,209 @@ static int LargeLength(void)
     return ok;
 }
 
+#if defined(MBEDTLS_SSL_MAX_FRAGMENT_LENGTH) || \
+    defined(MBEDTLS_SSL_KEYING_MATERIAL_EXPORT)
+/* A server, and a client that offers only version and does not verify */
+static int PeersVersion(mbedtls_ssl_protocol_version version)
+{
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+
+    if (ok) {
+        mbedtls_ssl_conf_min_tls_version(&cli.conf, version);
+        mbedtls_ssl_conf_max_tls_version(&cli.conf, version);
+    }
+    return ok;
+}
+
+static int Connected(void)
+{
+    int s;
+
+    return Handshake(&s) == 0 && s == 0;
+}
+#endif /* MBEDTLS_SSL_MAX_FRAGMENT_LENGTH ||
+          MBEDTLS_SSL_KEYING_MATERIAL_EXPORT */
+
+#ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
+/* Each end's code, and the most data per record each then sends, TLS 1.2 */
+static const struct {
+    unsigned char cliCode;
+    unsigned char srvCode;
+    int cliMax;
+    int srvMax;
+} maxFrags[] = {
+    { MBEDTLS_SSL_MAX_FRAG_LEN_NONE, MBEDTLS_SSL_MAX_FRAG_LEN_NONE,
+        RECORD_SZ, RECORD_SZ },
+    /* The server takes the length its client asks for */
+    { MBEDTLS_SSL_MAX_FRAG_LEN_512, MBEDTLS_SSL_MAX_FRAG_LEN_NONE, 512, 512 },
+    /* and limits what it sends to its own */
+    { MBEDTLS_SSL_MAX_FRAG_LEN_NONE, MBEDTLS_SSL_MAX_FRAG_LEN_1024,
+        RECORD_SZ, 1024 },
+    { MBEDTLS_SSL_MAX_FRAG_LEN_2048, MBEDTLS_SSL_MAX_FRAG_LEN_4096,
+        2048, 2048 },
+    { MBEDTLS_SSL_MAX_FRAG_LEN_4096, MBEDTLS_SSL_MAX_FRAG_LEN_512, 4096, 512 }
+};
+
+/* One record each way. Each write sends one record of at most the max. */
+static int SendMax(Peer* from, Peer* to, int max)
+{
+    static unsigned char buf[RECORD_SZ + 1];
+
+    return mbedtls_ssl_get_max_out_record_payload(&from->ssl) == max &&
+        mbedtls_ssl_write(&from->ssl, buf, sizeof(buf)) == max &&
+        mbedtls_ssl_read(&to->ssl, buf, sizeof(buf)) == max &&
+        mbedtls_ssl_get_bytes_avail(&to->ssl) == 0;
+}
+
+static int MaxFragLen(void)
+{
+    size_t i;
+    int ok = 1;
+
+    for (i = 0; ok && i < sizeof(maxFrags) / sizeof(maxFrags[0]); i++) {
+        ok = PeersVersion(MBEDTLS_SSL_VERSION_TLS1_2) &&
+            mbedtls_ssl_conf_max_frag_len(&cli.conf, maxFrags[i].cliCode) ==
+                0 &&
+            mbedtls_ssl_conf_max_frag_len(&srv.conf, maxFrags[i].srvCode) ==
+                0 &&
+            Connected() &&
+            SendMax(&cli, &srv, maxFrags[i].cliMax) &&
+            SendMax(&srv, &cli, maxFrags[i].srvMax);
+        PeerFree(&cli);
+        PeerFree(&srv);
+    }
+    return ok;
+}
+
+/* The server's first write completes the handshake, then uses its result */
+static int MaxFragLenWriteFirst(void)
+{
+    static unsigned char buf[RECORD_SZ + 1];
+    int c = MBEDTLS_ERR_SSL_WANT_READ;
+    int w = MBEDTLS_ERR_SSL_WANT_READ;
+    int i;
+    int ok = PeersVersion(MBEDTLS_SSL_VERSION_TLS1_2) &&
+        mbedtls_ssl_conf_max_frag_len(&cli.conf,
+            MBEDTLS_SSL_MAX_FRAG_LEN_512) == 0;
+
+    for (i = 0; ok && i < MAX_STEPS && Waiting(w); i++) {
+        if (Waiting(c)) {
+            c = mbedtls_ssl_handshake(&cli.ssl);
+        }
+        w = mbedtls_ssl_write(&srv.ssl, buf, sizeof(buf));
+    }
+    ok = ok && w == 512 && mbedtls_ssl_handshake(&cli.ssl) == 0 &&
+        mbedtls_ssl_read(&cli.ssl, buf, sizeof(buf)) == 512 &&
+        mbedtls_ssl_get_bytes_avail(&cli.ssl) == 0;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+static int MaxFragLenInvalid(void)
+{
+    int ok;
+
+    PeerInit(&cli, MBEDTLS_SSL_IS_CLIENT);
+    ok = mbedtls_ssl_conf_max_frag_len(NULL, MBEDTLS_SSL_MAX_FRAG_LEN_512) ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+        mbedtls_ssl_conf_max_frag_len(&cli.conf,
+            MBEDTLS_SSL_MAX_FRAG_LEN_INVALID) ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+        mbedtls_ssl_get_max_out_record_payload(NULL) ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    PeerFree(&cli);
+    return ok;
+}
+#endif /* MBEDTLS_SSL_MAX_FRAGMENT_LENGTH */
+
+#ifdef MBEDTLS_SSL_KEYING_MATERIAL_EXPORT
+#define EXPORT_SZ 24
+
+/* An export by each end, which must match */
+static int ExportBoth(unsigned char* key, size_t keyLen, const char* label,
+    const unsigned char* context, size_t contextLen, int useContext)
+{
+    static unsigned char srvKey[MBEDTLS_SSL_EXPORT_MAX_KEY_LEN];
+    size_t labelLen = strlen(label);
+
+    return mbedtls_ssl_export_keying_material(&cli.ssl, key, keyLen, label,
+            labelLen, context, contextLen, useContext) == 0 &&
+        mbedtls_ssl_export_keying_material(&srv.ssl, srvKey, keyLen, label,
+            labelLen, context, contextLen, useContext) == 0 &&
+        memcmp(key, srvKey, keyLen) == 0;
+}
+
+/* TLS 1.2 tells no context from an empty one, TLS 1.3 does not */
+static int ExportVersion(mbedtls_ssl_protocol_version version)
+{
+    static const unsigned char context[] = "context";
+    static unsigned char large[MBEDTLS_SSL_EXPORT_MAX_KEY_LEN];
+    unsigned char key[EXPORT_SZ];
+    unsigned char other[EXPORT_SZ];
+    unsigned char noContext[EXPORT_SZ];
+    int ok = PeersVersion(version) &&
+        mbedtls_ssl_export_keying_material(&cli.ssl, key, sizeof(key),
+            "label", 5, NULL, 0, 0) == MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+        Connected() &&
+        ExportBoth(key, sizeof(key), "label", context, sizeof(context), 1) &&
+        ExportBoth(other, sizeof(other), "label2", context, sizeof(context),
+            1) &&
+        memcmp(key, other, sizeof(key)) != 0 &&
+        ExportBoth(other, sizeof(other), "label", context, 1, 1) &&
+        memcmp(key, other, sizeof(key)) != 0 &&
+        ExportBoth(other, sizeof(other), "label", NULL, 0, 1) &&
+        ExportBoth(noContext, sizeof(noContext), "label", context,
+            sizeof(context), 0) &&
+        (memcmp(other, noContext, sizeof(other)) == 0) ==
+            (version == MBEDTLS_SSL_VERSION_TLS1_3) &&
+        ExportBoth(large, sizeof(large), "label", NULL, 0, 0) &&
+        mbedtls_ssl_export_keying_material(&cli.ssl, large,
+            sizeof(large) + 1, "label", 5, NULL, 0, 0) ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+static int ExportTls12(void)
+{
+    return ExportVersion(MBEDTLS_SSL_VERSION_TLS1_2);
+}
+
+static int ExportTls13(void)
+{
+    return ExportVersion(MBEDTLS_SSL_VERSION_TLS1_3);
+}
+
+/* Mbed TLS's limits: TLS 1.2 context and TLS 1.3 label lengths */
+static int ExportLimits(void)
+{
+    static unsigned char input[65536];
+    unsigned char key[EXPORT_SZ];
+    int ok = mbedtls_ssl_export_keying_material(NULL, key, sizeof(key),
+            "label", 5, NULL, 0, 0) == MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+        PeersVersion(MBEDTLS_SSL_VERSION_TLS1_2) && Connected() &&
+        mbedtls_ssl_export_keying_material(&cli.ssl, key, sizeof(key),
+            "label", 5, input, sizeof(input), 1) ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+
+    PeerFree(&cli);
+    PeerFree(&srv);
+    ok = ok && PeersVersion(MBEDTLS_SSL_VERSION_TLS1_3) && Connected() &&
+        mbedtls_ssl_export_keying_material(&cli.ssl, key, sizeof(key),
+            (const char*)input, 250, NULL, 0, 0) ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+#endif /* MBEDTLS_SSL_KEYING_MATERIAL_EXPORT */
+
 /* The tests below change the config between mbedtls_ssl_setup and the
  * handshake, which Mbed TLS reads the config in */
 
@@ -1208,6 +1411,17 @@ static const struct {
     { "close_notify", ReadCloseNotify },
     { "BIO errors", BioErrors },
     { "length over INT_MAX", LargeLength },
+#ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
+    { "max fragment length", MaxFragLen },
+    { "max fragment length, write before the handshake",
+        MaxFragLenWriteFirst },
+    { "max fragment length, bad input", MaxFragLenInvalid },
+#endif /* MBEDTLS_SSL_MAX_FRAGMENT_LENGTH */
+#ifdef MBEDTLS_SSL_KEYING_MATERIAL_EXPORT
+    { "key export, TLS 1.2", ExportTls12 },
+    { "key export, TLS 1.3", ExportTls13 },
+    { "key export, input limits", ExportLimits },
+#endif /* MBEDTLS_SSL_KEYING_MATERIAL_EXPORT */
     { "client certificate set after setup", ClientCertAfterSetup },
     { "server certificate replaced after setup", ServerCertReplaced },
     { "cipher suites set after setup", SuitesAfterSetup },

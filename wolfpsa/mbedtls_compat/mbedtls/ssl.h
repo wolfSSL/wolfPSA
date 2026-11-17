@@ -169,6 +169,7 @@ typedef struct mbedtls_ssl_config {
     int transport;
     mbedtls_ssl_protocol_version min_tls_version;
     mbedtls_ssl_protocol_version max_tls_version;
+    unsigned char mfl_code; /* MBEDTLS_SSL_MAX_FRAG_LEN_* */
     const int* ciphersuites; /* the application's, NULL for the default */
     mbedtls_x509_crt* ca_chain; /* the application's */
     mbedtls_x509_crl* ca_crl; /* not supported, an error when set */
@@ -218,6 +219,10 @@ void mbedtls_ssl_conf_min_tls_version(mbedtls_ssl_config* conf,
     mbedtls_ssl_protocol_version tls_version);
 void mbedtls_ssl_conf_max_tls_version(mbedtls_ssl_config* conf,
     mbedtls_ssl_protocol_version tls_version);
+#ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
+int mbedtls_ssl_conf_max_frag_len(mbedtls_ssl_config* conf,
+    unsigned char mfl_code);
+#endif /* MBEDTLS_SSL_MAX_FRAGMENT_LENGTH */
 void mbedtls_ssl_conf_ciphersuites(mbedtls_ssl_config* conf,
     const int* ciphersuites);
 void mbedtls_ssl_conf_cert_profile(mbedtls_ssl_config* conf,
@@ -272,7 +277,17 @@ size_t mbedtls_ssl_get_bytes_avail(const mbedtls_ssl_context* ssl);
 int mbedtls_ssl_read(mbedtls_ssl_context* ssl, unsigned char* buf, size_t len);
 int mbedtls_ssl_write(mbedtls_ssl_context* ssl,
     const unsigned char* buf, size_t len);
+int mbedtls_ssl_get_max_out_record_payload(const mbedtls_ssl_context* ssl);
 int mbedtls_ssl_close_notify(mbedtls_ssl_context* ssl);
+
+#ifdef MBEDTLS_SSL_KEYING_MATERIAL_EXPORT
+#define MBEDTLS_SSL_EXPORT_MAX_KEY_LEN 8160
+
+int mbedtls_ssl_export_keying_material(mbedtls_ssl_context* ssl,
+    uint8_t* out, const size_t key_len, const char* label,
+    const size_t label_len, const unsigned char* context,
+    const size_t context_len, const int use_context);
+#endif /* MBEDTLS_SSL_KEYING_MATERIAL_EXPORT */
 
 static inline void mbedtls_ssl_set_user_data_p(mbedtls_ssl_context* ssl,
     void* p)

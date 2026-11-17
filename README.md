@@ -146,6 +146,11 @@ Mapped so far:
   get_ciphersuite_id
 - ssl_session: init, free; save and load return
   `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`
+- ssl_conf: max_frag_len, with `MBEDTLS_SSL_MAX_FRAGMENT_LENGTH`; ssl:
+  get_max_out_record_payload, and export_keying_material with
+  `MBEDTLS_SSL_KEYING_MATERIAL_EXPORT`. The two macros need wolfSSL's
+  `HAVE_MAX_FRAGMENT` and `HAVE_KEYING_MATERIAL`, which wolfPSA's
+  `user_settings.h` defines.
 
 Known differences from Mbed TLS:
 
@@ -202,6 +207,14 @@ Known differences from Mbed TLS:
 - A server resumes sessions from wolfSSL's session cache, where Mbed TLS
   needs `mbedtls_ssl_conf_session_cache`. A server that verifies client
   certificates reports `MBEDTLS_X509_BADCERT_MISSING` for a resumed session.
+- `mbedtls_ssl_export_keying_material` takes shorter inputs, as wolfSSL's
+  key derivation limits them: in TLS 1.2 a label of at most 64 bytes, or 62
+  for the label and context together; in TLS 1.3 a label of at most 53
+  bytes (69 with a SHA-256 cipher suite) and a context of at most 65535.
+  Longer ones return `MBEDTLS_ERR_SSL_BAD_INPUT_DATA`, as do labels that
+  start with one of the TLS 1.2 key schedule's, such as `master secret`.
+- In TLS 1.3, a server sends records of at most the max fragment length its
+  client asks for. Mbed TLS uses the extension in TLS 1.2 only.
 - wolfSSL keeps the intermediate CAs of a chain that verifies, for the
   config's later handshakes. A peer that then leaves them out still
   verifies, where Mbed TLS reports `NOT_TRUSTED`.

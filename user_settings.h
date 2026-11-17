@@ -155,6 +155,9 @@
 #define NO_DES3_TLS_SUITES
 #define NO_PSK
 #define NO_DH
+/* Max fragment length and key export, on by default in Mbed TLS */
+#define HAVE_MAX_FRAGMENT
+#define HAVE_KEYING_MATERIAL
 /* mbedtls_ssl_conf_ciphersuites() takes cipher suite IDs */
 #define WOLFSSL_SET_CIPHER_BYTES
 /* An IP address host name is checked against the certificate's IP SANs */
