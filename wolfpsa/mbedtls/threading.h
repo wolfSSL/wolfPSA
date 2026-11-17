@@ -25,6 +25,7 @@
 #ifndef MBEDTLS_THREADING_H
 #define MBEDTLS_THREADING_H
 
+#include "mbedtls/private_access.h"
 #include "tf-psa-crypto/build_info.h"
 
 #if defined(MBEDTLS_THREADING_PTHREAD)
