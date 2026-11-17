@@ -1425,6 +1425,8 @@ static psa_status_t wolfpsa_kdf_pbkdf2(wolfpsa_kdf_ctx_t *ctx,
 #if !defined(HAVE_PBKDF2) || defined(NO_HMAC)
         (void)output;
         (void)output_length;
+        (void)password;
+        (void)salt;
         return PSA_ERROR_NOT_SUPPORTED;
 #else
         int hash_type = wolfpsa_hash_type_from_alg(ctx->alg);

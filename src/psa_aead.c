@@ -906,6 +906,8 @@ static psa_status_t wolfpsa_aead_stream_update(wolfpsa_aead_ctx_t *ctx,
 
     aad = wolfpsa_aead_nonnull_data(ctx->aad, ctx->aad_length);
     aad_len = ctx->aad_length;
+    (void)in; (void)n; (void)out; (void)aad; (void)aad_len; (void)first;
+    (void)ret;
 
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
 #if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
@@ -992,6 +994,7 @@ static psa_status_t wolfpsa_aead_stream_final(wolfpsa_aead_ctx_t *ctx,
 {
     int ret;
 
+    (void)tag; (void)tag_len; (void)ret;
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
 #if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
         ret = (ctx->direction) ?
