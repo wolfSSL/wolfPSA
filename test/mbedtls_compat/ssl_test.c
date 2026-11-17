@@ -53,6 +53,10 @@
 /* Self-signed with server5.key, IP address SANs 97.98.99.100 and
  * 6162:6364:2E65:7861:6D70:6C65:2E63:6F6D, the bytes of abcd.example.com */
 #define IP_SAN_FILE "server5-tricky-ip-san.crt.der"
+/* Self-signed with server-key.pem, DNS name SAN "garbage". Mbed TLS's test
+ * files have no single-label name but localhost. */
+#define SINGLE_LABEL_FILE WOLFSSL_CERTS_DIR "/test/server-garbage.pem"
+#define SINGLE_LABEL_KEY_FILE WOLFSSL_CERTS_DIR "/server-key.pem"
 /* The CN of server5.crt and server10.crt */
 #define HOST_NAME "localhost"
 /* Handshake steps for each side */
@@ -82,22 +86,6 @@ typedef struct {
     int recvErr;
 } Peer;
 
-/* Self-signed with server5.key, DNS name SAN "router". Mbed TLS's test
- * files have no single-label name but localhost. */
-static const char singleLabelPem[] =
-    "-----BEGIN CERTIFICATE-----\n"
-    "MIIBrTCCAVOgAwIBAgIBTTAKBggqhkjOPQQDAjBEMQswCQYDVQQGEwJVSzERMA8G\n"
-    "A1UECgwITWJlZCBUTFMxIjAgBgNVBAMMGU1iZWQgVExTIHNpbmdsZS1sYWJlbCBT\n"
-    "QU4wIBcNMjYxMTE3MDQwMjUzWhgPMjA5OTEyMzEyMzU5NTlaMEQxCzAJBgNVBAYT\n"
-    "AlVLMREwDwYDVQQKDAhNYmVkIFRMUzEiMCAGA1UEAwwZTWJlZCBUTFMgc2luZ2xl\n"
-    "LWxhYmVsIFNBTjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABDfMVtl2CR5acj7H\n"
-    "WS3/IG7ufPkGkXTQrRS192giWWKSTuUA2CMR/+ov0jRdXRa9iojCa3cNVc2KKg76\n"
-    "Aci07f+jNDAyMBEGA1UdEQQKMAiCBnJvdXRlcjAdBgNVHQ4EFgQUUGGlj9QH2deC\n"
-    "AQzlZX+MY0anE74wCgYIKoZIzj0EAwIDSAAwRQIgfqZ8Mk8nJsaGvpvpihQMXI4g\n"
-    "8G158OEfQRP92uB/acsCIQCDVVG5k/7DgPDluMkkdXkNcLUdY5XUzlgla82MTqHj\n"
-    "pQ==\n"
-    "-----END CERTIFICATE-----\n";
-
 /* The CAs a peer trusts, and the certificates and key a server sends */
 typedef struct {
     mbedtls_x509_crt* ca;
@@ -114,9 +102,11 @@ static mbedtls_pk_context leafKey;
 static mbedtls_x509_crt ekuSrv;
 static mbedtls_x509_crt ipSan;
 static mbedtls_x509_crt singleLabel;
+static mbedtls_pk_context singleLabelKey;
 static const Certs defaultCerts = { &ca, &cert, &key };
 static const Certs ipSanCerts = { &ipSan, &ipSan, &key };
-static const Certs singleLabelCerts = { &singleLabel, &singleLabel, &key };
+static const Certs singleLabelCerts = { &singleLabel, &singleLabel,
+    &singleLabelKey };
 /* The client trusts the root of the chain the server sends */
 static const Certs chainCerts = { &root, &chain, &leafKey };
 /* The client does not trust it */
@@ -466,9 +456,11 @@ static int SingleLabel(void)
         int want;
         uint32_t flags;
     } hosts[] = {
-        { "router", 0, 0 },
-        { "ROUTER", 0, 0 },
-        { "switch", MBEDTLS_ERR_X509_CERT_VERIFY_FAILED,
+        { "garbage", 0, 0 },
+        { "GARBAGE", 0, 0 },
+        /* Mbed TLS compares the trailing dot too */
+        { "garbage.", 0, 0 },
+        { "router", MBEDTLS_ERR_X509_CERT_VERIFY_FAILED,
             MBEDTLS_X509_BADCERT_CN_MISMATCH }
     };
     size_t i;
@@ -1289,6 +1281,7 @@ int main(void)
     mbedtls_x509_crt_init(&ekuSrv);
     mbedtls_x509_crt_init(&ipSan);
     mbedtls_x509_crt_init(&singleLabel);
+    mbedtls_pk_init(&singleLabelKey);
     if (psa_crypto_init() != PSA_SUCCESS ||
             mbedtls_x509_crt_parse_file(&ca, CA_FILE) != 0 ||
             mbedtls_x509_crt_parse_file(&cert, CERT_FILE) != 0 ||
@@ -1298,9 +1291,9 @@ int main(void)
             mbedtls_pk_parse_keyfile(&leafKey, LEAF_KEY_FILE, NULL) != 0 ||
             mbedtls_x509_crt_parse_file(&ekuSrv, EKU_SRV_FILE) != 0 ||
             mbedtls_x509_crt_parse_file(&ipSan, IP_SAN_FILE) != 0 ||
-            mbedtls_x509_crt_parse(&singleLabel,
-                (const unsigned char*)singleLabelPem,
-                sizeof(singleLabelPem)) != 0) {
+            mbedtls_x509_crt_parse_file(&singleLabel, SINGLE_LABEL_FILE) != 0 ||
+            mbedtls_pk_parse_keyfile(&singleLabelKey, SINGLE_LABEL_KEY_FILE,
+                NULL) != 0) {
         printf("FAIL: loading the certificates and keys\n");
         return 1;
     }
@@ -1313,6 +1306,7 @@ int main(void)
             fails++;
         }
     }
+    mbedtls_pk_free(&singleLabelKey);
     mbedtls_x509_crt_free(&singleLabel);
     mbedtls_x509_crt_free(&ipSan);
     mbedtls_x509_crt_free(&ekuSrv);
