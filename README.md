@@ -116,10 +116,11 @@ make MBEDTLS_COMPAT=1
 - With `MBEDTLS_THREADING_C=1`, TLS is thread safe too.
 - TLS uses wolfPSA's constant-time AES. `AES_FAST=1` applies to TLS too.
 - As in Mbed TLS, certificates may have NULL parameters after an ECDSA
-  signature OID. This needs `WOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED`, which
-  wolfPSA's `user_settings.h` defines. A build with its own
-  `USER_SETTINGS_PATH` defines it too, or rejects such certificates, for
-  example Mbed TLS's `test-ca2.crt`.
+  signature OID, and serial number 0. This needs
+  `WOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED` and `WOLFSSL_ASN_ALLOW_0_SERIAL`,
+  which wolfPSA's `user_settings.h` defines. A build with its own
+  `USER_SETTINGS_PATH` defines them too, or rejects such certificates, for
+  example Mbed TLS's `test-ca2.crt` and `test-ca-any_policy.crt`.
 - The X.509 API needs wolfCrypt's certificate parsing: without it (`NO_ASN`
   or `NO_CERTS`), `MBEDTLS_X509_CRT_PARSE_C` is not defined.
 - TLS needs the X.509 API and wolfSSL's TLS with `HAVE_SNI`: without them,
@@ -131,8 +132,10 @@ Mapped so far:
 
 - net: init, connect, bind, accept, close, free, recv, send, usleep
 - pem: init, read_buffer, get_buffer, free
-- x509_crt: init, free, parse, parse_der, parse_file, parse_path; the
-  default, next and suiteb profiles, as names only
+- x509_crt: init, free, parse, parse_der, parse_file, parse_path,
+  get_ca_istrue, check_key_usage, check_extended_key_usage, has_ext_type;
+  the default, next and suiteb profiles, as names only
+- x509: dn_gets, dn_get_next, serial_gets, time_is_past, time_is_future
 - ssl_config: init, free, defaults; ssl_conf: authmode, ca_chain, own_cert,
   min_tls_version, max_tls_version, ciphersuites, cert_profile, dbg,
   endpoint, transport, get_endpoint, set_user_data_p, set_user_data_n,
@@ -209,17 +212,21 @@ Known differences from Mbed TLS:
   and ignored.
 - `mbedtls_pem_read_buffer` returns `MBEDTLS_ERR_PEM_FEATURE_UNAVAILABLE`
   for encrypted PEM. No `mbedtls_pem_write_buffer`.
-- `mbedtls_x509_crt` has one node per certificate, with no parsed fields
-  apart from `raw`. Parse errors are `MBEDTLS_ERR_X509_INVALID_FORMAT` or
-  `MBEDTLS_ERR_X509_ALLOC_FAILED`.
+- `mbedtls_x509_crt` has the parsed fields, but not `pk`. The fields Mbed
+  TLS makes private, such as `ca_istrue`, have their plain names. A
+  certificate that wolfCrypt rejects returns
+  `MBEDTLS_ERR_X509_INVALID_FORMAT`, where Mbed TLS often returns a more
+  specific error.
+- With `NO_ASN_TIME`, `mbedtls_x509_time_is_past` and
+  `mbedtls_x509_time_is_future` return 0, as Mbed TLS does without
+  `MBEDTLS_HAVE_TIME_DATE`.
 - `mbedtls_x509_crt_parse_path` needs `<dirent.h>`. On Windows, or with
   `NO_WOLFSSL_DIR`, it returns `MBEDTLS_ERR_X509_FILE_IO_ERROR`.
 - The profiles are not applied: wolfSSL's own limits hold.
   `mbedtls_x509_crt_profile` is opaque, so applications cannot define their
   own.
-- wolfSSL parses some certificates differently. For example, it rejects
-  serial number 0 and a pathlen above `WOLFSSL_MAX_PATH_LEN`, and accepts
-  spaces in PEM.
+- wolfSSL parses some certificates differently. For example, it rejects a
+  pathlen above `WOLFSSL_MAX_PATH_LEN` and accepts spaces in PEM.
 - No global mutexes such as `mbedtls_threading_gmtime_mutex`.
 
 ### Mbed TLS compatibility tests
