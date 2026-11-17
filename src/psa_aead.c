@@ -2111,6 +2111,7 @@ psa_status_t psa_aead_decrypt(psa_key_id_t key,
     psa_status_t status;
     size_t tag_length;
     size_t ct_len;
+    uint8_t tag[PSA_AEAD_TAG_MAX_SIZE];
 
     wolfpsa_clear_length(plaintext_length);
     /* One-shot-only algorithms: bypass the multipart state machine. */
@@ -2135,11 +2136,14 @@ psa_status_t psa_aead_decrypt(psa_key_id_t key,
     }
 
     tag_length = wolfpsa_aead_tag_length(alg);
-    if (tag_length == 0 || ciphertext_length < tag_length) {
+    if (tag_length == 0 || tag_length > sizeof(tag) ||
+        ciphertext_length < tag_length || ciphertext == NULL) {
         psa_aead_abort(&operation);
         return PSA_ERROR_INVALID_ARGUMENT;
     }
     ct_len = ciphertext_length - tag_length;
+    /* Plaintext written over a partly overlapping tag must not change it. */
+    XMEMCPY(tag, ciphertext + ct_len, tag_length);
 
     if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM)) {
         status = psa_aead_set_lengths(&operation, additional_data_length,
@@ -2177,8 +2181,7 @@ psa_status_t psa_aead_decrypt(psa_key_id_t key,
     }
 
     status = psa_aead_verify(&operation, plaintext, plaintext_size,
-                             plaintext_length,
-                             ciphertext + ct_len, tag_length);
+                             plaintext_length, tag, tag_length);
     return status;
 }
 
