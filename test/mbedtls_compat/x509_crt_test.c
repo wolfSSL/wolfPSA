@@ -43,6 +43,13 @@
 
 /* Any error code */
 #define ERR -1
+/* ret with WOLFSSL_ASN_ORIGINAL. wolfCrypt's template parser rejects the
+ * certificate first. */
+#ifdef WOLFSSL_ASN_TEMPLATE
+    #define ASN_ORIGINAL_RET(ret) MBEDTLS_ERR_X509_INVALID_FORMAT
+#else
+    #define ASN_ORIGINAL_RET(ret) (ret)
+#endif /* WOLFSSL_ASN_TEMPLATE */
 #define IN "parse_input/"
 
 typedef int (*Parse)(mbedtls_x509_crt* chain, const char* path);
@@ -400,11 +407,23 @@ static int ParseDerBuffer(void)
     "4EE500D82311FFEA2FD2345D5D16BD8A88C26B770D55CD8A2A0EFA01C8B4EDFF"
 #define BUILT_SIG "300A06082A8648CE3D0403020309003006020101020101"
 
-/* C=NL + O=PolarSSL, CN=Server, and UTCTime and GeneralizedTime without Z */
-static const char mvrdnHex[] = "3081E93081CF" BUILT_START
-    "301E170C313930323130313434343036180E3230323930323130313434343036"
-    "302F311C3009060355040613024E4C300F060355040A0C08506F6C617253534C"
-    "310F300D06035504030C06536572766572" BUILT_KEY BUILT_SIG;
+/* C=NL + O=PolarSSL, CN=Server, and UTCTime and GeneralizedTime without Z.
+ * tag is the type of O's value. */
+#define MVRDN(tag) "3081E93081CF" BUILT_START \
+    "301E170C313930323130313434343036180E3230323930323130313434343036" \
+    "302F311C3009060355040613024E4C300F060355040A" tag \
+    "08506F6C617253534C310F300D06035504030C06536572766572" BUILT_KEY BUILT_SIG
+static const char mvrdnHex[] = MVRDN("0C");
+
+/* Up to the extensions: CN=Server, valid from the UTCTime from, in hex, to
+ * 2029 */
+#define BUILT_TBS(from) BUILT_START "301E170D" from \
+    "170D3239303231303134343430365A" \
+    "3011310F300D06035504030C06536572766572" BUILT_KEY
+/* 190210144406Z */
+#define BUILT_FROM "3139303231303134343430365A"
+/* BUILT_TBS(from) and no extensions */
+#define DATED(from) "3081CB3081B1" BUILT_TBS(from) BUILT_SIG
 
 static int ParseHex(mbedtls_x509_crt* crt, const char* hex)
 {
@@ -597,10 +616,19 @@ static int Usage(void)
     return fails;
 }
 
-/* Up to the extensions, with a subject of CN=Server */
-#define REPEATED_START "3081FA3081E0" BUILT_START \
-    "301E170D3139303231303134343430365A170D3239303231303134343430365A" \
-    "3011310F300D06035504030C06536572766572" BUILT_KEY "A32D302B"
+/* BUILT_TBS with the extensions exts, in hex, up to 48 bytes */
+static int ParseExts(mbedtls_x509_crt* crt, const char* exts)
+{
+    static const char tbs[] = BUILT_TBS(BUILT_FROM);
+    char hex[600];
+    unsigned int extLen = (unsigned int)strlen(exts) / 2;
+    unsigned int tbsLen = (unsigned int)(sizeof(tbs) - 1) / 2 + 4 + extLen;
+
+    (void)snprintf(hex, sizeof(hex), "3081%02X3081%02X%sA3%02X30%02X%s%s",
+        3 + tbsLen + (unsigned int)(sizeof(BUILT_SIG) - 1) / 2, tbsLen, tbs,
+        2 + extLen, extLen, exts, BUILT_SIG);
+    return ParseHex(crt, hex);
+}
 
 /* Key identifiers, subject alternative names and policies */
 static int Extensions(void)
@@ -614,12 +642,27 @@ static int Extensions(void)
         { MBEDTLS_ASN1_OID, 3, (unsigned char*)"\x2A\x03\x04" },
         { MBEDTLS_ASN1_OID, 4, (unsigned char*)"\x55\x1D\x20\x00" }
     };
-    /* certificatePolicies twice: the second list shorter, then longer */
-    static const char* const repeated[] = {
-        REPEATED_START "30170603551D200410300E300506032A0304300506032A0305"
-            "30100603551D2004093007300506032A0306" BUILT_SIG,
-        REPEATED_START "30100603551D2004093007300506032A0304"
-            "30170603551D200410300E300506032A0305300506032A0306" BUILT_SIG
+    /* Extensions Mbed TLS rejects */
+    static const struct {
+        const char* what;
+        const char* exts;
+        int ret;
+    } bad[] = {
+        { "policies twice, the second shorter",
+            "30170603551D200410300E300506032A0304300506032A0305"
+            "30100603551D2004093007300506032A0306",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "policies twice, the second longer",
+            "30100603551D2004093007300506032A0304"
+            "30170603551D200410300E300506032A0305300506032A0306",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "empty extended key usage", "30090603551D2504023000",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "empty policies", "30090603551D2004023000",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "authority cert issuer twice",
+            "30190603551D2304123010A106820161820162A106820163820164",
+            ASN_ORIGINAL_RET(MBEDTLS_ERR_X509_INVALID_EXTENSIONS) }
     };
     mbedtls_x509_crt crt;
     const mbedtls_x509_sequence* cur;
@@ -636,7 +679,9 @@ static int Extensions(void)
             akid->keyIdentifier.len != sizeof(keyId) ||
             memcmp(akid->keyIdentifier.p, keyId, sizeof(keyId)) != 0 ||
             akid->authorityCertIssuer.buf.tag != 0xA4 ||
-            akid->authorityCertSerialNumber.len != 20) {
+            akid->authorityCertSerialNumber.len != 20 ||
+            (crt.MBEDTLS_PRIVATE(ext_types) &
+            MBEDTLS_X509_EXT_AUTHORITY_KEY_IDENTIFIER) == 0) {
         printf("FAIL: key identifiers\n");
         fails++;
     }
@@ -676,10 +721,10 @@ static int Extensions(void)
     mbedtls_x509_crt_free(&crt);
     fails += Expect("certificate policies", n, 2);
 
-    for (i = 0; i < sizeof(repeated) / sizeof(repeated[0]); i++) {
+    for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
         mbedtls_x509_crt_init(&crt);
-        fails += Expect("repeated extension", ParseHex(&crt, repeated[i]),
-            MBEDTLS_ERR_X509_INVALID_EXTENSIONS);
+        fails += Expect(bad[i].what, ParseExts(&crt, bad[i].exts),
+            bad[i].ret);
         mbedtls_x509_crt_free(&crt);
     }
     return fails;
@@ -707,8 +752,9 @@ static int Names(void)
     else {
         o = crt.subject.next;
         cn = o->next;
-        fails += Expect("C, merged", crt.subject.next_merged, 1);
-        fails += Expect("O, not merged", o->next_merged, 0);
+        fails += Expect("C, merged", crt.subject.MBEDTLS_PRIVATE(next_merged),
+            1);
+        fails += Expect("O, not merged", o->MBEDTLS_PRIVATE(next_merged), 0);
         fails += Expect("dn_get_next",
             mbedtls_x509_dn_get_next(&crt.subject) == cn, 1);
         fails += Expect("dn_gets, short buffer",
@@ -722,6 +768,15 @@ static int Names(void)
         fails += ExpectStr("hex value, numeric OID", buf,
             "C=NL + O=#0408506F6C617253534C, 2.5.4=#0C06536572766572");
     }
+    mbedtls_x509_crt_free(&crt);
+
+    /* As Mbed TLS, a value is a string or a BIT STRING */
+    mbedtls_x509_crt_init(&crt);
+    fails += Expect("T61String value", ParseHex(&crt, MVRDN("14")), 0);
+    mbedtls_x509_crt_free(&crt);
+    mbedtls_x509_crt_init(&crt);
+    fails += Expect("OCTET STRING value", ParseHex(&crt, MVRDN("04")),
+        ASN_ORIGINAL_RET(MBEDTLS_ERR_X509_INVALID_NAME));
     mbedtls_x509_crt_free(&crt);
 
     /* As Mbed TLS, over 32 bytes shows 28 and "....". Zero skipped. */
@@ -751,7 +806,39 @@ static int Names(void)
     return fails;
 }
 
+/* From Mbed TLS's x509_date_is_valid() */
+static int Dates(void)
+{
+    static const struct {
+        const char* from;
+        const char* hex;
+        int ret;
+    } dates[] = {
+        { "191310144406Z", DATED("3139313331303134343430365A"),
+            MBEDTLS_ERR_X509_INVALID_DATE },
+        { "190229144406Z", DATED("3139303232393134343430365A"),
+            MBEDTLS_ERR_X509_INVALID_DATE },
+        { "200229144406Z", DATED("3230303232393134343430365A"), 0 },
+        { "190210244406Z", DATED("3139303231303234343430365A"),
+            MBEDTLS_ERR_X509_INVALID_DATE }
+    };
+    mbedtls_x509_crt crt;
+    size_t i;
+    int fails = 0;
+
+    for (i = 0; i < sizeof(dates) / sizeof(dates[0]); i++) {
+        mbedtls_x509_crt_init(&crt);
+        fails += Expect(dates[i].from, ParseHex(&crt, dates[i].hex),
+            dates[i].ret);
+        mbedtls_x509_crt_free(&crt);
+    }
+    return fails;
+}
+
 #ifndef NO_ASN_TIME
+/* What is_past and is_future return when the time is past or future */
+#define CLOCK_TRUE 1
+
 /* A clock that fails, as time() can */
 static time_t NoClock(time_t* t)
 {
@@ -760,6 +847,9 @@ static time_t NoClock(time_t* t)
     }
     return (time_t)-1;
 }
+#else
+/* Without a clock, they return 0 */
+#define CLOCK_TRUE 0
 #endif /* !NO_ASN_TIME */
 
 /* From Mbed TLS's mbedtls_x509_time_is_past and _is_future cases */
@@ -775,7 +865,7 @@ static int Times(void)
     mbedtls_x509_crt_init(&crt);
     if (mbedtls_x509_crt_parse_file(&crt, "server5-future.crt") == 0) {
         fails += Expect("future, valid_from",
-            mbedtls_x509_time_is_future(&crt.valid_from), 1);
+            mbedtls_x509_time_is_future(&crt.valid_from), CLOCK_TRUE);
         fails += Expect("past, valid_to",
             mbedtls_x509_time_is_past(&crt.valid_to), 0);
     }
@@ -786,7 +876,7 @@ static int Times(void)
     mbedtls_x509_crt_init(&crt);
     if (mbedtls_x509_crt_parse_file(&crt, "server5.crt") == 0) {
         fails += Expect("past, valid_from",
-            mbedtls_x509_time_is_past(&crt.valid_from), 1);
+            mbedtls_x509_time_is_past(&crt.valid_from), CLOCK_TRUE);
         fails += Expect("future, valid_from",
             mbedtls_x509_time_is_future(&crt.valid_from), 0);
     }
@@ -806,7 +896,7 @@ static int Times(void)
     return fails;
 }
 
-#ifdef MBEDTLS_THREADING_C
+#if defined(MBEDTLS_THREADING_C) && !defined(NO_ASN_TIME)
 #define RACE_LOOPS 100000
 
 /* gmtime() of 1970 over and over, against the clock reads */
@@ -839,7 +929,7 @@ static int TimeThreads(void)
     (void)pthread_join(thread, NULL);
     return Expect("past, with gmtime() in another thread", past, 1);
 }
-#endif /* MBEDTLS_THREADING_C */
+#endif /* MBEDTLS_THREADING_C && !NO_ASN_TIME */
 
 static int allocs;
 static int failAt;
@@ -916,10 +1006,11 @@ int main(void)
     fails += Usage();
     fails += Extensions();
     fails += Names();
+    fails += Dates();
     fails += Times();
-#ifdef MBEDTLS_THREADING_C
+#if defined(MBEDTLS_THREADING_C) && !defined(NO_ASN_TIME)
     fails += TimeThreads();
-#endif /* MBEDTLS_THREADING_C */
+#endif /* MBEDTLS_THREADING_C && !NO_ASN_TIME */
     fails += FailEachAlloc();
     certs = CountCerts(&all);
     if (certs == total) {

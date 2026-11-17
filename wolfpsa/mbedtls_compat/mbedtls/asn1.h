@@ -22,6 +22,7 @@
 #ifndef MBEDTLS_ASN1_H
 #define MBEDTLS_ASN1_H
 
+#include "mbedtls/private_access.h"
 #include "tf-psa-crypto/build_info.h"
 
 #include <stddef.h>
@@ -73,7 +74,7 @@ typedef struct mbedtls_asn1_named_data {
     mbedtls_asn1_buf oid;
     mbedtls_asn1_buf val;
     struct mbedtls_asn1_named_data* next;
-    unsigned char next_merged;
+    unsigned char MBEDTLS_PRIVATE(next_merged);
 } mbedtls_asn1_named_data;
 
 #endif /* MBEDTLS_ASN1_H */

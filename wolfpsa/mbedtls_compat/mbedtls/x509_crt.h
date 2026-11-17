@@ -22,6 +22,7 @@
 #ifndef MBEDTLS_X509_CRT_H
 #define MBEDTLS_X509_CRT_H
 
+#include "mbedtls/private_access.h"
 #include "mbedtls/x509.h"
 
 #include <stddef.h>
@@ -61,12 +62,12 @@ typedef struct mbedtls_x509_crt {
     mbedtls_x509_authority authority_key_id;
     mbedtls_x509_sequence certificate_policies;
 
-    int ext_types;
-    int ca_istrue;
-    int max_pathlen;
-    unsigned int key_usage;
+    int MBEDTLS_PRIVATE(ext_types);
+    int MBEDTLS_PRIVATE(ca_istrue);
+    int MBEDTLS_PRIVATE(max_pathlen);
+    unsigned int MBEDTLS_PRIVATE(key_usage);
     mbedtls_x509_sequence ext_key_usage;
-    unsigned char ns_cert_type;
+    unsigned char MBEDTLS_PRIVATE(ns_cert_type);
 
     struct mbedtls_x509_crt* next;
 } mbedtls_x509_crt;
@@ -101,7 +102,7 @@ int mbedtls_x509_crt_check_extended_key_usage(const mbedtls_x509_crt* crt,
 static inline int mbedtls_x509_crt_has_ext_type(const mbedtls_x509_crt* ctx,
     int ext_type)
 {
-    return (ctx->ext_types & ext_type) != 0;
+    return (ctx->MBEDTLS_PRIVATE(ext_types) & ext_type) != 0;
 }
 
 #ifdef __cplusplus

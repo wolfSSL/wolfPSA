@@ -212,9 +212,8 @@ Known differences from Mbed TLS:
   and ignored.
 - `mbedtls_pem_read_buffer` returns `MBEDTLS_ERR_PEM_FEATURE_UNAVAILABLE`
   for encrypted PEM. No `mbedtls_pem_write_buffer`.
-- `mbedtls_x509_crt` has the parsed fields, but not `pk`. The fields Mbed
-  TLS makes private, such as `ca_istrue`, have their plain names. A
-  certificate that wolfCrypt rejects returns
+- `mbedtls_x509_crt` has the parsed fields, but not `pk`. A certificate
+  that wolfCrypt rejects returns
   `MBEDTLS_ERR_X509_INVALID_FORMAT`, where Mbed TLS often returns a more
   specific error.
 - With `NO_ASN_TIME`, `mbedtls_x509_time_is_past` and

@@ -21,6 +21,9 @@
 
 /* Mbed TLS 4.x X.509 API on wolfCrypt (MBEDTLS_COMPAT=1). */
 
+/* Plain names for the fields Mbed TLS makes private */
+#define MBEDTLS_ALLOW_PRIVATE_ACCESS
+
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif /* HAVE_CONFIG_H */
@@ -117,6 +120,19 @@ static void* MbedEntryNew(size_t size)
     return entry;
 }
 
+/* Whether c is one of the n bytes at set */
+static int MbedByteIn(byte c, const byte* set, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        if (set[i] == c) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* Frees the entries after the first, which is part of the certificate */
 static void MbedNameFree(mbedtls_x509_name* name)
 {
@@ -153,6 +169,13 @@ static void MbedCertFreeFields(mbedtls_x509_crt* crt)
     MbedSeqFree(&crt->certificate_policies);
     MbedSeqFree(&crt->ext_key_usage);
 }
+
+/* The value types Mbed TLS accepts in a name */
+static const byte mbedNameTags[] = {
+    MBEDTLS_ASN1_BMP_STRING, MBEDTLS_ASN1_UTF8_STRING, MBEDTLS_ASN1_T61_STRING,
+    MBEDTLS_ASN1_PRINTABLE_STRING, MBEDTLS_ASN1_IA5_STRING,
+    MBEDTLS_ASN1_UNIVERSAL_STRING, MBEDTLS_ASN1_BIT_STRING
+};
 
 /* Name at *idx, one entry per attribute in name */
 static int MbedNameParse(unsigned char* der, word32* idx, word32 end,
@@ -201,13 +224,21 @@ static int MbedNameParse(unsigned char* der, word32* idx, word32 end,
             ret = MbedDerItem(der, &i, attrEnd, &cur->val);
             i = attrEnd;
         }
+        if (ret == 0 && !MbedByteIn((byte)cur->val.tag, mbedNameTags,
+                sizeof(mbedNameTags))) {
+            ret = MBEDTLS_ERR_X509_INVALID_NAME;
+        }
     }
     return ret;
 }
 
-/* Items of the SEQUENCE OF at idx, or with inner, the first inside each */
+/* MbedSeqParse() flags */
+#define MBED_SEQ_INNER     0x01 /* The first item inside each */
+#define MBED_SEQ_NOT_EMPTY 0x02
+
+/* Items of the SEQUENCE OF at idx, with the MBED_SEQ_* flags */
 static int MbedSeqParse(unsigned char* der, word32 idx, word32 end,
-    mbedtls_x509_sequence* seq, int inner)
+    mbedtls_x509_sequence* seq, int flags)
 {
     mbedtls_x509_sequence* cur = NULL;
     mbedtls_x509_buf item;
@@ -219,7 +250,7 @@ static int MbedSeqParse(unsigned char* der, word32 idx, word32 end,
     while (ret == 0 && idx < end) {
         ret = MbedDerItem(der, &idx, end, &item);
         next = idx + (word32)item.len;
-        if (ret == 0 && inner) {
+        if (ret == 0 && (flags & MBED_SEQ_INNER) != 0) {
             ret = MbedDerItem(der, &idx, next, &item);
         }
         if (ret == 0 && cur == NULL) {
@@ -237,15 +268,20 @@ static int MbedSeqParse(unsigned char* der, word32 idx, word32 end,
             idx = next;
         }
     }
+    if (ret == 0 && cur == NULL && (flags & MBED_SEQ_NOT_EMPTY) != 0) {
+        ret = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
+    }
     return ret;
 }
 
-/* AuthorityKeyIdentifier at idx: the key ID, issuer and serial */
+/* AuthorityKeyIdentifier at idx: the key ID, issuer and serial, each at most
+ * once and in that order */
 static int MbedAuthKeyIdParse(unsigned char* der, word32 idx, word32 end,
     mbedtls_x509_authority* akid)
 {
     mbedtls_x509_buf item;
     word32 start;
+    int last = -1;
     int ret;
 
     ret = MbedDerItem(der, &idx, end, &item);
@@ -253,7 +289,10 @@ static int MbedAuthKeyIdParse(unsigned char* der, word32 idx, word32 end,
     while (ret == 0 && idx < end) {
         start = idx;
         ret = MbedDerItem(der, &idx, end, &item);
-        if (ret == 0 && item.tag == ASN_CONTEXT_SPECIFIC) {
+        if (ret == 0 && (item.tag & MBEDTLS_ASN1_TAG_VALUE_MASK) <= last) {
+            ret = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
+        }
+        else if (ret == 0 && item.tag == ASN_CONTEXT_SPECIFIC) {
             akid->keyIdentifier = item;
             akid->keyIdentifier.tag = MBEDTLS_ASN1_OCTET_STRING;
         }
@@ -267,6 +306,7 @@ static int MbedAuthKeyIdParse(unsigned char* der, word32 idx, word32 end,
             akid->authorityCertSerialNumber = item;
             akid->authorityCertSerialNumber.tag = MBEDTLS_ASN1_INTEGER;
         }
+        last = item.tag & MBEDTLS_ASN1_TAG_VALUE_MASK;
         idx += (word32)item.len;
     }
     return ret;
@@ -338,11 +378,12 @@ static int MbedExtParse(mbedtls_x509_crt* crt, unsigned char* der,
             ret = MbedSeqParse(der, idx, extEnd, &crt->subject_alt_names, 0);
         }
         else if (type == MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE) {
-            ret = MbedSeqParse(der, idx, extEnd, &crt->ext_key_usage, 0);
+            ret = MbedSeqParse(der, idx, extEnd, &crt->ext_key_usage,
+                MBED_SEQ_NOT_EMPTY);
         }
         else if (type == MBEDTLS_X509_EXT_CERTIFICATE_POLICIES) {
             ret = MbedSeqParse(der, idx, extEnd, &crt->certificate_policies,
-                1);
+                MBED_SEQ_INNER | MBED_SEQ_NOT_EMPTY);
         }
         else if (type == MBEDTLS_X509_EXT_SUBJECT_KEY_IDENTIFIER) {
             ret = MbedDerItem(der, &idx, extEnd, &crt->subject_key_id);
@@ -371,6 +412,20 @@ static int MbedDigits(const unsigned char** p, size_t n)
     return value;
 }
 
+/* Whether a time with no negative fields is in range, as Mbed TLS checks */
+static int MbedTimeInRange(const mbedtls_x509_time* t)
+{
+    static const byte days[] = {
+        31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+    };
+    int leap = (t->year % 4 == 0 && t->year % 100 != 0) ||
+        t->year % 400 == 0;
+
+    return t->mon >= 1 && t->mon <= 12 && t->day >= 1 &&
+        t->day <= days[t->mon - 1] - (t->mon == 2 && !leap) &&
+        t->hour <= 23 && t->min <= 59 && t->sec <= 59;
+}
+
 /* UTCTime or GeneralizedTime in seconds, as Mbed TLS reads them */
 static int MbedTimeParse(const mbedtls_x509_buf* in, mbedtls_x509_time* t)
 {
@@ -396,7 +451,7 @@ static int MbedTimeParse(const mbedtls_x509_buf* in, mbedtls_x509_time* t)
     if (yearLen == 2) {
         t->year += (t->year < 50) ? 2000 : 1900;
     }
-    return 0;
+    return MbedTimeInRange(t) ? 0 : MBEDTLS_ERR_X509_INVALID_DATE;
 }
 
 /* Validity at *idx */
@@ -873,14 +928,8 @@ static int MbedOidPrint(char** p, size_t* n, const mbedtls_x509_buf* oid)
 static int MbedDnSpecial(byte c)
 {
     static const char special[] = ",=+<>;\"\\";
-    size_t i;
 
-    for (i = 0; i < sizeof(special) - 1; i++) {
-        if ((byte)special[i] == c) {
-            return 1;
-        }
-    }
-    return 0;
+    return MbedByteIn(c, (const byte*)special, sizeof(special) - 1);
 }
 
 /* Room for extra characters after j and a NUL, as Mbed TLS checks */

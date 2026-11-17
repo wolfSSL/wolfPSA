@@ -139,7 +139,7 @@ int mbedtls_x509_time_is_future(const mbedtls_x509_time* from);
 static inline mbedtls_x509_name* mbedtls_x509_dn_get_next(
     mbedtls_x509_name* dn)
 {
-    while (dn->next_merged && dn->next != NULL) {
+    while (dn->MBEDTLS_PRIVATE(next_merged) && dn->next != NULL) {
         dn = dn->next;
     }
     return dn->next;
