@@ -144,9 +144,9 @@ Mapped so far:
   get_ca_istrue, check_key_usage, check_extended_key_usage, has_ext_type;
   the default, next and suiteb profiles, as names only
 - x509: dn_gets, dn_get_next, serial_gets, time_is_past, time_is_future
-- ssl_config: init, free, defaults; ssl_conf: authmode, verify, ca_chain,
-  own_cert, min_tls_version, max_tls_version, ciphersuites, cert_profile,
-  dbg, endpoint, transport, get_endpoint, set_user_data_p, set_user_data_n,
+- ssl_config: init, free, defaults; ssl_conf: authmode, ca_chain, own_cert,
+  min_tls_version, max_tls_version, ciphersuites, cert_profile, dbg, verify,
+  endpoint, transport, get_endpoint, set_user_data_p, set_user_data_n,
   get_user_data_p, get_user_data_n
 - ssl: init, free, setup, context_get_config, session_reset, set_bio,
   set_timer_cb, set_verify, set_hostname, set_session, get_session, handshake,
@@ -280,8 +280,9 @@ runs these against `libwolfpsa.a`. Each is also a target of its own;
   (`test/mbedtls_compat/client-tls-mbedtls.c`) and Mbed TLS's sample
   programs, built unchanged. The clients run against the wolfSSL example
   server and the servers against the wolfSSL example client and
-  `ssl_client1`. `load_roots` needs neither. With `MBEDTLS_THREADING_C=1`,
-  `ssl_pthread_server` serves clients at the same time.
+  `ssl_client1`. `load_roots`
+  needs neither. With `MBEDTLS_THREADING_C=1`, `ssl_pthread_server` serves
+  clients at the same time.
 - `mbedtls-compat-suite`: Mbed TLS's TLS unit tests, the cases that test
   the public API (below).
 
