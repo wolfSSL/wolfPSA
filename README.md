@@ -98,6 +98,12 @@ includes `<psa/crypto.h>` needs that directory on its include path next to
 - `user_settings.h` : configuration header.
 - `Makefile` : build for `libwolfpsa.a`.
 
+`WOLFPSA_AEAD_BORROW` lets one-shot GCM and CCM read the caller's AAD and
+message in place instead of copying them, which saves a message-sized buffer.
+Define it only when nothing else can change those buffers during the call,
+for example a Secure service whose inputs sit in its own memory. Outputs that
+partly overlap the input or overlap the AAD still take the copying path.
+
 ## Testing (PSA Architecture Test Suite)
 
 See `test-psa-api/README.md` for instructions on how to run the tests.

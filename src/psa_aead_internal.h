@@ -90,6 +90,7 @@ typedef struct wolfpsa_aead_ctx {
     size_t ccm_tag_len;
     int ccm_ks_valid;
 #endif
+    int borrowed; /* aad and input point at a one-shot caller's buffers */
 } wolfpsa_aead_ctx_t;
 
 static inline wolfpsa_aead_ctx_t*

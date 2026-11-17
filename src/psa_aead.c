@@ -1941,6 +1941,61 @@ static psa_status_t wolfpsa_ascon_oneshot_decrypt(
 }
 #endif /* HAVE_ASCON */
 
+/* WOLFPSA_AEAD_BORROW: one-shot GCM and CCM read the caller's buffers in place
+ * instead of copying them. Only for callers whose inputs nobody else can change
+ * during the call; the output must not overlap the AAD or partly the input. */
+static int wolfpsa_aead_can_borrow(psa_algorithm_t alg,
+                                   const uint8_t *aad, size_t aad_length,
+                                   const uint8_t *input, size_t input_length,
+                                   const uint8_t *output, size_t output_size)
+{
+#ifdef WOLFPSA_AEAD_BORROW
+    uintptr_t o = (uintptr_t)output;
+    uintptr_t a = (uintptr_t)aad;
+    uintptr_t i = (uintptr_t)input;
+
+    if (!PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_GCM) &&
+        !PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM)) {
+        return 0;
+    }
+    if (output_size != 0 && aad_length != 0 &&
+        o < a + aad_length && a < o + output_size) {
+        return 0;
+    }
+    if (output_size != 0 && input_length != 0 && o != i &&
+        o < i + input_length && i < o + output_size) {
+        return 0;
+    }
+    return 1;
+#else
+    (void)alg; (void)aad; (void)aad_length; (void)input; (void)input_length;
+    (void)output; (void)output_size;
+    return 0;
+#endif
+}
+
+static psa_status_t wolfpsa_aead_borrow(psa_aead_operation_t *operation,
+                                        const uint8_t *aad, size_t aad_length,
+                                        const uint8_t *input,
+                                        size_t input_length)
+{
+    wolfpsa_aead_ctx_t *ctx = wolfpsa_aead_get_ctx(operation);
+
+    if (ctx == NULL || ctx->aad != NULL || ctx->input != NULL) {
+        return PSA_ERROR_BAD_STATE;
+    }
+    if ((aad == NULL && aad_length != 0) ||
+        (input == NULL && input_length != 0)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    ctx->borrowed = 1;
+    ctx->aad = (uint8_t *)(uintptr_t)aad;
+    ctx->aad_length = aad_length;
+    ctx->input = (uint8_t *)(uintptr_t)input;
+    ctx->input_length = input_length;
+    return PSA_SUCCESS;
+}
+
 psa_status_t psa_aead_encrypt(psa_key_id_t key,
                               psa_algorithm_t alg,
                               const uint8_t *nonce,
@@ -1996,14 +2051,21 @@ psa_status_t psa_aead_encrypt(psa_key_id_t key,
         return status;
     }
 
-    status = psa_aead_update_ad(&operation, additional_data, additional_data_length);
-    if (status != PSA_SUCCESS) {
-        psa_aead_abort(&operation);
-        return status;
+    if (wolfpsa_aead_can_borrow(alg, additional_data, additional_data_length,
+                                plaintext, plaintext_length, ciphertext,
+                                ciphertext_size)) {
+        status = wolfpsa_aead_borrow(&operation, additional_data,
+                                     additional_data_length, plaintext,
+                                     plaintext_length);
     }
-
-    status = psa_aead_update(&operation, plaintext, plaintext_length,
-                             NULL, 0, &out_len);
+    else {
+        status = psa_aead_update_ad(&operation, additional_data,
+                                    additional_data_length);
+        if (status == PSA_SUCCESS) {
+            status = psa_aead_update(&operation, plaintext, plaintext_length,
+                                     NULL, 0, &out_len);
+        }
+    }
     if (status != PSA_SUCCESS) {
         psa_aead_abort(&operation);
         return status;
@@ -2094,14 +2156,21 @@ psa_status_t psa_aead_decrypt(psa_key_id_t key,
         return status;
     }
 
-    status = psa_aead_update_ad(&operation, additional_data, additional_data_length);
-    if (status != PSA_SUCCESS) {
-        psa_aead_abort(&operation);
-        return status;
+    if (wolfpsa_aead_can_borrow(alg, additional_data, additional_data_length,
+                                ciphertext, ct_len, plaintext,
+                                plaintext_size)) {
+        status = wolfpsa_aead_borrow(&operation, additional_data,
+                                     additional_data_length, ciphertext,
+                                     ct_len);
     }
-
-    status = psa_aead_update(&operation, ciphertext, ct_len,
-                             NULL, 0, plaintext_length);
+    else {
+        status = psa_aead_update_ad(&operation, additional_data,
+                                    additional_data_length);
+        if (status == PSA_SUCCESS) {
+            status = psa_aead_update(&operation, ciphertext, ct_len,
+                                     NULL, 0, plaintext_length);
+        }
+    }
     if (status != PSA_SUCCESS) {
         psa_aead_abort(&operation);
         return status;
@@ -2143,11 +2212,11 @@ psa_status_t psa_aead_abort(psa_aead_operation_t *operation)
             wc_AesFree(live_aes);
         }
 #endif
-        if (ctx->aad != NULL) {
+        if (ctx->aad != NULL && !ctx->borrowed) {
             wc_ForceZero(ctx->aad, ctx->aad_length);
             XFREE(ctx->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
-        if (ctx->input != NULL) {
+        if (ctx->input != NULL && !ctx->borrowed) {
             wc_ForceZero(ctx->input, ctx->input_length);
             XFREE(ctx->input, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
