@@ -192,10 +192,10 @@ Known differences from Mbed TLS:
   SANs only. Mbed TLS also matches a DNS SAN with the same text, or the CN
   of a certificate without SANs. It is not sent as the server name, which
   RFC 6066 does not allow and Mbed TLS does.
-- A host name without a dot, such as `router`, fails with
-  `MBEDTLS_ERR_SSL_BAD_INPUT_DATA` from `mbedtls_ssl_set_hostname`, or from
-  `mbedtls_ssl_setup` when set before it. wolfSSL takes only a fully
-  qualified name, an IP address or `localhost`.
+- A host name that wolfSSL does not take as a DNS name, such as `my_host`
+  or `12345`, fails with `MBEDTLS_ERR_SSL_BAD_INPUT_DATA` from
+  `mbedtls_ssl_set_hostname`, or from `mbedtls_ssl_setup` when set before
+  it. Mbed TLS takes any name of up to 255 characters.
 - `mbedtls_ssl_set_hostname` during a handshake applies from the next
   `mbedtls_ssl_session_reset`. Mbed TLS uses the new name for the rest of
   that handshake.

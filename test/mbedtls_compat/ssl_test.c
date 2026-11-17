@@ -82,6 +82,22 @@ typedef struct {
     int recvErr;
 } Peer;
 
+/* Self-signed with server5.key, DNS name SAN "router". Mbed TLS's test
+ * files have no single-label name but localhost. */
+static const char singleLabelPem[] =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIBrTCCAVOgAwIBAgIBTTAKBggqhkjOPQQDAjBEMQswCQYDVQQGEwJVSzERMA8G\n"
+    "A1UECgwITWJlZCBUTFMxIjAgBgNVBAMMGU1iZWQgVExTIHNpbmdsZS1sYWJlbCBT\n"
+    "QU4wIBcNMjYxMTE3MDQwMjUzWhgPMjA5OTEyMzEyMzU5NTlaMEQxCzAJBgNVBAYT\n"
+    "AlVLMREwDwYDVQQKDAhNYmVkIFRMUzEiMCAGA1UEAwwZTWJlZCBUTFMgc2luZ2xl\n"
+    "LWxhYmVsIFNBTjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABDfMVtl2CR5acj7H\n"
+    "WS3/IG7ufPkGkXTQrRS192giWWKSTuUA2CMR/+ov0jRdXRa9iojCa3cNVc2KKg76\n"
+    "Aci07f+jNDAyMBEGA1UdEQQKMAiCBnJvdXRlcjAdBgNVHQ4EFgQUUGGlj9QH2deC\n"
+    "AQzlZX+MY0anE74wCgYIKoZIzj0EAwIDSAAwRQIgfqZ8Mk8nJsaGvpvpihQMXI4g\n"
+    "8G158OEfQRP92uB/acsCIQCDVVG5k/7DgPDluMkkdXkNcLUdY5XUzlgla82MTqHj\n"
+    "pQ==\n"
+    "-----END CERTIFICATE-----\n";
+
 /* The CAs a peer trusts, and the certificates and key a server sends */
 typedef struct {
     mbedtls_x509_crt* ca;
@@ -97,8 +113,10 @@ static mbedtls_x509_crt chain;
 static mbedtls_pk_context leafKey;
 static mbedtls_x509_crt ekuSrv;
 static mbedtls_x509_crt ipSan;
+static mbedtls_x509_crt singleLabel;
 static const Certs defaultCerts = { &ca, &cert, &key };
 static const Certs ipSanCerts = { &ipSan, &ipSan, &key };
+static const Certs singleLabelCerts = { &singleLabel, &singleLabel, &key };
 /* The client trusts the root of the chain the server sends */
 static const Certs chainCerts = { &root, &chain, &leafKey };
 /* The client does not trust it */
@@ -310,7 +328,7 @@ static int HostRefused(void)
             0, NULL) == 0 &&
         PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
             NULL) == 0 &&
-        mbedtls_ssl_set_hostname(&cli.ssl, "router") ==
+        mbedtls_ssl_set_hostname(&cli.ssl, "my_host") ==
             MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
         Handshake(&s) ==
             MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME;
@@ -437,6 +455,28 @@ static int IpSanWrong(void)
         ok = ClientVerify(&ipSanCerts, hosts[i],
             MBEDTLS_ERR_X509_CERT_VERIFY_FAILED,
             MBEDTLS_X509_BADCERT_CN_MISMATCH);
+    }
+    return ok;
+}
+
+static int SingleLabel(void)
+{
+    static const struct {
+        const char* host;
+        int want;
+        uint32_t flags;
+    } hosts[] = {
+        { "router", 0, 0 },
+        { "ROUTER", 0, 0 },
+        { "switch", MBEDTLS_ERR_X509_CERT_VERIFY_FAILED,
+            MBEDTLS_X509_BADCERT_CN_MISMATCH }
+    };
+    size_t i;
+    int ok = 1;
+
+    for (i = 0; ok && i < sizeof(hosts) / sizeof(hosts[0]); i++) {
+        ok = ClientVerify(&singleLabelCerts, hosts[i].host, hosts[i].want,
+            hosts[i].flags);
     }
     return ok;
 }
@@ -1199,6 +1239,7 @@ static const struct {
     { "untrusted chain", VerifyUntrusted },
     { "IP address SANs", IpSan },
     { "wrong IP address or DNS name", IpSanWrong },
+    { "host name without a dot", SingleLabel },
     { "client certificate for servers only", ClientCertUsage },
     { "VERIFY_NONE", VerifyNone },
     { "CA list set before config_defaults", CaChainBeforeDefaults },
@@ -1247,6 +1288,7 @@ int main(void)
     mbedtls_pk_init(&leafKey);
     mbedtls_x509_crt_init(&ekuSrv);
     mbedtls_x509_crt_init(&ipSan);
+    mbedtls_x509_crt_init(&singleLabel);
     if (psa_crypto_init() != PSA_SUCCESS ||
             mbedtls_x509_crt_parse_file(&ca, CA_FILE) != 0 ||
             mbedtls_x509_crt_parse_file(&cert, CERT_FILE) != 0 ||
@@ -1255,7 +1297,10 @@ int main(void)
             mbedtls_x509_crt_parse_file(&chain, CHAIN_FILE) != 0 ||
             mbedtls_pk_parse_keyfile(&leafKey, LEAF_KEY_FILE, NULL) != 0 ||
             mbedtls_x509_crt_parse_file(&ekuSrv, EKU_SRV_FILE) != 0 ||
-            mbedtls_x509_crt_parse_file(&ipSan, IP_SAN_FILE) != 0) {
+            mbedtls_x509_crt_parse_file(&ipSan, IP_SAN_FILE) != 0 ||
+            mbedtls_x509_crt_parse(&singleLabel,
+                (const unsigned char*)singleLabelPem,
+                sizeof(singleLabelPem)) != 0) {
         printf("FAIL: loading the certificates and keys\n");
         return 1;
     }
@@ -1268,6 +1313,7 @@ int main(void)
             fails++;
         }
     }
+    mbedtls_x509_crt_free(&singleLabel);
     mbedtls_x509_crt_free(&ipSan);
     mbedtls_x509_crt_free(&ekuSrv);
     mbedtls_pk_free(&leafKey);
