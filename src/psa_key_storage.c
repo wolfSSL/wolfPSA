@@ -1157,6 +1157,38 @@ void wolfpsa_forcezero_free_key_data(uint8_t* key_data, size_t key_data_length)
 }
 
 /* Import a key into the PSA key storage */
+/* Key families this wolfCrypt build compiles out are refused on import. */
+static int wolfpsa_import_family_off(psa_key_type_t type)
+{
+    int off = 0;
+
+    (void)type;
+#ifndef HAVE_CHACHA
+    off |= (type == PSA_KEY_TYPE_CHACHA20 || type == PSA_KEY_TYPE_XCHACHA20);
+#endif
+#ifdef NO_DES3
+    off |= (type == PSA_KEY_TYPE_DES);
+#endif
+#ifdef NO_RSA
+    off |= PSA_KEY_TYPE_IS_RSA(type) ? 1 : 0;
+#endif
+#ifndef WOLFSSL_HAVE_MLDSA
+    off |= PSA_KEY_TYPE_IS_ML_DSA(type) ? 1 : 0;
+#endif
+#ifndef WOLFSSL_HAVE_MLKEM
+    off |= PSA_KEY_TYPE_IS_ML_KEM(type) ? 1 : 0;
+#endif
+#ifndef WOLFSSL_HAVE_LMS
+    off |= (type == PSA_KEY_TYPE_LMS_PUBLIC_KEY ||
+            type == PSA_KEY_TYPE_HSS_PUBLIC_KEY);
+#endif
+#ifndef WOLFSSL_HAVE_XMSS
+    off |= (type == PSA_KEY_TYPE_XMSS_PUBLIC_KEY ||
+            type == PSA_KEY_TYPE_XMSS_MT_PUBLIC_KEY);
+#endif
+    return off;
+}
+
 psa_status_t psa_import_key(
     const psa_key_attributes_t* attributes,
     const uint8_t* data,
@@ -1230,7 +1262,8 @@ psa_status_t psa_import_key(
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    if (attr.type == PSA_KEY_TYPE_NONE) {
+    if (attr.type == PSA_KEY_TYPE_NONE ||
+        wolfpsa_import_family_off(attr.type)) {
         wolfpsa_debug_import_reason("unsupported key type", &attr, data_length);
         return PSA_ERROR_NOT_SUPPORTED;
     }
@@ -1258,6 +1291,7 @@ psa_status_t psa_import_key(
             return status;
         }
     }
+#ifdef HAVE_CHACHA
     if (attr.type == PSA_KEY_TYPE_CHACHA20 ||
         attr.type == PSA_KEY_TYPE_XCHACHA20) {
         if (attr.bits != 256) {
@@ -1272,6 +1306,7 @@ psa_status_t psa_import_key(
             return PSA_ERROR_INVALID_ARGUMENT;
         }
     }
+#endif
 
     if (attr.type == PSA_KEY_TYPE_AES) {
         if (attr.bits != 128 && attr.bits != 192 &&
@@ -1291,6 +1326,7 @@ psa_status_t psa_import_key(
             return PSA_ERROR_INVALID_ARGUMENT;
         }
     }
+#ifndef NO_DES3
     else if (attr.type == PSA_KEY_TYPE_DES) {
         if (data_length == 16) {
             wolfpsa_debug_import_reason("2-key 3DES is not supported", &attr,
@@ -1308,6 +1344,7 @@ psa_status_t psa_import_key(
             return PSA_ERROR_INVALID_ARGUMENT;
         }
     }
+#endif
     else if (attr.type == PSA_KEY_TYPE_HMAC ||
                attr.type == PSA_KEY_TYPE_RAW_DATA ||
                attr.type == PSA_KEY_TYPE_DERIVE ||
@@ -1324,6 +1361,7 @@ psa_status_t psa_import_key(
             return PSA_ERROR_INVALID_ARGUMENT;
         }
     }
+#ifdef WOLFSSL_HAVE_MLDSA
     else if (PSA_KEY_TYPE_IS_ML_DSA(attr.type)) {
         if (attr.type == PSA_KEY_TYPE_ML_DSA_KEY_PAIR) {
             if (attr.bits != 128 && attr.bits != 192 && attr.bits != 256) {
@@ -1357,6 +1395,8 @@ psa_status_t psa_import_key(
             }
         }
     }
+#endif
+#ifdef WOLFSSL_HAVE_MLKEM
     else if (PSA_KEY_TYPE_IS_ML_KEM(attr.type)) {
         if (attr.type == PSA_KEY_TYPE_ML_KEM_KEY_PAIR) {
             if (attr.bits != 512 && attr.bits != 768 && attr.bits != 1024) {
@@ -1390,6 +1430,8 @@ psa_status_t psa_import_key(
             }
         }
     }
+#endif
+#ifdef WOLFSSL_HAVE_LMS
     else if (attr.type == PSA_KEY_TYPE_LMS_PUBLIC_KEY) {
         size_t expected;
         switch (attr.bits) {
@@ -1422,6 +1464,8 @@ psa_status_t psa_import_key(
             return PSA_ERROR_INVALID_ARGUMENT;
         }
     }
+#endif
+#ifdef WOLFSSL_HAVE_XMSS
     else if (attr.type == PSA_KEY_TYPE_XMSS_PUBLIC_KEY ||
                attr.type == PSA_KEY_TYPE_XMSS_MT_PUBLIC_KEY) {
         size_t expected;
@@ -1440,6 +1484,7 @@ psa_status_t psa_import_key(
             return PSA_ERROR_INVALID_ARGUMENT;
         }
     }
+#endif
     else if (PSA_KEY_TYPE_IS_ECC_PUBLIC_KEY(attr.type) ||
                PSA_KEY_TYPE_IS_ECC_KEY_PAIR(attr.type)) {
         /* The declared bit count must match the curve implied by the key
