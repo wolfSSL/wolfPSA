@@ -91,6 +91,11 @@ typedef struct wolfpsa_kdf_ctx {
     int error_state;
     uint8_t *output_cache;
     size_t output_cache_length;
+    /* HKDF expand state: output is read in order, so keep only T(i). */
+    uint8_t hkdf_prk[WC_MAX_DIGEST_SIZE];
+    uint8_t hkdf_t[WC_MAX_DIGEST_SIZE];
+    size_t hkdf_avail;
+    uint8_t hkdf_counter;
 } wolfpsa_kdf_ctx_t;
 
 /* PSA_KEY_DERIVATION_INPUT_CONTEXT (0x0206) is defined in PSA 1.4 but not
@@ -133,7 +138,9 @@ static const struct {
  * keystream up front would allocate about 512 MB and compute millions of MAC
  * blocks just to return a few bytes, so above this bound the derivation is
  * computed lazily per call instead. */
+#ifndef WOLFPSA_KDF_MAX_CACHE_BYTES
 #define WOLFPSA_KDF_MAX_CACHE_BYTES    (64u * 1024u)
+#endif
 
 static wolfpsa_kdf_ctx_t* wolfpsa_kdf_get_ctx(psa_key_derivation_operation_t *
                                               operation)
@@ -641,6 +648,7 @@ psa_status_t psa_key_derivation_abort(psa_key_derivation_operation_t *operation)
             ctx->output_cache = NULL;
             ctx->output_cache_length = 0;
         }
+        wc_ForceZero(ctx, sizeof(*ctx));
         XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         operation->opaque = (uintptr_t)NULL;
     }
@@ -1184,6 +1192,107 @@ static psa_status_t wolfpsa_kdf_hkdf(wolfpsa_kdf_ctx_t *ctx,
     return PSA_ERROR_NOT_SUPPORTED;
 #endif
 }
+
+/* Async HMAC and the HKDF crypto callback need wc_HKDF_Expand_ex, so those
+ * builds keep the cached path. */
+#if defined(HAVE_HKDF) && !defined(NO_HMAC) && !defined(WOLF_CRYPTO_CB) && \
+    !(defined(WOLFSSL_ASYNC_CRYPT) && defined(WC_ASYNC_ENABLE_HMAC))
+#define WOLFPSA_HKDF_STREAM
+/* Next output_length bytes of HKDF-Expand: T(i) = HMAC(PRK, T(i-1)|info|i).
+ * The first call derives the PRK (extract for HKDF, the secret for expand). */
+static psa_status_t wolfpsa_kdf_hkdf_stream(wolfpsa_kdf_ctx_t *ctx,
+                                            uint8_t *output,
+                                            size_t output_length)
+{
+    int hash_type = wolfpsa_hash_type_from_alg(ctx->alg);
+    int hash_len = wc_HashGetDigestSize(hash_type);
+    const uint8_t *prk;
+    word32 prk_len;
+    Hmac hmac;
+    uint8_t *out0 = output;
+    size_t len0 = output_length;
+    size_t n;
+    int ret = 0;
+    psa_status_t status = PSA_SUCCESS;
+
+    if (hash_type == WC_HASH_TYPE_NONE || hash_len <= 0 ||
+        (size_t)hash_len > sizeof(ctx->hkdf_t)) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if ((wolfpsa_check_word32_length(ctx->salt_length) != PSA_SUCCESS) ||
+        (wolfpsa_check_word32_length(ctx->secret_length) != PSA_SUCCESS) ||
+        (wolfpsa_check_word32_length(ctx->info_length) != PSA_SUCCESS)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (PSA_ALG_IS_HKDF_EXPAND(ctx->alg)) {
+        prk = ctx->secret;
+        prk_len = (word32)ctx->secret_length;
+    }
+    else {
+        prk = ctx->hkdf_prk;
+        prk_len = (word32)hash_len;
+        if (ctx->hkdf_counter == 0) {
+            ret = wc_HKDF_Extract_ex(hash_type,
+                                     ctx->salt, (word32)ctx->salt_length,
+                                     ctx->secret, (word32)ctx->secret_length,
+                                     ctx->hkdf_prk, NULL,
+                                     wolfPSA_GetDefaultDevID());
+        }
+    }
+
+    while (ret == 0 && status == PSA_SUCCESS && output_length > 0) {
+        if (ctx->hkdf_avail == 0 && ctx->hkdf_counter == 255) {
+            status = PSA_ERROR_INSUFFICIENT_DATA;
+        }
+        else if (ctx->hkdf_avail == 0) {
+            ctx->hkdf_counter++;
+            ret = wc_HmacInit(&hmac, NULL, wolfPSA_GetDefaultDevID());
+            if (ret == 0) {
+                ret = wc_HmacSetKey(&hmac, hash_type, prk, prk_len);
+                if (ret == 0 && ctx->hkdf_counter > 1) {
+                    ret = wc_HmacUpdate(&hmac, ctx->hkdf_t, (word32)hash_len);
+                }
+                if (ret == 0) {
+                    ret = wc_HmacUpdate(&hmac, ctx->info,
+                                        (word32)ctx->info_length);
+                }
+                if (ret == 0) {
+                    ret = wc_HmacUpdate(&hmac, &ctx->hkdf_counter, 1);
+                }
+                if (ret == 0) {
+                    ret = wc_HmacFinal(&hmac, ctx->hkdf_t);
+                }
+                wc_HmacFree(&hmac);
+            }
+            wc_ForceZero(&hmac, sizeof(hmac));
+            if (ret == 0) {
+                ctx->hkdf_avail = (size_t)hash_len;
+            }
+        }
+        if (ret == 0 && status == PSA_SUCCESS) {
+            n = (output_length < ctx->hkdf_avail) ? output_length :
+                ctx->hkdf_avail;
+            XMEMCPY(output, ctx->hkdf_t + ((size_t)hash_len - ctx->hkdf_avail),
+                    n);
+            ctx->hkdf_avail -= n;
+            output += n;
+            output_length -= n;
+        }
+    }
+    if (ret != 0) {
+        /* A failed block leaves the stream unusable rather than out of step. */
+        wc_ForceZero(ctx->hkdf_t, sizeof(ctx->hkdf_t));
+        ctx->hkdf_avail = 0;
+        ctx->hkdf_counter = 255;
+        status = wc_error_to_psa_status(ret);
+    }
+    if (status != PSA_SUCCESS) {
+        /* No partial derivation reaches the caller. */
+        wc_ForceZero(out0, len0);
+    }
+    return status;
+}
+#endif
 
 static psa_status_t wolfpsa_kdf_tls12_prf(wolfpsa_kdf_ctx_t *ctx,
                                           uint8_t *output,
@@ -1955,6 +2064,15 @@ static psa_status_t wolfpsa_kdf_output_bytes(psa_key_derivation_operation_t *
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
+#ifdef WOLFPSA_HKDF_STREAM
+    if (PSA_ALG_IS_HKDF(ctx->alg) || PSA_ALG_IS_HKDF_EXPAND(ctx->alg)) {
+        status = wolfpsa_kdf_hkdf_stream(ctx, output, output_length);
+        if (status == PSA_SUCCESS) {
+            ctx->output_offset += output_length;
+        }
+        return status;
+    }
+#endif
     if (ctx->output_cache == NULL
         && !ctx->is_raw_kdf
         && ctx->capacity != PSA_KEY_DERIVATION_UNLIMITED_CAPACITY
