@@ -213,8 +213,12 @@ Known differences from Mbed TLS:
   bytes (69 with a SHA-256 cipher suite) and a context of at most 65535.
   Longer ones return `MBEDTLS_ERR_SSL_BAD_INPUT_DATA`, as do labels that
   start with one of the TLS 1.2 key schedule's, such as `master secret`.
-- In TLS 1.3, a server sends records of at most the max fragment length its
-  client asks for. Mbed TLS uses the extension in TLS 1.2 only.
+- With `MBEDTLS_SSL_KEYING_MATERIAL_EXPORT`, each connection keeps wolfSSL's
+  handshake secrets and randoms, among them the TLS 1.3 master secret, until
+  it is freed or reset. Mbed TLS keeps only what the export needs.
+- In TLS 1.3, a client sends the max fragment length extension, and a
+  server sends records of at most the length its client asks for. Mbed TLS
+  uses the extension in TLS 1.2 only.
 - wolfSSL keeps the intermediate CAs of a chain that verifies, for the
   config's later handshakes. A peer that then leaves them out still
   verifies, where Mbed TLS reports `NOT_TRUSTED`.

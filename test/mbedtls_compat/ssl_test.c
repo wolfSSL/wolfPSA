@@ -660,7 +660,7 @@ static int Connected(void)
           MBEDTLS_SSL_KEYING_MATERIAL_EXPORT */
 
 #ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
-/* Each end's code, and the most data per record each then sends, TLS 1.2 */
+/* Each end's code, and the most data per record each then sends */
 static const struct {
     unsigned char cliCode;
     unsigned char srvCode;
@@ -690,13 +690,13 @@ static int SendMax(Peer* from, Peer* to, int max)
         mbedtls_ssl_get_bytes_avail(&to->ssl) == 0;
 }
 
-static int MaxFragLen(void)
+static int MaxFragLenVersion(mbedtls_ssl_protocol_version version)
 {
     size_t i;
     int ok = 1;
 
     for (i = 0; ok && i < sizeof(maxFrags) / sizeof(maxFrags[0]); i++) {
-        ok = PeersVersion(MBEDTLS_SSL_VERSION_TLS1_2) &&
+        ok = PeersVersion(version) &&
             mbedtls_ssl_conf_max_frag_len(&cli.conf, maxFrags[i].cliCode) ==
                 0 &&
             mbedtls_ssl_conf_max_frag_len(&srv.conf, maxFrags[i].srvCode) ==
@@ -708,6 +708,16 @@ static int MaxFragLen(void)
         PeerFree(&srv);
     }
     return ok;
+}
+
+static int MaxFragLenTls12(void)
+{
+    return MaxFragLenVersion(MBEDTLS_SSL_VERSION_TLS1_2);
+}
+
+static int MaxFragLenTls13(void)
+{
+    return MaxFragLenVersion(MBEDTLS_SSL_VERSION_TLS1_3);
 }
 
 /* The server's first write completes the handshake, then uses its result */
@@ -1412,7 +1422,8 @@ static const struct {
     { "BIO errors", BioErrors },
     { "length over INT_MAX", LargeLength },
 #ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
-    { "max fragment length", MaxFragLen },
+    { "max fragment length, TLS 1.2", MaxFragLenTls12 },
+    { "max fragment length, TLS 1.3", MaxFragLenTls13 },
     { "max fragment length, write before the handshake",
         MaxFragLenWriteFirst },
     { "max fragment length, bad input", MaxFragLenInvalid },

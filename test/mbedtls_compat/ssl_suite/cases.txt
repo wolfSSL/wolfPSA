@@ -15,9 +15,9 @@
 #   session        mbedtls_ssl_session_save and _load; PSK too for a session
 #                  without a certificate
 #   ticket         session tickets, then session save and load
-#   exporter       mbedtls_ssl_export_keying_material
+#   export-len     wolfSSL taking a TLS 1.2 export label and context over 62
+#                  bytes, as the README says
 #   dtls           DTLS
-#   mfl            max fragment length
 #   psk            PSK
 #   opaque         opaque keys
 #   renegotiation  DTLS renegotiation
@@ -102,14 +102,14 @@ target notrun ccm           handshake_ciphersuite_select              Handshake,
 target notrun ccm           handshake_ciphersuite_select              Handshake, select ECDHE-ECDSA-WITH-AES-256-CCM, opaque, bad usage
 target notrun internal      handshake_with_forced_context             Handshake: DTLS 1.2, badmac_seen on client
 target notrun internal      handshake_with_forced_context             Handshake: DTLS 1.2, badmac_seen on server
-target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=512 without fragmentation
-target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=512 with fragmentation
-target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=1024 without fragmentation
-target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=1024 with fragmentation
-target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=2048 without fragmentation
-target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=2048 with fragmentation
-target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=4096 without fragmentation
-target fail   mfl           app_data_tls                              Sending app data via TLS, MFL=4096 with fragmentation
+target pass   -             app_data_tls                              Sending app data via TLS, MFL=512 without fragmentation
+target pass   -             app_data_tls                              Sending app data via TLS, MFL=512 with fragmentation
+target pass   -             app_data_tls                              Sending app data via TLS, MFL=1024 without fragmentation
+target pass   -             app_data_tls                              Sending app data via TLS, MFL=1024 with fragmentation
+target pass   -             app_data_tls                              Sending app data via TLS, MFL=2048 without fragmentation
+target pass   -             app_data_tls                              Sending app data via TLS, MFL=2048 with fragmentation
+target pass   -             app_data_tls                              Sending app data via TLS, MFL=4096 without fragmentation
+target pass   -             app_data_tls                              Sending app data via TLS, MFL=4096 with fragmentation
 target pass   -             app_data_tls                              Sending app data via TLS without MFL and without fragmentation
 target pass   -             app_data_tls                              Sending app data via TLS without MFL and with fragmentation
 target fail   dtls          app_data_dtls                             Sending app data via DTLS, MFL=512 without fragmentation
@@ -249,22 +249,22 @@ api    fail   defaults      conf_version                              Version co
 api    fail   timing        timing_final_delay_accessor               Test accessor into timing_delay_context
 api    fail   cid           cid_sanity                                Sanity test cid functions
 api    notrun internal      elliptic_curve_get_properties             Test Elliptic curves' info parsing
-target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.2 Keying Material Exporter: Consistent results, no context
-target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.2 Keying Material Exporter: Consistent results, with context
-target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.2 Keying Material Exporter: Consistent results, large keys
-target fail   exporter      ssl_tls_exporter_uses_label               TLS 1.2 Keying Material Exporter: Uses label
-target fail   exporter      ssl_tls_exporter_uses_context             TLS 1.2 Keying Material Exporter: Uses context
-target fail   exporter      ssl_tls_exporter_rejects_bad_parameters   TLS 1.2 Keying Material Exporter: Context too long
-target fail   exporter      ssl_tls_exporter_too_early                TLS 1.2 Keying Material Exporter: Handshake not done
-target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.3 Keying Material Exporter: Consistent results, no context
-target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.3 Keying Material Exporter: Consistent results, with context
-target fail   exporter      ssl_tls_exporter_consistent_result        TLS 1.3 Keying Material Exporter: Consistent results, large keys
-target fail   exporter      ssl_tls_exporter_uses_label               TLS 1.3 Keying Material Exporter: Uses label
-target fail   exporter      ssl_tls_exporter_uses_context             TLS 1.3 Keying Material Exporter: Uses context
-target fail   exporter      ssl_tls13_exporter_uses_length            TLS 1.3 Keying Material Exporter: Uses length
-target fail   exporter      ssl_tls_exporter_rejects_bad_parameters   TLS 1.3 Keying Material Exporter: Exported key too long
-target fail   exporter      ssl_tls_exporter_rejects_bad_parameters   TLS 1.3 Keying Material Exporter: Label too long
-target fail   exporter      ssl_tls_exporter_too_early                TLS 1.3 Keying Material Exporter: Handshake not done
+target pass   -             ssl_tls_exporter_consistent_result        TLS 1.2 Keying Material Exporter: Consistent results, no context
+target fail   export-len    ssl_tls_exporter_consistent_result        TLS 1.2 Keying Material Exporter: Consistent results, with context
+target pass   -             ssl_tls_exporter_consistent_result        TLS 1.2 Keying Material Exporter: Consistent results, large keys
+target fail   export-len    ssl_tls_exporter_uses_label               TLS 1.2 Keying Material Exporter: Uses label
+target fail   export-len    ssl_tls_exporter_uses_context             TLS 1.2 Keying Material Exporter: Uses context
+target pass   -             ssl_tls_exporter_rejects_bad_parameters   TLS 1.2 Keying Material Exporter: Context too long
+target pass   -             ssl_tls_exporter_too_early                TLS 1.2 Keying Material Exporter: Handshake not done
+target pass   -             ssl_tls_exporter_consistent_result        TLS 1.3 Keying Material Exporter: Consistent results, no context
+target pass   -             ssl_tls_exporter_consistent_result        TLS 1.3 Keying Material Exporter: Consistent results, with context
+target pass   -             ssl_tls_exporter_consistent_result        TLS 1.3 Keying Material Exporter: Consistent results, large keys
+target pass   -             ssl_tls_exporter_uses_label               TLS 1.3 Keying Material Exporter: Uses label
+target pass   -             ssl_tls_exporter_uses_context             TLS 1.3 Keying Material Exporter: Uses context
+target pass   -             ssl_tls13_exporter_uses_length            TLS 1.3 Keying Material Exporter: Uses length
+target pass   -             ssl_tls_exporter_rejects_bad_parameters   TLS 1.3 Keying Material Exporter: Exported key too long
+target pass   -             ssl_tls_exporter_rejects_bad_parameters   TLS 1.3 Keying Material Exporter: Label too long
+target pass   -             ssl_tls_exporter_too_early                TLS 1.3 Keying Material Exporter: Handshake not done
 target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: reassembled 1 byte larger than the buffer
 target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: would just fit except for overhead
 target notrun internal      send_large_fragmented_hello               Send large fragmented ClientHello: would fit except for overhead (1)
