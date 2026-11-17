@@ -103,3 +103,6 @@ test/build-track
 test/build-track-asan
 .cache/
 compile_commands.json
+test/psa_secure_set_test
+test/build-secure-set
+test/build-secure-set-asan

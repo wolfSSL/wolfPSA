@@ -261,6 +261,27 @@ endef
 
 FORCE:
 
+# A small Secure-image set (NO_ASN, few key families, WOLFPSA_AEAD_BORROW),
+# built like the crypto-callback library from test/secure-set/user_settings.h.
+SECURESET_BUILD_DIR := $(abspath .)/build-secure-set$(if $(SANITIZE_FLAGS),-asan)
+SECURESET_LIB := $(SECURESET_BUILD_DIR)/libwolfpsa-secure-set.a
+SECURESET_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -I$(abspath secure-set) \
+	-I$(abspath $(WOLFSSL_PATH)) -I$(WOLFPSA_ABS) -I$(WOLFPSA_ABS)/wolfpsa \
+	-I$(WOLFPSA_ABS)/src -I$(SECURESET_BUILD_DIR)/include
+
+$(SECURESET_LIB): FORCE
+	$(MAKE) -C $(WOLFPSA_PATH) $@ \
+		LIBNAME=$@ \
+		BUILD_DIR=$(SECURESET_BUILD_DIR) \
+		USER_SETTINGS_PATH=$(abspath secure-set) \
+		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
+		CFLAGS="$(CFLAGS)" \
+		LDFLAGS="$(SANITIZE_FLAGS)"
+
+psa_secure_set_test: psa_server/psa_secure_set_test.c $(SECURESET_LIB) FORCE
+	$(CC) $(SECURESET_CPPFLAGS) $(CFLAGS) -o $@ $< $(SECURESET_LIB) \
+		$(SANITIZE_FLAGS) -lpthread -lm
+
 # FORCE here too: the archive is scoped per sanitizer setting but this binary
 # is not, so without it an ASAN build left behind stays "up to date".
 psa_devid_cryptocb_test: psa_server/psa_devid_cryptocb_test.c $(CRYPTOCB_LIB) FORCE
@@ -407,3 +428,5 @@ clean:
 	rm -f psa_enrollment_alg_test psa_tf_psa_threading_test
 	rm -f psa_track_memory_test
 	rm -f psa_server/*.gcda psa_server/*.gcno
+	rm -rf $(abspath .)/build-secure-set $(abspath .)/build-secure-set-asan
+	rm -f psa_secure_set_test

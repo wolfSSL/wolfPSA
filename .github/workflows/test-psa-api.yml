@@ -113,3 +113,14 @@ jobs:
           rm -f test/psa_tf_psa_pk_test test/psa_server/psa_tf_psa_pk_test.o
           make -C test psa_tf_psa_pk_test ASAN=1
           ./test/psa_tf_psa_pk_test
+
+      # NO_ASN raw ECDSA, refused imports of compiled-out key families,
+      # borrowed AEAD with overlapping buffers and streamed HKDF.
+      - name: Run the small Secure-set test
+        run: |
+          make -C test psa_secure_set_test
+          rm -rf test/.store
+          ./test/psa_secure_set_test
+          make -C test psa_secure_set_test ASAN=1
+          rm -rf test/.store
+          ./test/psa_secure_set_test
