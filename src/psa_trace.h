@@ -22,6 +22,15 @@
 #ifndef WOLFPSA_PSA_TRACE_H
 #define WOLFPSA_PSA_TRACE_H
 
+#ifdef WOLFPSA_NO_TRACE
+
+static inline void wolfpsa_trace(const char* fmt, ...)
+{
+    (void)fmt;
+}
+
+#else
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -41,5 +50,7 @@ static inline void wolfpsa_trace(const char* fmt, ...)
     fputc('\n', stderr);
     va_end(args);
 }
+
+#endif /* WOLFPSA_NO_TRACE */
 
 #endif /* WOLFPSA_PSA_TRACE_H */

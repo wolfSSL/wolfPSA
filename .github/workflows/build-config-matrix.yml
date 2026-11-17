@@ -103,6 +103,9 @@ jobs:
           - name: no-filesystem
             modifiers: "+NO_FILESYSTEM +WOLFPSA_CUSTOM_STORE"
             target: libwolfpsa.a
+          - name: no-trace
+            modifiers: "+WOLFPSA_NO_TRACE"
+            target: psa-objects
 
     steps:
       - name: Check out wolfPSA
