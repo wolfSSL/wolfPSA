@@ -160,6 +160,23 @@ psa_status_t psa_asymmetric_sign_ecc(psa_key_type_t key_type,
 #endif
     }
 
+#ifdef NO_ASN
+    /* NO_ASN wolfCrypt signs straight into the fixed-width r||s form. */
+    (void)der_sig; (void)rs; (void)der_len; (void)r_len; (void)s_len;
+    sig_len = (word32)raw_sig_len;
+    ret = wc_ecc_sign_hash(hash, (word32)hash_length, signature, &sig_len,
+                           &rng, &ecc);
+    wc_FreeRng(&rng);
+    wc_ecc_free(&ecc);
+    if (ret != 0) {
+        wc_ForceZero(signature, raw_sig_len);
+        return wc_error_to_psa_status(ret);
+    }
+    if (sig_len != raw_sig_len) {
+        wc_ForceZero(signature, raw_sig_len);
+        return PSA_ERROR_GENERIC_ERROR;
+    }
+#else
     sig_len = wc_ecc_sig_size(&ecc);
     der_sig = (byte*)XMALLOC(sig_len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (der_sig == NULL) {
@@ -212,6 +229,7 @@ psa_status_t psa_asymmetric_sign_ecc(psa_key_type_t key_type,
     wc_ForceZero(rs, raw_sig_len);
     XFREE(rs, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 
+#endif
     *signature_length = raw_sig_len;
     return PSA_SUCCESS;
 }
@@ -290,6 +308,12 @@ psa_status_t psa_asymmetric_verify_ecc(psa_key_type_t key_type,
         return PSA_ERROR_INVALID_SIGNATURE;
     }
 
+#ifdef NO_ASN
+    (void)der_sig; (void)der_len;
+    ret = wc_ecc_verify_hash(signature, (word32)raw_sig_len,
+                             hash, (word32)hash_length, &verify_res, &ecc);
+    wc_ecc_free(&ecc);
+#else
     der_len = wc_ecc_sig_size(&ecc);
     der_sig = (byte*)XMALLOC(der_len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (der_sig == NULL) {
@@ -312,6 +336,7 @@ psa_status_t psa_asymmetric_verify_ecc(psa_key_type_t key_type,
     
     XFREE(der_sig, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     wc_ecc_free(&ecc);
+#endif
     
     if (ret != 0) {
         return wc_error_to_psa_status(ret);
