@@ -19,11 +19,36 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-/* No mbedtls_timing_* yet; DTLS needs them. */
-
 #ifndef MBEDTLS_TIMING_H
 #define MBEDTLS_TIMING_H
 
 #include "mbedtls/build_info.h"
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+    extern "C" {
+#endif /* __cplusplus */
+
+struct mbedtls_timing_hr_time {
+    int64_t ms;
+};
+
+typedef struct mbedtls_timing_delay_context {
+    struct mbedtls_timing_hr_time timer;
+    uint32_t int_ms;
+    uint32_t fin_ms;
+} mbedtls_timing_delay_context;
+
+unsigned long long mbedtls_timing_get_timer(struct mbedtls_timing_hr_time* val,
+    int reset);
+void mbedtls_timing_set_delay(void* data, uint32_t int_ms, uint32_t fin_ms);
+int mbedtls_timing_get_delay(void* data);
+uint32_t mbedtls_timing_get_final_delay(
+    const mbedtls_timing_delay_context* data);
+
+#ifdef __cplusplus
+    } /* extern "C" */
+#endif /* __cplusplus */
 
 #endif /* MBEDTLS_TIMING_H */

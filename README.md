@@ -159,6 +159,8 @@ Mapped so far:
   `MBEDTLS_SSL_KEYING_MATERIAL_EXPORT`. The two macros need wolfSSL's
   `HAVE_MAX_FRAGMENT` and `HAVE_KEYING_MATERIAL`, which wolfPSA's
   `user_settings.h` defines.
+- timing: get_timer, set_delay, get_delay, get_final_delay, on a monotonic
+  clock. `MBEDTLS_TIMING_C` needs Windows or a Unix-like system.
 
 Known differences from Mbed TLS:
 
@@ -264,7 +266,8 @@ make MBEDTLS_COMPAT=1 mbedtls-compat-test
 runs these against `libwolfpsa.a`. Each is also a target of its own;
 `make help` lists them all.
 
-- `mbedtls-compat-unit`: `test/mbedtls_compat/x509_crt_test.c`,
+- `mbedtls-compat-unit`: `test/mbedtls_compat/timing_test.c` checks the
+  timers. `x509_crt_test.c`,
   `pk_test.c` and `pem_test.c` parse Mbed TLS's test certificates and keys.
   `ssl_test.c` checks return codes and verify results, client and server in
   one process.

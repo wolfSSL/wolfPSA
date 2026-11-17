@@ -34,9 +34,9 @@ MBEDTLS_STAMP := $(MBEDTLS_CLONE)-$(MBEDTLS_REF)
 
 # Mbed TLS's test data
 DATA := $(MBEDTLS_PATH)/framework/data_files
-# Certificate, key and PEM parsing, and TLS return codes and verify results
-# with a client and a server in one process
-UNIT := $(addprefix $(BUILD_DIR)/,x509_crt_test pk_test pem_test ssl_test)
+# Parsing, TLS return codes and verify results in one process, and timers
+UNIT := $(addprefix $(BUILD_DIR)/,x509_crt_test pk_test pem_test ssl_test \
+	timing_test)
 
 # The peers are the wolfSSL example server and client, from a wolfSSL
 # configured out of tree from WOLFSSL_PATH, so they do not depend on wolfPSA's
@@ -58,6 +58,7 @@ PROGRAMS := $(addprefix $(BUILD_DIR)/programs/ssl/,mini_client ssl_server \
 ifeq ($(MBEDTLS_THREADING_C),1)
 PROGRAMS += $(BUILD_DIR)/programs/ssl/ssl_pthread_server
 endif
+PROGRAMS += $(BUILD_DIR)/programs/x509/load_roots
 # Mbed TLS test certificates, data only. certs.c and the generated
 # test_certs.h build against the headers of their Mbed TLS tree, CERTS_TREE:
 # MBEDTLS_PATH for unit and programs, the clone for the suite.
