@@ -85,7 +85,8 @@ static psa_status_t wolfpsa_aead_append(uint8_t **buf, size_t *len,
     return PSA_SUCCESS;
 }
 
-#if defined(WOLFPSA_GCM) || defined(WOLFPSA_CCM)
+#if defined(WOLFPSA_GCM) || \
+    (defined(WOLFPSA_CCM) && !defined(WOLFSSL_AES_DIRECT))
 /* WC_AES_BITSLICED adds 15 * 16 * W words of W bits to Aes (W is
  * WC_AES_BS_WORD_SIZE), 122,880 bytes at W = 64, so keep it off the stack. */
 static int wolfpsa_aes_new(Aes **out)
@@ -622,6 +623,11 @@ static int wolfpsa_aead_stream_init(wolfpsa_aead_ctx_t *ctx)
      (defined(WOLFPSA_CHACHAPOLY)) || \
      (defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)))
 #define WOLFPSA_AEAD_STREAMS_AD
+#endif
+
+#if defined(WOLFPSA_GCM) || defined(WOLFPSA_CHACHAPOLY) || \
+    (defined(WOLFPSA_CCM) && !defined(WOLFSSL_AES_DIRECT))
+#define WOLFPSA_AEAD_WC_ONESHOT
 #endif
 
 #if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
@@ -1258,12 +1264,14 @@ static psa_status_t wolfpsa_aead_encrypt_final(wolfpsa_aead_ctx_t *ctx,
                                                size_t tag_size,
                                                size_t *tag_length)
 {
+#ifdef WOLFPSA_AEAD_WC_ONESHOT
     int ret;
+    const uint8_t *aad;
+#endif
 #if defined(WOLFPSA_CHACHAPOLY)
     size_t chacha_ciphertext_size = 0;
 #endif
     const uint8_t *input;
-    const uint8_t *aad;
     uint8_t empty_out = 0;
     uint8_t *out;
 
@@ -1336,7 +1344,9 @@ static psa_status_t wolfpsa_aead_encrypt_final(wolfpsa_aead_ctx_t *ctx,
     }
 
     input = wolfpsa_aead_nonnull_data(ctx->input, ctx->input_length);
+#ifdef WOLFPSA_AEAD_WC_ONESHOT
     aad = wolfpsa_aead_nonnull_data(ctx->aad, ctx->aad_length);
+#endif
     /* Nothing is written when the buffer is NULL (the length check above
      * proved there is no buffered payload), but the backends still want a
      * writable pointer. */
@@ -1366,7 +1376,26 @@ static psa_status_t wolfpsa_aead_encrypt_final(wolfpsa_aead_ctx_t *ctx,
 #endif
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM)) {
-#ifdef WOLFPSA_CCM
+#if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
+        psa_status_t status;
+
+        if (wc_AesCcmCheckTagSize((int)ctx->tag_length) != 0) {
+            return PSA_ERROR_NOT_SUPPORTED;
+        }
+        /* The streaming CCM code serves one-shots too, so wolfCrypt's
+         * one-shot CCM is not linked. */
+        status = wolfpsa_aead_ccm_init(ctx);
+        if (status == PSA_SUCCESS) {
+            status = wolfpsa_aead_ccm_update(ctx, input, ctx->input_length,
+                                             out);
+        }
+        if (status == PSA_SUCCESS) {
+            status = wolfpsa_aead_stream_final(ctx, tag, ctx->tag_length);
+        }
+        if (status != PSA_SUCCESS) {
+            return status;
+        }
+#elif defined(WOLFPSA_CCM)
         Aes *aes = NULL;
         if (wc_AesCcmCheckTagSize((int)ctx->tag_length) != 0) {
             return PSA_ERROR_NOT_SUPPORTED;
@@ -1439,9 +1468,11 @@ static psa_status_t wolfpsa_aead_decrypt_final(wolfpsa_aead_ctx_t *ctx,
                                                const uint8_t *tag,
                                                size_t tag_length)
 {
+#ifdef WOLFPSA_AEAD_WC_ONESHOT
     int ret;
-    const uint8_t *input;
     const uint8_t *aad;
+#endif
+    const uint8_t *input;
     uint8_t empty_out = 0;
     uint8_t *out;
 
@@ -1509,7 +1540,9 @@ static psa_status_t wolfpsa_aead_decrypt_final(wolfpsa_aead_ctx_t *ctx,
     }
 
     input = wolfpsa_aead_nonnull_data(ctx->input, ctx->input_length);
+#ifdef WOLFPSA_AEAD_WC_ONESHOT
     aad = wolfpsa_aead_nonnull_data(ctx->aad, ctx->aad_length);
+#endif
     /* See the note in wolfpsa_aead_encrypt_final(): a zero-length output may
      * legitimately be NULL. */
     out = (plaintext != NULL) ? plaintext : &empty_out;
@@ -1541,7 +1574,28 @@ static psa_status_t wolfpsa_aead_decrypt_final(wolfpsa_aead_ctx_t *ctx,
 #endif
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM)) {
-#ifdef WOLFPSA_CCM
+#if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
+        psa_status_t status;
+
+        if (wc_AesCcmCheckTagSize((int)tag_length) != 0) {
+            return PSA_ERROR_INVALID_SIGNATURE;
+        }
+        status = wolfpsa_aead_ccm_init(ctx);
+        if (status == PSA_SUCCESS) {
+            status = wolfpsa_aead_ccm_update(ctx, input, ctx->input_length,
+                                             out);
+        }
+        if (status == PSA_SUCCESS) {
+            status = wolfpsa_aead_stream_final(ctx,
+                                               (uint8_t *)(uintptr_t)tag,
+                                               tag_length);
+        }
+        if (status != PSA_SUCCESS) {
+            /* As wc_AesCcmDecrypt does, release no plaintext on failure. */
+            wc_ForceZero(out, ctx->input_length);
+            return status;
+        }
+#elif defined(WOLFPSA_CCM)
         Aes *aes = NULL;
         if (wc_AesCcmCheckTagSize((int)tag_length) != 0) {
             return PSA_ERROR_INVALID_SIGNATURE;

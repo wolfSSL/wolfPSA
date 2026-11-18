@@ -30,6 +30,7 @@
 #include <psa/crypto.h>
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/hmac.h>
+#include <wolfssl/wolfcrypt/aes.h>
 
 #ifndef NO_ASN
 #error "build this test against test/secure-set/user_settings.h"
@@ -419,8 +420,8 @@ static void hkdf_stream(psa_algorithm_t alg, const char *name)
 
 /* Multipart GCM with its AAD in pieces matches the one-shot, and the streamed
  * AAD leaves no buffered mode for a later update with no output. */
-/* Multipart CCM streams its AD: it matches the one-shot across the AD block
- * and length-prefix boundaries with the AD fed in uneven pieces. */
+/* One-shot and multipart CCM (AD fed in uneven pieces) match wolfCrypt's
+ * one-shot CCM across the AD block and length-prefix boundaries. */
 static int ccm_parts(psa_key_id_t k, int decrypt, const uint8_t *nonce,
                      const uint8_t *ad, size_t ad_len, const uint8_t *in,
                      size_t msg_len, uint8_t *out, const uint8_t *tag_in,
@@ -472,11 +473,13 @@ static void ccm_stream_ad(void)
         1, 13, 14, 15, 16, 30, 700, 0xFEFF, 0xFF00, 0xFF0F
     };
     static uint8_t ad[0xFF0F];
+    static Aes aes;
     psa_key_attributes_t attr = psa_key_attributes_init();
     uint8_t key[16];
     uint8_t nonce[13];
     uint8_t pt[33];
     uint8_t ref[sizeof(pt) + TAG];
+    uint8_t wc[sizeof(pt) + TAG];
     uint8_t ct[sizeof(pt)];
     uint8_t tag[TAG];
     uint8_t out[sizeof(pt)];
@@ -485,6 +488,7 @@ static void ccm_stream_ad(void)
     size_t len = 0;
     size_t m;
     size_t i;
+    size_t j;
     int ok;
 
     memset(key, 0x5C, sizeof(key));
@@ -500,19 +504,25 @@ static void ccm_stream_ad(void)
     psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT |
                             PSA_KEY_USAGE_DECRYPT);
     psa_set_key_algorithm(&attr, PSA_ALG_CCM);
-    check(psa_import_key(&attr, key, sizeof(key), &k) == PSA_SUCCESS,
+    check(psa_import_key(&attr, key, sizeof(key), &k) == PSA_SUCCESS &&
+          wc_AesInit(&aes, NULL, INVALID_DEVID) == 0 &&
+          wc_AesCcmSetKey(&aes, key, sizeof(key)) == 0,
           "import the CCM key");
     for (i = 0; i < sizeof(ad_lens) / sizeof(ad_lens[0]); i++) {
         for (m = 0; m <= sizeof(pt); m += sizeof(pt)) {
-            ok = psa_aead_encrypt(k, PSA_ALG_CCM, nonce, sizeof(nonce), ad,
+            ok = wc_AesCcmEncrypt(&aes, wc, pt, (word32)m, nonce,
+                                  sizeof(nonce), wc + m, TAG, ad,
+                                  (word32)ad_lens[i]) == 0 &&
+                 psa_aead_encrypt(k, PSA_ALG_CCM, nonce, sizeof(nonce), ad,
                                   ad_lens[i], pt, m, ref, sizeof(ref),
                                   &len) == PSA_SUCCESS && len == m + TAG &&
+                 memcmp(ref, wc, m + TAG) == 0 &&
                  ccm_parts(k, 0, nonce, ad, ad_lens[i], pt, m, ct, NULL,
                            tag) == PSA_SUCCESS &&
-                 memcmp(ct, ref, m) == 0 && memcmp(tag, ref + m, TAG) == 0;
+                 memcmp(ct, wc, m) == 0 && memcmp(tag, wc + m, TAG) == 0;
             snprintf(what, sizeof(what),
-                     "CCM multipart with a %zu-byte AD and %zu-byte message "
-                     "matches the one-shot", ad_lens[i], m);
+                     "CCM one-shot and multipart with a %zu-byte AD and "
+                     "%zu-byte message match wolfCrypt", ad_lens[i], m);
             check(ok, what);
             ok = ccm_parts(k, 1, nonce, ad, ad_lens[i], ref, m, out,
                            ref + m, NULL) == PSA_SUCCESS &&
@@ -521,13 +531,23 @@ static void ccm_stream_ad(void)
             ok = ok && ccm_parts(k, 1, nonce, ad, ad_lens[i], ref, m, out,
                                  ref + m, NULL) ==
                  PSA_ERROR_INVALID_SIGNATURE;
+            memset(out, 0xAA, sizeof(out));
+            ok = ok && psa_aead_decrypt(k, PSA_ALG_CCM, nonce, sizeof(nonce),
+                                        ad, ad_lens[i], ref, m + TAG, out,
+                                        sizeof(out), &len) ==
+                 PSA_ERROR_INVALID_SIGNATURE;
+            for (j = 0; j < m; j++) {
+                ok = ok && out[j] == 0;
+            }
             ad[ad_lens[i] - 1] ^= 0x80;
             snprintf(what, sizeof(what),
-                     "CCM multipart open with a %zu-byte AD verifies and "
-                     "rejects a changed last AD byte", ad_lens[i]);
+                     "CCM opens with a %zu-byte AD and both reject a "
+                     "changed last AD byte, releasing no plaintext",
+                     ad_lens[i]);
             check(ok, what);
         }
     }
+    wc_AesFree(&aes);
     (void)psa_destroy_key(k);
 }
 
