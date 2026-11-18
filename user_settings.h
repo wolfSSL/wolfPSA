@@ -44,6 +44,11 @@
 #ifndef WOLFPSA_THREAD_SAFE
 #define SINGLE_THREADED
 #endif /* WOLFPSA_THREAD_SAFE */
+#if defined(WOLFPSA_THREAD_SAFE) && !defined(_WIN32) && \
+    !defined(HAVE_GMTIME_R)
+/* Reentrant XGMTIME. On Windows, gmtime() is already per thread. */
+#define HAVE_GMTIME_R
+#endif /* WOLFPSA_THREAD_SAFE && !_WIN32 && !HAVE_GMTIME_R */
 #define WOLFSSL_PSA_ENGINE
 #define WOLFSSL_SP_MATH_ALL
 #define WOLFSSL_HAVE_SP_RSA
@@ -142,6 +147,8 @@
 #ifdef WOLFPSA_MBEDTLS_COMPAT
 /* Mbed TLS accepts NULL parameters after an ECDSA signature OID */
 #define WOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED
+/* Mbed TLS accepts serial number 0 */
+#define WOLFSSL_ASN_ALLOW_0_SERIAL
 /* wolfSSL TLS, with configure's TLS defaults. NO_DH: wolfPSA builds no
  * dh.c. */
 #define HAVE_TLS_EXTENSIONS
