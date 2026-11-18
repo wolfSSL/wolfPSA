@@ -41,6 +41,208 @@
 extern int wc_psa_get_ecc_curve_id(psa_key_type_t type, size_t bits);
 int wc_psa_get_hash_type(psa_algorithm_t alg);
 
+#ifdef WOLFPSA_ECC_SP_DIRECT
+#include <wolfpsa/psa_p256.h>
+
+static int wolfpsa_is_p256(psa_key_type_t key_type, size_t key_bits)
+{
+    return (PSA_KEY_TYPE_ECC_GET_FAMILY(key_type) == PSA_ECC_FAMILY_SECP_R1) &&
+           (key_bits == 256u);
+}
+
+/* A key pair holds the scalar; its public point is derived into pub. */
+static psa_status_t wolfpsa_p256_key_point(psa_key_type_t key_type,
+                                           const uint8_t *key_buffer,
+                                           size_t key_buffer_size,
+                                           uint8_t *pub, const uint8_t **point)
+{
+    int ret;
+
+    if (PSA_KEY_TYPE_IS_ECC_KEY_PAIR(key_type)) {
+        if (key_buffer_size != WOLFPSA_P256_SCALAR_LEN) {
+            return PSA_ERROR_INVALID_ARGUMENT;
+        }
+        ret = wolfPSA_P256_Public(key_buffer, pub);
+        *point = pub;
+    }
+    else {
+        if (key_buffer_size != WOLFPSA_P256_POINT_LEN) {
+            return PSA_ERROR_INVALID_ARGUMENT;
+        }
+        ret = wolfPSA_P256_CheckPublic(key_buffer);
+        *point = key_buffer;
+    }
+    return (ret == 0) ? PSA_SUCCESS : wc_error_to_psa_status(ret);
+}
+
+psa_status_t psa_asymmetric_sign_ecc(psa_key_type_t key_type,
+                                    size_t key_bits,
+                                    const uint8_t *key_buffer,
+                                    size_t key_buffer_size,
+                                    psa_algorithm_t alg,
+                                    const uint8_t *hash,
+                                    size_t hash_length,
+                                    uint8_t *signature,
+                                    size_t signature_size,
+                                    size_t *signature_length)
+{
+    WC_RNG rng;
+    int ret;
+
+    if (!PSA_KEY_TYPE_IS_ECC_KEY_PAIR(key_type)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    /* Deterministic ECDSA needs ecc.c's RFC 6979 nonce. */
+    if (!PSA_ALG_IS_RANDOMIZED_ECDSA(alg)) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (signature == NULL || signature_length == NULL) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (!wolfpsa_is_p256(key_type, key_bits)) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (key_buffer_size != WOLFPSA_P256_SCALAR_LEN ||
+        wolfpsa_check_word32_length(hash_length) != PSA_SUCCESS) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (signature_size < WOLFPSA_P256_SIG_LEN) {
+        return PSA_ERROR_BUFFER_TOO_SMALL;
+    }
+    ret = wc_InitRng_ex(&rng, NULL, wolfPSA_GetDefaultDevID());
+    if (ret == 0) {
+        ret = wolfPSA_P256_Sign(key_buffer, hash, (word32)hash_length, &rng,
+                                signature);
+        wc_FreeRng(&rng);
+    }
+    if (ret != 0) {
+        return wc_error_to_psa_status(ret);
+    }
+    *signature_length = WOLFPSA_P256_SIG_LEN;
+    return PSA_SUCCESS;
+}
+
+psa_status_t psa_asymmetric_verify_ecc(psa_key_type_t key_type,
+                                      size_t key_bits,
+                                      const uint8_t *key_buffer,
+                                      size_t key_buffer_size,
+                                      psa_algorithm_t alg,
+                                      const uint8_t *hash,
+                                      size_t hash_length,
+                                      const uint8_t *signature,
+                                      size_t signature_length)
+{
+    uint8_t pub[WOLFPSA_P256_POINT_LEN];
+    const uint8_t *point = NULL;
+    psa_status_t status;
+    int verify_res = 0;
+    int ret;
+
+    if (!PSA_KEY_TYPE_IS_ECC_PUBLIC_KEY(key_type) &&
+        !PSA_KEY_TYPE_IS_ECC_KEY_PAIR(key_type)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (!PSA_ALG_IS_ECDSA(alg) && !PSA_ALG_IS_DETERMINISTIC_ECDSA(alg)) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (!wolfpsa_is_p256(key_type, key_bits)) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (wolfpsa_check_word32_length(hash_length) != PSA_SUCCESS) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    status = wolfpsa_p256_key_point(key_type, key_buffer, key_buffer_size,
+                                    pub, &point);
+    if (status != PSA_SUCCESS) {
+        return status;
+    }
+    if (signature == NULL || signature_length != WOLFPSA_P256_SIG_LEN) {
+        return PSA_ERROR_INVALID_SIGNATURE;
+    }
+    ret = wolfPSA_P256_Verify(point, hash, (word32)hash_length, signature,
+                              &verify_res);
+    if (ret != 0) {
+        return wc_error_to_psa_status(ret);
+    }
+    return (verify_res == 1) ? PSA_SUCCESS : PSA_ERROR_INVALID_SIGNATURE;
+}
+
+psa_status_t psa_asymmetric_generate_key_ecc(psa_key_type_t key_type,
+                                            size_t key_bits,
+                                            uint8_t *private_key,
+                                            size_t private_key_size,
+                                            size_t *private_key_length,
+                                            uint8_t *public_key,
+                                            size_t public_key_size,
+                                            size_t *public_key_length)
+{
+    WC_RNG rng;
+    int ret;
+
+    if (!PSA_KEY_TYPE_IS_ECC_KEY_PAIR(key_type)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (!wolfpsa_is_p256(key_type, key_bits)) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (private_key == NULL || private_key_length == NULL ||
+        public_key == NULL || public_key_length == NULL) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (private_key_size < WOLFPSA_P256_SCALAR_LEN ||
+        public_key_size < WOLFPSA_P256_POINT_LEN) {
+        return PSA_ERROR_BUFFER_TOO_SMALL;
+    }
+    ret = wc_InitRng_ex(&rng, NULL, wolfPSA_GetDefaultDevID());
+    if (ret == 0) {
+        ret = wolfPSA_P256_Generate(&rng, private_key, public_key);
+        wc_FreeRng(&rng);
+    }
+    if (ret != 0) {
+        return wc_error_to_psa_status(ret);
+    }
+    *private_key_length = WOLFPSA_P256_SCALAR_LEN;
+    *public_key_length = WOLFPSA_P256_POINT_LEN;
+    return PSA_SUCCESS;
+}
+
+psa_status_t psa_asymmetric_export_public_key_ecc(psa_key_type_t key_type,
+                                                 size_t key_bits,
+                                                 const uint8_t *key_buffer,
+                                                 size_t key_buffer_size,
+                                                 uint8_t *output,
+                                                 size_t output_size,
+                                                 size_t *output_length)
+{
+    uint8_t pub[WOLFPSA_P256_POINT_LEN];
+    const uint8_t *point = NULL;
+    psa_status_t status;
+
+    if (!PSA_KEY_TYPE_IS_ECC_KEY_PAIR(key_type) &&
+        !PSA_KEY_TYPE_IS_ECC_PUBLIC_KEY(key_type)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (!wolfpsa_is_p256(key_type, key_bits)) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    status = wolfpsa_p256_key_point(key_type, key_buffer, key_buffer_size,
+                                    pub, &point);
+    if (status != PSA_SUCCESS) {
+        return status;
+    }
+    if (output_length == NULL || (output == NULL && output_size != 0)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (output_size < WOLFPSA_P256_POINT_LEN) {
+        return PSA_ERROR_BUFFER_TOO_SMALL;
+    }
+    XMEMCPY(output, point, WOLFPSA_P256_POINT_LEN);
+    *output_length = WOLFPSA_P256_POINT_LEN;
+    return PSA_SUCCESS;
+}
+
+#else /* !WOLFPSA_ECC_SP_DIRECT */
+
 /* Sign a hash or short message with an ECC private key */
 psa_status_t psa_asymmetric_sign_ecc(psa_key_type_t key_type,
                                     size_t key_bits,
@@ -534,5 +736,7 @@ psa_status_t psa_asymmetric_export_public_key_ecc(psa_key_type_t key_type,
     *output_length = (size_t)out_len;
     return PSA_SUCCESS;
 }
+
+#endif /* WOLFPSA_ECC_SP_DIRECT */
 
 #endif /* WOLFSSL_PSA_ENGINE && HAVE_ECC */

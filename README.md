@@ -99,6 +99,15 @@ AES-GCM but should not offer GCM through PSA:
 returns `PSA_ERROR_NOT_SUPPORTED`. Every other algorithm follows the wolfCrypt
 build, so turn it off there.
 
+`WOLFPSA_ECC_SP_DIRECT` runs P-256 ECDSA (randomized only), ECDH, key
+generation and key import straight on wolfCrypt's SP code, so `ecc.c` and the
+multi-precision math leave a P-256-only build. It keeps `ecc.c`'s checks: the
+private key is in [1, n-1], public points are on the curve with coordinates
+below p, and r and s are in [1, n-1]. It needs `WOLFSSL_HAVE_SP_ECC` and
+`ECC_USER_CURVES` with every other curve off; `test/ecc-direct` is an example
+configuration, and `wolfpsa/psa_p256.h` declares the same primitives for
+code built into the same image.
+
 ## Repository layout
 
 - `src/` : wolfPSA implementation sources.

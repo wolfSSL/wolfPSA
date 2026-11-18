@@ -34,6 +34,7 @@
 #include "psa_trace.h"
 #include "psa_lock.h"
 #include "psa_size.h"
+#include <wolfpsa/psa_p256.h>
 #include "psa_output.h"
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/types.h>
@@ -607,7 +608,9 @@ static psa_status_t wolfpsa_ecc_check_key(const psa_key_attributes_t* attr,
                                           const uint8_t* data,
                                           size_t data_length)
 {
+#ifndef WOLFPSA_ECC_SP_DIRECT
     ecc_key ecc;
+#endif
     int curve_id;
     int ret;
 
@@ -616,6 +619,19 @@ static psa_status_t wolfpsa_ecc_check_key(const psa_key_attributes_t* attr,
         /* Curve not in this build: operations on the key are rejected */
         return PSA_SUCCESS;
     }
+#ifdef WOLFPSA_ECC_SP_DIRECT
+    if (curve_id != ECC_SECP256R1) {
+        return PSA_SUCCESS;
+    }
+    if (PSA_KEY_TYPE_IS_ECC_KEY_PAIR(attr->type)) {
+        ret = (data_length == WOLFPSA_P256_SCALAR_LEN) ?
+            wolfPSA_P256_CheckPrivate(data) : ECC_PRIV_KEY_E;
+    }
+    else {
+        ret = (data_length == WOLFPSA_P256_POINT_LEN) ?
+            wolfPSA_P256_CheckPublic(data) : ECC_BAD_ARG_E;
+    }
+#else
     ret = wc_ecc_init_ex(&ecc, NULL, INVALID_DEVID);
     if (ret != 0) {
         return wc_error_to_psa_status(ret);
@@ -629,6 +645,7 @@ static psa_status_t wolfpsa_ecc_check_key(const psa_key_attributes_t* attr,
                                     curve_id);
     }
     wc_ecc_free(&ecc);
+#endif
 
     return (ret == 0) ? PSA_SUCCESS : wolfpsa_key_data_status(ret);
 }

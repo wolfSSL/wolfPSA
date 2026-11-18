@@ -29,6 +29,7 @@
 
 #include <psa/crypto.h>
 #include "psa_size.h"
+#include <wolfpsa/psa_p256.h>
 #include "psa_output.h"
 #include "psa_trace.h"
 #include "psa_pqc_internal.h"
@@ -1390,16 +1391,21 @@ psa_status_t wolfpsa_key_agreement_secret(psa_algorithm_t alg,
     psa_status_t status;
 #if defined(HAVE_ECC) && defined(HAVE_ECC_DHE)
     int ret;
+#ifndef WOLFPSA_ECC_SP_DIRECT
     ecc_key priv;
     ecc_key pub;
-#if defined(ECC_TIMING_RESISTANT) && !defined(WC_NO_RNG)
+#endif
+#if defined(ECC_TIMING_RESISTANT) && !defined(WC_NO_RNG) && \
+    !defined(WOLFPSA_ECC_SP_DIRECT)
     /* Attached to the private key for blinding in wc_ecc_shared_secret;
      * only needed when wolfCrypt blinding is compiled in and an RNG
      * exists. */
     WC_RNG rng;
 #endif
     int curve_id;
+#ifndef WOLFPSA_ECC_SP_DIRECT
     word32 out_len;
+#endif
 #endif
 
     if (PSA_ALG_KEY_AGREEMENT_GET_BASE(alg) != PSA_ALG_ECDH) {
@@ -1499,6 +1505,20 @@ psa_status_t wolfpsa_key_agreement_secret(psa_algorithm_t alg,
         }
     }
 
+#ifdef WOLFPSA_ECC_SP_DIRECT
+    if (curve_id != ECC_SECP256R1 ||
+        key_data_length != WOLFPSA_P256_SCALAR_LEN) {
+        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    ret = wolfPSA_P256_Ecdh(key_data, peer_key, output);
+    wolfpsa_forcezero_free_key_data(key_data, key_data_length);
+    if (ret != 0) {
+        return wc_error_to_psa_status(ret);
+    }
+    *output_length = WOLFPSA_P256_SCALAR_LEN;
+    return PSA_SUCCESS;
+#else
     ret = wc_ecc_init_ex(&priv, NULL, wolfPSA_GetDefaultDevID());
     if (ret != 0) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
@@ -1565,6 +1585,7 @@ psa_status_t wolfpsa_key_agreement_secret(psa_algorithm_t alg,
 
     *output_length = (size_t)out_len;
     return PSA_SUCCESS;
+#endif /* WOLFPSA_ECC_SP_DIRECT */
 #endif /* HAVE_ECC_DHE */
 #else
     /* Generic (Weierstrass) ECDH needs wolfCrypt ECC (HAVE_ECC), which this
