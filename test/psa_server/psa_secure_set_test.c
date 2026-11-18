@@ -419,6 +419,118 @@ static void hkdf_stream(psa_algorithm_t alg, const char *name)
 
 /* Multipart GCM with its AAD in pieces matches the one-shot, and the streamed
  * AAD leaves no buffered mode for a later update with no output. */
+/* Multipart CCM streams its AD: it matches the one-shot across the AD block
+ * and length-prefix boundaries with the AD fed in uneven pieces. */
+static int ccm_parts(psa_key_id_t k, int decrypt, const uint8_t *nonce,
+                     const uint8_t *ad, size_t ad_len, const uint8_t *in,
+                     size_t msg_len, uint8_t *out, const uint8_t *tag_in,
+                     uint8_t *tag_out)
+{
+    psa_aead_operation_t op = PSA_AEAD_OPERATION_INIT;
+    psa_status_t st;
+    size_t off = 0;
+    size_t n;
+    size_t got = 0;
+    size_t len = 0;
+    size_t tag_len = 0;
+
+    st = decrypt ? psa_aead_decrypt_setup(&op, k, PSA_ALG_CCM) :
+                   psa_aead_encrypt_setup(&op, k, PSA_ALG_CCM);
+    if (st == PSA_SUCCESS) {
+        st = psa_aead_set_lengths(&op, ad_len, msg_len);
+    }
+    if (st == PSA_SUCCESS) {
+        st = psa_aead_set_nonce(&op, nonce, 13);
+    }
+    while (st == PSA_SUCCESS && off < ad_len) {
+        n = (ad_len - off < 7 + off % 5) ? ad_len - off : 7 + off % 5;
+        st = psa_aead_update_ad(&op, ad + off, n);
+        off += n;
+    }
+    if (st == PSA_SUCCESS) {
+        st = psa_aead_update(&op, in, msg_len, out, msg_len, &got);
+    }
+    if (st == PSA_SUCCESS && got != msg_len) {
+        st = PSA_ERROR_GENERIC_ERROR;
+    }
+    if (st == PSA_SUCCESS && decrypt) {
+        st = psa_aead_verify(&op, NULL, 0, &len, tag_in, TAG);
+    }
+    else if (st == PSA_SUCCESS) {
+        st = psa_aead_finish(&op, NULL, 0, &len, tag_out, TAG, &tag_len);
+        if (st == PSA_SUCCESS && tag_len != TAG) {
+            st = PSA_ERROR_GENERIC_ERROR;
+        }
+    }
+    (void)psa_aead_abort(&op);
+    return (int)st;
+}
+
+static void ccm_stream_ad(void)
+{
+    static const size_t ad_lens[] = {
+        1, 13, 14, 15, 16, 30, 700, 0xFEFF, 0xFF00, 0xFF0F
+    };
+    static uint8_t ad[0xFF0F];
+    psa_key_attributes_t attr = psa_key_attributes_init();
+    uint8_t key[16];
+    uint8_t nonce[13];
+    uint8_t pt[33];
+    uint8_t ref[sizeof(pt) + TAG];
+    uint8_t ct[sizeof(pt)];
+    uint8_t tag[TAG];
+    uint8_t out[sizeof(pt)];
+    char what[96];
+    psa_key_id_t k = PSA_KEY_ID_NULL;
+    size_t len = 0;
+    size_t m;
+    size_t i;
+    int ok;
+
+    memset(key, 0x5C, sizeof(key));
+    memset(nonce, 0x0B, sizeof(nonce));
+    for (i = 0; i < sizeof(ad); i++) {
+        ad[i] = (uint8_t)(i * 3 + 1);
+    }
+    for (i = 0; i < sizeof(pt); i++) {
+        pt[i] = (uint8_t)(i + 0x61);
+    }
+    psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attr, 128);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT |
+                            PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attr, PSA_ALG_CCM);
+    check(psa_import_key(&attr, key, sizeof(key), &k) == PSA_SUCCESS,
+          "import the CCM key");
+    for (i = 0; i < sizeof(ad_lens) / sizeof(ad_lens[0]); i++) {
+        for (m = 0; m <= sizeof(pt); m += sizeof(pt)) {
+            ok = psa_aead_encrypt(k, PSA_ALG_CCM, nonce, sizeof(nonce), ad,
+                                  ad_lens[i], pt, m, ref, sizeof(ref),
+                                  &len) == PSA_SUCCESS && len == m + TAG &&
+                 ccm_parts(k, 0, nonce, ad, ad_lens[i], pt, m, ct, NULL,
+                           tag) == PSA_SUCCESS &&
+                 memcmp(ct, ref, m) == 0 && memcmp(tag, ref + m, TAG) == 0;
+            snprintf(what, sizeof(what),
+                     "CCM multipart with a %zu-byte AD and %zu-byte message "
+                     "matches the one-shot", ad_lens[i], m);
+            check(ok, what);
+            ok = ccm_parts(k, 1, nonce, ad, ad_lens[i], ref, m, out,
+                           ref + m, NULL) == PSA_SUCCESS &&
+                 memcmp(out, pt, m) == 0;
+            ad[ad_lens[i] - 1] ^= 0x80;
+            ok = ok && ccm_parts(k, 1, nonce, ad, ad_lens[i], ref, m, out,
+                                 ref + m, NULL) ==
+                 PSA_ERROR_INVALID_SIGNATURE;
+            ad[ad_lens[i] - 1] ^= 0x80;
+            snprintf(what, sizeof(what),
+                     "CCM multipart open with a %zu-byte AD verifies and "
+                     "rejects a changed last AD byte", ad_lens[i]);
+            check(ok, what);
+        }
+    }
+    (void)psa_destroy_key(k);
+}
+
 static void aead_stream_aad(void)
 {
     psa_key_attributes_t attr = psa_key_attributes_init();
@@ -499,6 +611,7 @@ int main(void)
     aead_overlap(PSA_ALG_GCM, "GCM");
     aead_overlap(PSA_ALG_CCM, "CCM");
     aead_stream_aad();
+    ccm_stream_ad();
     hkdf_stream(PSA_ALG_HKDF(PSA_ALG_SHA_256), "HKDF");
     hkdf_stream(PSA_ALG_HKDF_EXPAND(PSA_ALG_SHA_256), "HKDF-Expand");
     printf("%s: %d failure(s)\n", g_failures ? "FAIL" : "PASS", g_failures);

@@ -40,6 +40,8 @@
 #define WOLFSSL_SHA256
 #define HAVE_AESGCM
 #define HAVE_AESCCM
+/* Multipart CCM runs on the direct AES block calls */
+#define WOLFSSL_AES_DIRECT
 #define WOLFSSL_AES_COUNTER
 #define WOLFSSL_AES_TOUCH_LINES
 #define WC_ALLOW_ECC_ZERO_HASH
