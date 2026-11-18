@@ -1,4 +1,6 @@
 build
+/build-*/
+!/build-test/
 # gcov coverage artifacts (make cov)
 *.gcda
 *.gcno

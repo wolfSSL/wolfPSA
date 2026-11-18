@@ -150,10 +150,17 @@ static void test_before_init(void)
           mbedtls_pk_parse_key(&pk, ecc_key_der_256,
                                (size_t)sizeof_ecc_key_der_256, NULL, 0),
           PSA_ERROR_BAD_STATE);
+    check("mbedtls_pk_parse_public_key before init",
+          mbedtls_pk_parse_public_key(&pk, ecc_key_pub_der_256,
+                                      (size_t)sizeof_ecc_key_pub_der_256),
+          PSA_ERROR_BAD_STATE);
 #ifdef MBEDTLS_FS_IO
     /* A missing file, so only a check before the load gives BAD_STATE */
     check("mbedtls_pk_parse_keyfile before init",
           mbedtls_pk_parse_keyfile(&pk, "missing.key", NULL),
+          PSA_ERROR_BAD_STATE);
+    check("mbedtls_pk_parse_public_keyfile before init",
+          mbedtls_pk_parse_public_keyfile(&pk, "missing.pem"),
           PSA_ERROR_BAD_STATE);
 #endif /* MBEDTLS_FS_IO */
 #ifdef MBEDTLS_X509_CRT_PARSE_C
@@ -252,6 +259,11 @@ static void test_after_init(void)
     check("mbedtls_pk_parse_key after init",
           mbedtls_pk_parse_key(&pk, ecc_key_der_256,
                                (size_t)sizeof_ecc_key_der_256, NULL, 0),
+          PSA_SUCCESS);
+    mbedtls_pk_free(&pk);
+    check("mbedtls_pk_parse_public_key after init",
+          mbedtls_pk_parse_public_key(&pk, ecc_key_pub_der_256,
+                                      (size_t)sizeof_ecc_key_pub_der_256),
           PSA_SUCCESS);
     mbedtls_pk_free(&pk);
 #ifdef MBEDTLS_X509_CRT_PARSE_C

@@ -51,23 +51,31 @@
     #define MBEDTLS_PK_ALG_ECDSA(hash_alg) PSA_ALG_ECDSA(hash_alg)
 #endif /* PSA_WANT_ALG_DETERMINISTIC_ECDSA */
 
-/* An RSA or EC private key, DER */
+/* der has a private key's DER, or pub a public key's SubjectPublicKeyInfo */
 typedef struct mbedtls_pk_context {
     unsigned char* der;
     size_t der_len;
+    unsigned char* pub;
+    size_t pub_len;
+    size_t bits;
     int type;
 } mbedtls_pk_context;
 
 /* The supported subset of MBEDTLS_PK_C and MBEDTLS_PK_PARSE_C */
 void mbedtls_pk_init(mbedtls_pk_context* ctx);
 void mbedtls_pk_free(mbedtls_pk_context* ctx);
+size_t mbedtls_pk_get_bitlen(const mbedtls_pk_context* ctx);
 int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
     size_t keylen, const unsigned char* pwd, size_t pwdlen);
+int mbedtls_pk_parse_public_key(mbedtls_pk_context* ctx,
+    const unsigned char* key, size_t keylen);
 int mbedtls_pk_can_do_psa(const mbedtls_pk_context* pk, psa_algorithm_t alg,
     psa_key_usage_t usage);
 #if defined(MBEDTLS_FS_IO)
 int mbedtls_pk_parse_keyfile(mbedtls_pk_context* ctx, const char* path,
     const char* password);
+int mbedtls_pk_parse_public_keyfile(mbedtls_pk_context* ctx,
+    const char* path);
 #endif /* MBEDTLS_FS_IO */
 
 #ifdef __cplusplus

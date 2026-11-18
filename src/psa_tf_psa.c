@@ -36,9 +36,11 @@
 #include <mbedtls/platform_util.h>
 #include <mbedtls/threading.h>
 #include <wolfssl/wolfcrypt/memory.h>
-#include <wolfssl/wolfcrypt/asn_public.h>
+#include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/curve25519.h>
+#include <wolfssl/wolfcrypt/curve448.h>
 #include <wolfpsa/psa_engine.h>
 #include "psa_lock.h"
 #include "psa_tf_psa_internal.h"
@@ -78,14 +80,23 @@ void mbedtls_pk_free(mbedtls_pk_context* ctx)
     if (ctx != NULL) {
         mbedtls_platform_zeroize(ctx->der, ctx->der_len);
         XFREE(ctx->der, NULL, DYNAMIC_TYPE_PRIVATE_KEY);
+        XFREE(ctx->pub, NULL, DYNAMIC_TYPE_PUBLIC_KEY);
         XMEMSET(ctx, 0, sizeof(*ctx));
     }
+}
+
+size_t mbedtls_pk_get_bitlen(const mbedtls_pk_context* ctx)
+{
+    return (ctx == NULL) ? 0 : ctx->bits;
 }
 
 enum {
     PK_TYPE_NONE = 0,
     PK_TYPE_RSA = 1,
-    PK_TYPE_ECC = 2
+    PK_TYPE_ECC = 2,
+    PK_TYPE_RSA_PUBLIC = 3,
+    PK_TYPE_ECC_PUBLIC = 4,
+    PK_TYPE_MONTGOMERY_PUBLIC = 5
 };
 
 int wolfPSA_MbedRet(int wcRet, int err)
@@ -106,9 +117,22 @@ static int PkDecodeRet(int wcRet, word32 idx, word32 len)
     return wolfPSA_MbedRet(wcRet, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
 }
 
-/* An RSA or EC private key, traditional or PKCS #8. *type becomes PK_TYPE_*. */
-static int PkCheckKey(const byte* der, word32 len, int* type)
+#ifdef HAVE_ECC
+extern size_t wc_psa_get_ecc_curve_bits(int curve_id);
+
+/* The size of the key's curve, if the PSA engine has the curve */
+static int PkEccBits(const ecc_key* ecc, size_t* bits)
 {
+    *bits = wc_psa_get_ecc_curve_bits(ecc->dp->id);
+    return (*bits == 0) ? MBEDTLS_ERR_PK_UNKNOWN_NAMED_CURVE : 0;
+}
+#endif /* HAVE_ECC */
+
+/* An RSA or EC private key, traditional or PKCS #8 */
+static int PkCheckKey(mbedtls_pk_context* ctx)
+{
+    const byte* der = ctx->der;
+    word32 len = (word32)ctx->der_len;
     int ret = MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
     word32 idx;
 #ifndef NO_RSA
@@ -118,7 +142,6 @@ static int PkCheckKey(const byte* der, word32 len, int* type)
     ecc_key* ecc;
 #endif /* HAVE_ECC */
 
-    *type = PK_TYPE_NONE;
 #ifndef NO_RSA
     rsa = wc_NewRsaKey(NULL, INVALID_DEVID, NULL);
     if (rsa == NULL) {
@@ -128,7 +151,8 @@ static int PkCheckKey(const byte* der, word32 len, int* type)
     ret = wc_RsaPrivateKeyDecode(der, &idx, rsa, len);
     ret = PkDecodeRet(ret, idx, len);
     if (ret == 0) {
-        *type = PK_TYPE_RSA;
+        ctx->type = PK_TYPE_RSA;
+        ctx->bits = (size_t)mp_count_bits(&rsa->n);
     }
     wc_DeleteRsaKey(rsa, &rsa);
 #endif /* !NO_RSA */
@@ -142,11 +166,151 @@ static int PkCheckKey(const byte* der, word32 len, int* type)
         ret = wc_EccPrivateKeyDecode(der, &idx, ecc, len);
         ret = PkDecodeRet(ret, idx, len);
         if (ret == 0) {
-            *type = PK_TYPE_ECC;
+            ret = PkEccBits(ecc, &ctx->bits);
+        }
+        if (ret == 0) {
+            ctx->type = PK_TYPE_ECC;
         }
         wc_ecc_key_free(ecc);
     }
 #endif /* HAVE_ECC */
+    (void)der;
+    (void)len;
+    (void)idx;
+    return ret;
+}
+
+#ifndef NO_RSA
+/* A SubjectPublicKeyInfo of id-RSASSA-PSS, which Mbed TLS does not parse */
+static int PkRsaIsPss(const byte* der, word32 len)
+{
+    word32 idx = 0;
+    word32 oid = 0;
+    int seqLen;
+
+    return GetSequence(der, &idx, &seqLen, len) >= 0 &&
+        GetSequence(der, &idx, &seqLen, len) >= 0 &&
+        GetObjectId(der, &idx, &oid, oidKeyType, len) == 0 &&
+        oid == RSAPSSk;
+}
+
+/* Replaces pub, which can be PKCS #1, with the key's SubjectPublicKeyInfo */
+static int PkRsaSetSpki(mbedtls_pk_context* ctx, RsaKey* rsa)
+{
+    unsigned char* spki;
+    int len;
+    int ret;
+
+    len = wc_RsaKeyToPublicDer(rsa, NULL, 0);
+    if (len < 0) {
+        return wolfPSA_MbedRet(len, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
+    }
+    spki = (unsigned char*)XMALLOC((size_t)len, NULL, DYNAMIC_TYPE_PUBLIC_KEY);
+    if (spki == NULL) {
+        return PSA_ERROR_INSUFFICIENT_MEMORY;
+    }
+    ret = wc_RsaKeyToPublicDer(rsa, spki, (word32)len);
+    if (ret != len) {
+        XFREE(spki, NULL, DYNAMIC_TYPE_PUBLIC_KEY);
+        return wolfPSA_MbedRet(ret, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
+    }
+    XFREE(ctx->pub, NULL, DYNAMIC_TYPE_PUBLIC_KEY);
+    ctx->pub = spki;
+    ctx->pub_len = (size_t)len;
+    return 0;
+}
+#endif /* !NO_RSA */
+
+/* A public key, SubjectPublicKeyInfo or, for RSA, also PKCS #1 */
+static int PkCheckPublicKey(mbedtls_pk_context* ctx)
+{
+    const byte* der = ctx->pub;
+    word32 len = (word32)ctx->pub_len;
+    int ret = MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
+    word32 idx;
+#ifndef NO_RSA
+    RsaKey* rsa;
+#endif /* !NO_RSA */
+#ifdef HAVE_ECC
+    ecc_key* ecc;
+#endif /* HAVE_ECC */
+#if defined(HAVE_CURVE25519) && defined(HAVE_CURVE25519_KEY_IMPORT)
+    curve25519_key* x25519;
+#endif /* HAVE_CURVE25519 && HAVE_CURVE25519_KEY_IMPORT */
+#if defined(HAVE_CURVE448) && defined(HAVE_CURVE448_KEY_IMPORT)
+    curve448_key* x448;
+#endif /* HAVE_CURVE448 && HAVE_CURVE448_KEY_IMPORT */
+
+#ifndef NO_RSA
+    rsa = wc_NewRsaKey(NULL, INVALID_DEVID, NULL);
+    if (rsa == NULL) {
+        return PSA_ERROR_INSUFFICIENT_MEMORY;
+    }
+    idx = 0;
+    ret = wc_RsaPublicKeyDecode(der, &idx, rsa, len);
+    ret = PkDecodeRet(ret, idx, len);
+    if (ret == 0 && PkRsaIsPss(der, len)) {
+        ret = MBEDTLS_ERR_PK_UNKNOWN_PK_ALG;
+    }
+    if (ret == 0) {
+        ret = PkRsaSetSpki(ctx, rsa);
+    }
+    if (ret == 0) {
+        ctx->type = PK_TYPE_RSA_PUBLIC;
+        ctx->bits = (size_t)mp_count_bits(&rsa->n);
+    }
+    wc_DeleteRsaKey(rsa, &rsa);
+#endif /* !NO_RSA */
+#ifdef HAVE_ECC
+    if (ret == MBEDTLS_ERR_PK_KEY_INVALID_FORMAT) {
+        ecc = wc_ecc_key_new(NULL);
+        if (ecc == NULL) {
+            return PSA_ERROR_INSUFFICIENT_MEMORY;
+        }
+        idx = 0;
+        ret = wc_EccPublicKeyDecode(der, &idx, ecc, len);
+        ret = PkDecodeRet(ret, idx, len);
+        if (ret == 0) {
+            ret = PkEccBits(ecc, &ctx->bits);
+        }
+        if (ret == 0) {
+            ctx->type = PK_TYPE_ECC_PUBLIC;
+        }
+        wc_ecc_key_free(ecc);
+    }
+#endif /* HAVE_ECC */
+#if defined(HAVE_CURVE25519) && defined(HAVE_CURVE25519_KEY_IMPORT)
+    if (ret == MBEDTLS_ERR_PK_KEY_INVALID_FORMAT) {
+        x25519 = wc_curve25519_new(NULL, INVALID_DEVID, NULL);
+        if (x25519 == NULL) {
+            return PSA_ERROR_INSUFFICIENT_MEMORY;
+        }
+        idx = 0;
+        ret = wc_Curve25519PublicKeyDecode(der, &idx, x25519, len);
+        ret = PkDecodeRet(ret, idx, len);
+        if (ret == 0) {
+            ctx->type = PK_TYPE_MONTGOMERY_PUBLIC;
+            ctx->bits = 255;
+        }
+        wc_curve25519_delete(x25519, &x25519);
+    }
+#endif /* HAVE_CURVE25519 && HAVE_CURVE25519_KEY_IMPORT */
+#if defined(HAVE_CURVE448) && defined(HAVE_CURVE448_KEY_IMPORT)
+    if (ret == MBEDTLS_ERR_PK_KEY_INVALID_FORMAT) {
+        x448 = wc_curve448_new(NULL, INVALID_DEVID, NULL);
+        if (x448 == NULL) {
+            return PSA_ERROR_INSUFFICIENT_MEMORY;
+        }
+        idx = 0;
+        ret = wc_Curve448PublicKeyDecode(der, &idx, x448, len);
+        ret = PkDecodeRet(ret, idx, len);
+        if (ret == 0) {
+            ctx->type = PK_TYPE_MONTGOMERY_PUBLIC;
+            ctx->bits = 448;
+        }
+        wc_curve448_delete(x448, &x448);
+    }
+#endif /* HAVE_CURVE448 && HAVE_CURVE448_KEY_IMPORT */
     (void)der;
     (void)len;
     (void)idx;
@@ -164,7 +328,7 @@ static int PkIsEncrypted(const unsigned char* key, size_t keylen)
     size_t i;
     size_t j;
 
-    for (i = 0; i < sizeof(marks) / sizeof(marks[0]); i++) {
+    for (i = 0; i < XELEM_CNT(marks); i++) {
         markLen = XSTRLEN(marks[i]);
         for (j = 0; j + markLen <= keylen; j++) {
             if (XMEMCMP(key + j, marks[i], markLen) == 0) {
@@ -173,6 +337,67 @@ static int PkIsEncrypted(const unsigned char* key, size_t keylen)
         }
     }
     return 0;
+}
+
+/* An empty context and a key */
+static int PkParseArgs(const mbedtls_pk_context* ctx, const unsigned char* key,
+    size_t keylen)
+{
+    if (ctx == NULL || ctx->type != PK_TYPE_NONE || key == NULL ||
+            keylen > (size_t)INT_MAX) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (keylen == 0) {
+        return MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
+    }
+    return 0;
+}
+
+/* PEM with a header of the wolfCrypt type, or DER, into a new buffer */
+static int PkPemToDer(const unsigned char* key, size_t keylen, int type,
+    int dynType, unsigned char** out, size_t* outLen)
+{
+    DerBuffer* der = NULL;
+    int ret;
+
+    if (!wolfPSA_CryptoReady()) {
+        return PSA_ERROR_BAD_STATE;
+    }
+    /* Big enough for the DER of a PEM key */
+    *out = (unsigned char*)XMALLOC(keylen, NULL, dynType);
+    if (*out == NULL) {
+        return PSA_ERROR_INSUFFICIENT_MEMORY;
+    }
+#ifdef WOLFSSL_PEM_TO_DER
+    if (type == PRIVATEKEY_TYPE) {
+        /* Keeps a PKCS #8 header, which names the curve of an EC key */
+        ret = wc_KeyPemToDer(key, (int)keylen, *out, (int)keylen, NULL);
+    }
+    else {
+        ret = wc_PemToDer(key, (long)keylen, type, &der, NULL, NULL, NULL);
+        if (ret == 0) {
+            XMEMCPY(*out, der->buffer, der->length);
+            ret = (int)der->length;
+        }
+    }
+#else
+    (void)type;
+    ret = WC_NO_ERR_TRACE(ASN_NO_PEM_HEADER);
+#endif /* WOLFSSL_PEM_TO_DER */
+    if (ret > 0) {
+        *outLen = (size_t)ret;
+        ret = 0;
+    }
+    else if (ret == WC_NO_ERR_TRACE(ASN_NO_PEM_HEADER)) {
+        XMEMCPY(*out, key, keylen);
+        *outLen = keylen;
+        ret = 0;
+    }
+    else {
+        ret = wolfPSA_MbedRet(ret, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
+    }
+    wc_FreeDer(&der);
+    return ret;
 }
 
 /* PEM or DER. Encrypted keys are not supported, so pwd is not used. */
@@ -184,45 +409,17 @@ int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
     (void)pwd;
     (void)pwdlen;
 
-    if (ctx == NULL || ctx->der != NULL || key == NULL ||
-            keylen > (size_t)INT_MAX) {
-        return PSA_ERROR_INVALID_ARGUMENT;
-    }
-    if (keylen == 0) {
-        return MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
+    ret = PkParseArgs(ctx, key, keylen);
+    if (ret != 0) {
+        return ret;
     }
     if (PkIsEncrypted(key, keylen)) {
         return MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
     }
-    if (!wolfPSA_CryptoReady()) {
-        return PSA_ERROR_BAD_STATE;
-    }
-
-    /* Big enough for the DER of a PEM key */
-    ctx->der = (unsigned char*)XMALLOC(keylen, NULL, DYNAMIC_TYPE_PRIVATE_KEY);
-    if (ctx->der == NULL) {
-        return PSA_ERROR_INSUFFICIENT_MEMORY;
-    }
-#ifdef WOLFSSL_PEM_TO_DER
-    ret = wc_KeyPemToDer(key, (int)keylen, ctx->der, (int)keylen, NULL);
-#else
-    ret = WC_NO_ERR_TRACE(ASN_NO_PEM_HEADER);
-#endif /* WOLFSSL_PEM_TO_DER */
-    if (ret > 0) {
-        ctx->der_len = (size_t)ret;
-        ret = 0;
-    }
-    else if (ret == WC_NO_ERR_TRACE(ASN_NO_PEM_HEADER)) {
-        XMEMCPY(ctx->der, key, keylen);
-        ctx->der_len = keylen;
-        ret = 0;
-    }
-    else {
-        ret = wolfPSA_MbedRet(ret, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT);
-    }
-
+    ret = PkPemToDer(key, keylen, PRIVATEKEY_TYPE, DYNAMIC_TYPE_PRIVATE_KEY,
+        &ctx->der, &ctx->der_len);
     if (ret == 0) {
-        ret = PkCheckKey(ctx->der, (word32)ctx->der_len, &ctx->type);
+        ret = PkCheckKey(ctx);
     }
     if (ret != 0) {
         mbedtls_pk_free(ctx);
@@ -230,7 +427,28 @@ int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
     return ret;
 }
 
-/* The policy TF-PSA-Crypto gives the PSA key of a parsed private key */
+/* PEM or DER. RSA keys can also be PKCS #1. */
+int mbedtls_pk_parse_public_key(mbedtls_pk_context* ctx,
+    const unsigned char* key, size_t keylen)
+{
+    int ret;
+
+    ret = PkParseArgs(ctx, key, keylen);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = PkPemToDer(key, keylen, PUBLICKEY_TYPE, DYNAMIC_TYPE_PUBLIC_KEY,
+        &ctx->pub, &ctx->pub_len);
+    if (ret == 0) {
+        ret = PkCheckPublicKey(ctx);
+    }
+    if (ret != 0) {
+        mbedtls_pk_free(ctx);
+    }
+    return ret;
+}
+
+/* The usage and algorithm pairs mbedtls_pk_can_do_psa() allows per key type */
 static const struct {
     int type;
     psa_key_usage_t usage;
@@ -246,13 +464,29 @@ static const struct {
         PSA_ALG_RSA_PSS(PSA_ALG_ANY_HASH) },
     { PK_TYPE_ECC, PSA_KEY_USAGE_SIGN_HASH,
         MBEDTLS_PK_ALG_ECDSA(PSA_ALG_ANY_HASH) },
-    { PK_TYPE_ECC, PSA_KEY_USAGE_DERIVE_PUBLIC, PSA_ALG_ECDH }
+    { PK_TYPE_ECC, PSA_KEY_USAGE_DERIVE_PUBLIC, PSA_ALG_ECDH },
+    { PK_TYPE_RSA_PUBLIC, PSA_KEY_USAGE_VERIFY_HASH,
+        PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_RSA_PUBLIC, PSA_KEY_USAGE_VERIFY_HASH,
+        PSA_ALG_RSA_PSS(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_RSA_PUBLIC, PSA_KEY_USAGE_VERIFY_HASH,
+        PSA_ALG_RSA_PSS_ANY_SALT(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_RSA_PUBLIC, PSA_KEY_USAGE_ENCRYPT, PSA_ALG_RSA_PKCS1V15_CRYPT },
+    { PK_TYPE_RSA_PUBLIC, PSA_KEY_USAGE_ENCRYPT,
+        PSA_ALG_RSA_OAEP(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_ECC_PUBLIC, PSA_KEY_USAGE_VERIFY_HASH,
+        PSA_ALG_ECDSA(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_ECC_PUBLIC, PSA_KEY_USAGE_VERIFY_HASH,
+        PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_ANY_HASH) },
+    { PK_TYPE_ECC_PUBLIC, PSA_KEY_USAGE_DERIVE_PUBLIC, PSA_ALG_ECDH },
+    { PK_TYPE_MONTGOMERY_PUBLIC, PSA_KEY_USAGE_DERIVE_PUBLIC, PSA_ALG_ECDH }
 };
 
 /* alg is policyAlg, or policyAlg with its PSA_ALG_ANY_HASH set to a hash */
 static int PkAlgMatches(psa_algorithm_t alg, psa_algorithm_t policyAlg)
 {
-    return alg == policyAlg || (PSA_ALG_IS_SIGN_HASH(alg) &&
+    return alg == policyAlg ||
+        (PSA_ALG_GET_HASH(policyAlg) == PSA_ALG_ANY_HASH &&
         (alg & ~PSA_ALG_HASH_MASK) == (policyAlg & ~PSA_ALG_HASH_MASK));
 }
 
@@ -264,7 +498,11 @@ int mbedtls_pk_can_do_psa(const mbedtls_pk_context* pk, psa_algorithm_t alg,
     if (pk == NULL) {
         return 0;
     }
-    for (i = 0; i < sizeof(pkPolicy) / sizeof(pkPolicy[0]); i++) {
+    /* A public key can also do ECDH with a KDF */
+    if (pk->pub != NULL && PSA_ALG_IS_KEY_AGREEMENT(alg)) {
+        alg = PSA_ALG_KEY_AGREEMENT_GET_BASE(alg);
+    }
+    for (i = 0; i < XELEM_CNT(pkPolicy); i++) {
         if (pkPolicy[i].type == pk->type && pkPolicy[i].usage == usage &&
                 PkAlgMatches(alg, pkPolicy[i].alg)) {
             return 1;
@@ -304,6 +542,20 @@ int mbedtls_pk_parse_keyfile(mbedtls_pk_context* ctx, const char* path,
         ret = mbedtls_pk_parse_key(ctx, buf, len,
             (const unsigned char*)password,
             (password == NULL) ? 0 : XSTRLEN(password));
+    }
+    wolfPSA_MbedFreeFile(buf, len);
+    return ret;
+}
+
+int mbedtls_pk_parse_public_keyfile(mbedtls_pk_context* ctx, const char* path)
+{
+    unsigned char* buf;
+    size_t len;
+    int ret;
+
+    ret = wolfPSA_MbedLoadFile(path, &buf, &len);
+    if (ret == 0) {
+        ret = mbedtls_pk_parse_public_key(ctx, buf, len);
     }
     wolfPSA_MbedFreeFile(buf, len);
     return ret;
