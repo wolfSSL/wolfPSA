@@ -24,8 +24,9 @@
 #endif
 
 #include "psa_config.h"
+#include "psa_want_gate.h"
 
-#if defined(WOLFSSL_PSA_ENGINE) && defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFSSL_PSA_ENGINE) && defined(WOLFPSA_CHACHAPOLY)
 
 #include <psa/crypto.h>
 #include "psa_size.h"
@@ -172,4 +173,4 @@ psa_status_t psa_chacha20_poly1305_decrypt(
     return PSA_SUCCESS;
 }
 
-#endif /* WOLFSSL_PSA_ENGINE && HAVE_CHACHA && HAVE_POLY1305 */
+#endif /* WOLFSSL_PSA_ENGINE && WOLFPSA_CHACHAPOLY */

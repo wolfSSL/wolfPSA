@@ -124,3 +124,13 @@ jobs:
           make -C test psa_secure_set_test ASAN=1
           rm -rf test/.store
           ./test/psa_secure_set_test
+
+      # GCM stays in wolfCrypt but PSA_WANT_WITHOUT drops it from the PSA surface
+      - name: Run the PSA_WANT gating test
+        run: |
+          make -C test psa_want_gated_test
+          rm -rf test/.store
+          ./test/psa_want_gated_test
+          make -C test psa_want_gated_test ASAN=1
+          rm -rf test/.store
+          ./test/psa_want_gated_test

@@ -56,12 +56,25 @@ EMIT_TAG = "__WPSA_EMIT__"
 WANT_RE = re.compile(r"PSA_WANT_[A-Z0-9_]+")
 # TF-PSA-Crypto options, defined without a value as in TF-PSA
 OPTION_RE = re.compile(r"MBEDTLS_[A-Z0-9_]+")
+# Algorithms whose wolfPSA code follows PSA_WANT under WOLFPSA_WANT_GATED
+GATED = ("PSA_WANT_ALG_CCM", "PSA_WANT_ALG_CHACHA20_POLY1305", "PSA_WANT_ALG_GCM")
 
 
 def main(argv):
+    without = set()
+    while len(argv) > 2 and argv[1] == "--without":
+        if argv[2] not in GATED:
+            sys.stderr.write(
+                "gen-crypto-config.py: %s is compiled from the wolfCrypt build; "
+                "turn it off there (--without takes %s)\n"
+                % (argv[2], ", ".join(sorted(GATED))))
+            return 2
+        without.add(argv[2])
+        argv = argv[:1] + argv[3:]
     if len(argv) < 4:
         sys.stderr.write(
-            "usage: gen-crypto-config.py <out> <cc> <probe.c> [flags...]\n")
+            "usage: gen-crypto-config.py [--without PSA_WANT_ALG_<aead>]... "
+            "<out> <cc> <probe.c> [flags...]\n")
         return 2
 
     out_path, probe = argv[1], argv[3]
@@ -91,6 +104,10 @@ def main(argv):
         for match in OPTION_RE.finditer(line)
     })
 
+    if without:
+        # psa_config.h compiles these out too, so no size macro shrinks under live code
+        wants = [want for want in wants if want not in without]
+        options.append("WOLFPSA_WANT_GATED")
     if not wants:
         sys.stderr.write(
             "gen-crypto-config.py: probe produced no PSA_WANT symbols\n")

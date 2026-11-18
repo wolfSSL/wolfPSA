@@ -33,7 +33,7 @@
 #include <wolfpsa/psa_chacha20_poly1305.h>
 #include <wolfssl/wolfcrypt/aes.h>
 #include <wolfssl/wolfcrypt/mem_track.h>
-#if defined(HAVE_XCHACHA) || (defined(HAVE_CHACHA) && defined(HAVE_POLY1305))
+#if defined(HAVE_XCHACHA) || defined(WOLFPSA_CHACHAPOLY)
 #include <wolfssl/wolfcrypt/chacha20_poly1305.h>
 #endif
 #ifdef HAVE_ASCON
@@ -85,7 +85,7 @@ static psa_status_t wolfpsa_aead_append(uint8_t **buf, size_t *len,
     return PSA_SUCCESS;
 }
 
-#if defined(HAVE_AESGCM) || defined(HAVE_AESCCM)
+#if defined(WOLFPSA_GCM) || defined(WOLFPSA_CCM)
 /* WC_AES_BITSLICED adds 15 * 16 * W words of W bits to Aes (W is
  * WC_AES_BS_WORD_SIZE), 122,880 bytes at W = 64, so keep it off the stack. */
 static int wolfpsa_aes_new(Aes **out)
@@ -191,7 +191,7 @@ static psa_status_t wolfpsa_aead_check_lengths(psa_algorithm_t alg,
     return PSA_SUCCESS;
 }
 
-#ifdef HAVE_AESGCM
+#ifdef WOLFPSA_GCM
 static psa_status_t wolfpsa_aead_gcm_check_tag_size(size_t tag_length)
 {
     if (tag_length != 4 && tag_length != 8 &&
@@ -336,8 +336,8 @@ static psa_status_t wolfpsa_aead_setup(psa_aead_operation_t *operation,
     }
     /* Multipart GCM streams through the wolfCrypt GCM streaming API, which
      * only exists with WOLFSSL_AESGCM_STREAM; the buffered one-shot path uses
-     * wc_AesGcmEncrypt()/wc_AesGcmDecrypt() and needs HAVE_AESGCM only. */
-#if !defined(HAVE_AESGCM)
+     * wc_AesGcmEncrypt()/wc_AesGcmDecrypt() and needs WOLFPSA_GCM only. */
+#if !defined(WOLFPSA_GCM)
     if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_GCM)) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
@@ -348,8 +348,8 @@ static psa_status_t wolfpsa_aead_setup(psa_aead_operation_t *operation,
 #endif
     /* Multipart CCM streams through the AES-direct block API, which only
      * exists with WOLFSSL_AES_DIRECT; the buffered one-shot path uses
-     * wc_AesCcmEncrypt()/wc_AesCcmDecrypt() and needs HAVE_AESCCM only. */
-#if !defined(HAVE_AESCCM)
+     * wc_AesCcmEncrypt()/wc_AesCcmDecrypt() and needs WOLFPSA_CCM only. */
+#if !defined(WOLFPSA_CCM)
     if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM)) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
@@ -358,7 +358,7 @@ static psa_status_t wolfpsa_aead_setup(psa_aead_operation_t *operation,
         return PSA_ERROR_NOT_SUPPORTED;
     }
 #endif
-#if !defined(HAVE_CHACHA) || !defined(HAVE_POLY1305)
+#if !defined(WOLFPSA_CHACHAPOLY)
     if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CHACHA20_POLY1305)) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
@@ -395,7 +395,7 @@ static psa_status_t wolfpsa_aead_setup(psa_aead_operation_t *operation,
     }
     ctx->direction = (usage == PSA_KEY_USAGE_ENCRYPT) ? 1 : 0;
     ctx->multipart = multipart;
-#ifdef HAVE_AESCCM
+#ifdef WOLFPSA_CCM
     if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM) &&
         wc_AesCcmCheckTagSize((int)ctx->tag_length) != 0) {
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
@@ -403,7 +403,7 @@ static psa_status_t wolfpsa_aead_setup(psa_aead_operation_t *operation,
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 #endif
-#ifdef HAVE_AESGCM
+#ifdef WOLFPSA_GCM
     if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_GCM)) {
         status = wolfpsa_aead_gcm_check_tag_size(ctx->tag_length);
         if (status != PSA_SUCCESS) {
@@ -413,7 +413,7 @@ static psa_status_t wolfpsa_aead_setup(psa_aead_operation_t *operation,
         }
     }
 #endif
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
     /* ChaCha20-Poly1305 has no truncated-tag interface; only the native
      * 16-byte tag is supported. Reject shortened-tag variants here rather than
      * accepting them and failing the encrypt/decrypt roundtrip later. */
@@ -581,15 +581,15 @@ psa_status_t psa_aead_generate_nonce(psa_aead_operation_t *operation,
     return PSA_SUCCESS;
 }
 
-#if (defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
-    (defined(HAVE_CHACHA) && defined(HAVE_POLY1305))
+#if (defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
+    (defined(WOLFPSA_CHACHAPOLY))
 /* Start the GCM or ChaCha20-Poly1305 stream: the nonce is set and AAD and
  * data may follow, in pieces. */
 static int wolfpsa_aead_stream_init(wolfpsa_aead_ctx_t *ctx)
 {
     int ret = NOT_COMPILED_IN;
 
-#if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
+#if defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
         /* wolfCrypt requires wc_AesInit() before the GCM streaming init; the
          * abort path releases it via ctx->gcm_inited. */
@@ -606,7 +606,7 @@ static int wolfpsa_aead_stream_init(wolfpsa_aead_ctx_t *ctx)
         }
     }
 #endif
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CHACHA20_POLY1305)) {
         ret = wc_ChaCha20Poly1305_Init(&ctx->chacha, ctx->key, ctx->nonce,
                                        ctx->direction);
@@ -618,8 +618,8 @@ static int wolfpsa_aead_stream_init(wolfpsa_aead_ctx_t *ctx)
 #endif
 
 #if defined(WOLFPSA_AEAD_STREAM_AAD) && \
-    ((defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
-     (defined(HAVE_CHACHA) && defined(HAVE_POLY1305)))
+    ((defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
+     (defined(WOLFPSA_CHACHAPOLY)))
 /* Multipart GCM and ChaCha20-Poly1305 take AAD into the stream as it comes,
  * so a long AAD needs no buffer. Feeds it and returns 1 when this applies. */
 static int wolfpsa_aead_stream_ad(wolfpsa_aead_ctx_t *ctx,
@@ -631,7 +631,7 @@ static int wolfpsa_aead_stream_ad(wolfpsa_aead_ctx_t *ctx,
     if (!ctx->multipart) {
         return 0;
     }
-#if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
+#if defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
         if (!ctx->streaming) {
             ret = wolfpsa_aead_stream_init(ctx);
@@ -648,7 +648,7 @@ static int wolfpsa_aead_stream_ad(wolfpsa_aead_ctx_t *ctx,
         return 1;
     }
 #endif
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CHACHA20_POLY1305)) {
         if (!ctx->streaming) {
             ret = wolfpsa_aead_stream_init(ctx);
@@ -711,8 +711,8 @@ psa_status_t psa_aead_update_ad(psa_aead_operation_t *operation,
     }
 
 #if defined(WOLFPSA_AEAD_STREAM_AAD) && \
-    ((defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
-     (defined(HAVE_CHACHA) && defined(HAVE_POLY1305)))
+    ((defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
+     (defined(WOLFPSA_CHACHAPOLY)))
     streamed = wolfpsa_aead_stream_ad(ctx, input, input_length, &status);
     if (streamed && status == PSA_SUCCESS) {
         ctx->aad_length += input_length;
@@ -731,7 +731,7 @@ psa_status_t psa_aead_update_ad(psa_aead_operation_t *operation,
     return status;
 }
 
-#if defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT)
+#if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
 /* Big-endian increment of the last lenSz bytes of a CCM counter block.
  * Fixed-iteration carry propagation: iteration count depends only on lenSz
  * (a public value), never on the counter bytes. */
@@ -988,7 +988,7 @@ ccm_finish_done:
     wc_ForceZero(tmp, sizeof(tmp));
     return status;
 }
-#endif /* HAVE_AESCCM && WOLFSSL_AES_DIRECT */
+#endif /* WOLFPSA_CCM && WOLFSSL_AES_DIRECT */
 
 /* Stream one update() chunk through the per-algorithm streaming primitive.
  * On the first call the algorithm context is initialised and the AAD is fed
@@ -1008,7 +1008,7 @@ static psa_status_t wolfpsa_aead_stream_update(wolfpsa_aead_ctx_t *ctx,
     (void)ret;
 
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
-#if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
+#if defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)
         if (first) {
             ret = wolfpsa_aead_stream_init(ctx);
             if (ret != 0) {
@@ -1031,7 +1031,7 @@ static psa_status_t wolfpsa_aead_stream_update(wolfpsa_aead_ctx_t *ctx,
 #endif
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CHACHA20_POLY1305)) {
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
         if (first) {
             ret = wolfpsa_aead_stream_init(ctx);
             if (ret != 0) {
@@ -1056,7 +1056,7 @@ static psa_status_t wolfpsa_aead_stream_update(wolfpsa_aead_ctx_t *ctx,
 #endif
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM)) {
-#if defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT)
+#if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
         if (first) {
             ret = wolfpsa_aead_ccm_init(ctx);
             if (ret != PSA_SUCCESS) {
@@ -1081,7 +1081,7 @@ static psa_status_t wolfpsa_aead_stream_final(wolfpsa_aead_ctx_t *ctx,
 
     (void)tag; (void)tag_len; (void)ret;
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
-#if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
+#if defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)
         ret = (ctx->direction) ?
             wc_AesGcmEncryptFinal(&ctx->aes.gcm, tag, (word32)tag_len) :
             wc_AesGcmDecryptFinal(&ctx->aes.gcm, tag, (word32)tag_len);
@@ -1097,7 +1097,7 @@ static psa_status_t wolfpsa_aead_stream_final(wolfpsa_aead_ctx_t *ctx,
 #endif
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CHACHA20_POLY1305)) {
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
         uint8_t computed[CHACHA20_POLY1305_AEAD_AUTHTAG_SIZE];
         psa_status_t status;
 
@@ -1124,7 +1124,7 @@ chacha_done:
 #endif
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM)) {
-#if defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT)
+#if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
         if (ctx->direction) {
             return wolfpsa_aead_ccm_finish(ctx, tag, tag_len);
         }
@@ -1259,7 +1259,7 @@ static psa_status_t wolfpsa_aead_encrypt_final(wolfpsa_aead_ctx_t *ctx,
                                                size_t *tag_length)
 {
     int ret;
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
     size_t chacha_ciphertext_size = 0;
 #endif
     const uint8_t *input;
@@ -1313,7 +1313,7 @@ static psa_status_t wolfpsa_aead_encrypt_final(wolfpsa_aead_ctx_t *ctx,
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CHACHA20_POLY1305)) {
         if (ctx->input_length > SIZE_MAX - ctx->tag_length) {
             return PSA_ERROR_BUFFER_TOO_SMALL;
@@ -1343,7 +1343,7 @@ static psa_status_t wolfpsa_aead_encrypt_final(wolfpsa_aead_ctx_t *ctx,
     out = (ciphertext != NULL) ? ciphertext : &empty_out;
 
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
-#ifdef HAVE_AESGCM
+#ifdef WOLFPSA_GCM
         Aes *aes = NULL;
         ret = wolfpsa_aes_new(&aes);
         if (ret != 0) {
@@ -1366,7 +1366,7 @@ static psa_status_t wolfpsa_aead_encrypt_final(wolfpsa_aead_ctx_t *ctx,
 #endif
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM)) {
-#ifdef HAVE_AESCCM
+#ifdef WOLFPSA_CCM
         Aes *aes = NULL;
         if (wc_AesCcmCheckTagSize((int)ctx->tag_length) != 0) {
             return PSA_ERROR_NOT_SUPPORTED;
@@ -1392,7 +1392,7 @@ static psa_status_t wolfpsa_aead_encrypt_final(wolfpsa_aead_ctx_t *ctx,
 #endif
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CHACHA20_POLY1305)) {
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
         size_t out_len = 0;
         uint8_t *tmp = (uint8_t *)XMALLOC(chacha_ciphertext_size, NULL,
                                           DYNAMIC_TYPE_TMP_BUFFER);
@@ -1515,7 +1515,7 @@ static psa_status_t wolfpsa_aead_decrypt_final(wolfpsa_aead_ctx_t *ctx,
     out = (plaintext != NULL) ? plaintext : &empty_out;
 
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
-#ifdef HAVE_AESGCM
+#ifdef WOLFPSA_GCM
         Aes *aes = NULL;
         ret = wolfpsa_aes_new(&aes);
         if (ret != 0) {
@@ -1541,7 +1541,7 @@ static psa_status_t wolfpsa_aead_decrypt_final(wolfpsa_aead_ctx_t *ctx,
 #endif
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM)) {
-#ifdef HAVE_AESCCM
+#ifdef WOLFPSA_CCM
         Aes *aes = NULL;
         if (wc_AesCcmCheckTagSize((int)tag_length) != 0) {
             return PSA_ERROR_INVALID_SIGNATURE;
@@ -1570,7 +1570,7 @@ static psa_status_t wolfpsa_aead_decrypt_final(wolfpsa_aead_ctx_t *ctx,
 #endif
     }
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CHACHA20_POLY1305)) {
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
         size_t out_len = 0;
         size_t ciphertext_len;
         uint8_t *tmp;
@@ -2276,8 +2276,8 @@ psa_status_t psa_aead_decrypt(psa_key_id_t key,
 psa_status_t psa_aead_abort(psa_aead_operation_t *operation)
 {
     wolfpsa_aead_ctx_t *ctx = wolfpsa_aead_get_ctx(operation);
-#if (defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
-    (defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT))
+#if (defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
+    (defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT))
     /* The two share one union, so at most one of them may be freed. */
     Aes *live_aes = NULL;
 #endif
@@ -2287,18 +2287,18 @@ psa_status_t psa_aead_abort(psa_aead_operation_t *operation)
     }
 
     if (ctx != NULL) {
-#if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
+#if defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)
         if (ctx->gcm_inited) {
             live_aes = &ctx->aes.gcm;
         }
 #endif
-#if defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT)
+#if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
         if (live_aes == NULL && ctx->ccm_aes_inited) {
             live_aes = &ctx->aes.ccm;
         }
 #endif
-#if (defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
-    (defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT))
+#if (defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
+    (defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT))
         if (live_aes != NULL) {
             wc_AesFree(live_aes);
         }

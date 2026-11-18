@@ -24,10 +24,12 @@
 
 #include <stdint.h>
 
+#include "psa_want_gate.h"
+
 #include <wolfpsa/psa/crypto.h>
 
 #include <wolfssl/wolfcrypt/aes.h>
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
 #include <wolfssl/wolfcrypt/chacha20_poly1305.h>
 #endif
 
@@ -59,24 +61,24 @@ typedef struct wolfpsa_aead_ctx {
     int streaming;
     /* One operation is GCM or CCM, never both, and sizeof(Aes) is over
      * 120 KB under WC_AES_BITSLICED, so the two share storage. */
-#if (defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
-    (defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT))
+#if (defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
+    (defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT))
     union {
-#if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
+#if defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)
         Aes gcm;
 #endif
-#if defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT)
+#if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
         Aes ccm;
 #endif
     } aes;
 #endif
-#if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
+#if defined(WOLFPSA_GCM) && defined(WOLFSSL_AESGCM_STREAM)
     int gcm_inited;
 #endif
-#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+#if defined(WOLFPSA_CHACHAPOLY)
     ChaChaPoly_Aead chacha;
 #endif
-#if defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT)
+#if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
     /* Hand-rolled streaming CCM (wolfCrypt has no streaming CCM API): a CTR
      * for the ciphertext plus a running CBC-MAC for the tag. */
     int ccm_aes_inited;

@@ -104,5 +104,8 @@ test/build-track-asan
 .cache/
 compile_commands.json
 test/psa_secure_set_test
+test/psa_want_gated_test
 test/build-secure-set
 test/build-secure-set-asan
+test/build-want-gated
+test/build-want-gated-asan
