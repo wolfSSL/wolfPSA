@@ -338,6 +338,10 @@ psa_status_t psa_asymmetric_verify_ecc(psa_key_type_t key_type,
     wc_ecc_free(&ecc);
 #endif
     
+    /* wolfCrypt refuses r or s outside [1, n-1] before verifying. */
+    if (ret == WC_NO_ERR_TRACE(MP_ZERO_E) || ret == WC_NO_ERR_TRACE(MP_VAL)) {
+        return PSA_ERROR_INVALID_SIGNATURE;
+    }
     if (ret != 0) {
         return wc_error_to_psa_status(ret);
     }
