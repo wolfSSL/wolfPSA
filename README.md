@@ -4,9 +4,10 @@ wolfPSA provides the Mbed TLS 4.x API on top of wolfCrypt, wolfSSL's crypto
 library. Built with `MBEDTLS_COMPAT=1` against wolfSSL master, it lets
 applications written for Mbed TLS 4.x build without source changes and link
 `libwolfpsa.a` in place of Mbed TLS's libraries. Parts of the API are not
-available yet, such as verify callbacks and `MBEDTLS_SSL_VERIFY_OPTIONAL`:
-see the [known differences][differences].
+available yet, such as session tickets, ALPN and DTLS, and some behave
+differently: see [coming soon][soon] and the [known differences][differences].
 
+[soon]: docs/mbedtls-compatibility.md#coming-soon
 [differences]: docs/mbedtls-compatibility.md#known-differences-from-mbed-tls
 
 wolfPSA also implements the PSA Crypto API and parts of TF-PSA-Crypto, the
