@@ -108,6 +108,7 @@ int wolfPSA_MbedRet(int wcRet, int err)
         PSA_ERROR_INSUFFICIENT_MEMORY : err;
 }
 
+#ifndef NO_ASN
 /* A decoded key must fill the buffer */
 static int PkDecodeRet(int wcRet, word32 idx, word32 len)
 {
@@ -447,6 +448,28 @@ int mbedtls_pk_parse_public_key(mbedtls_pk_context* ctx,
     }
     return ret;
 }
+#else
+/* Key parsing decodes ASN.1 */
+int mbedtls_pk_parse_key(mbedtls_pk_context* ctx, const unsigned char* key,
+    size_t keylen, const unsigned char* pwd, size_t pwdlen)
+{
+    (void)ctx;
+    (void)key;
+    (void)keylen;
+    (void)pwd;
+    (void)pwdlen;
+    return MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
+}
+
+int mbedtls_pk_parse_public_key(mbedtls_pk_context* ctx,
+    const unsigned char* key, size_t keylen)
+{
+    (void)ctx;
+    (void)key;
+    (void)keylen;
+    return MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
+}
+#endif /* !NO_ASN */
 
 /* The usage and algorithm pairs mbedtls_pk_can_do_psa() allows per key type */
 static const struct {
