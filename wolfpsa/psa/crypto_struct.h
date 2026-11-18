@@ -92,9 +92,9 @@ static inline psa_key_derivation_operation_t psa_key_derivation_operation_init(v
     return v;
 }
 
-typedef struct psa_pake_operation_s {
+struct psa_pake_operation_s {
     uintptr_t opaque;
-} psa_pake_operation_t;
+};
 #define PSA_PAKE_OPERATION_INIT { 0 }
 static inline psa_pake_operation_t psa_pake_operation_init(void)
 {
