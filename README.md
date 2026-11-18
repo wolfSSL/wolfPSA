@@ -146,12 +146,12 @@ Mapped so far:
   endpoint, transport, get_endpoint, set_user_data_p, set_user_data_n,
   get_user_data_p, get_user_data_n
 - ssl: init, free, setup, context_get_config, session_reset, set_bio,
-  set_hostname, set_session, get_session, handshake, is_handshake_over,
-  get_verify_result, get_ciphersuite, get_ciphersuite_id_from_ssl,
-  get_version, get_version_number, get_bytes_avail, read, write,
-  close_notify, set_user_data_p, set_user_data_n, get_user_data_p,
-  get_user_data_n; list_ciphersuites, get_ciphersuite_name,
-  get_ciphersuite_id
+  set_timer_cb, set_hostname, set_session, get_session, handshake,
+  is_handshake_over, get_verify_result, get_ciphersuite,
+  get_ciphersuite_id_from_ssl, get_version, get_version_number,
+  get_bytes_avail, read, write, close_notify, set_user_data_p,
+  set_user_data_n, get_user_data_p, get_user_data_n; list_ciphersuites,
+  get_ciphersuite_name, get_ciphersuite_id
 - ssl_session: init, free; save and load return
   `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`
 - ssl_conf: max_frag_len, with `MBEDTLS_SSL_MAX_FRAGMENT_LENGTH`; ssl:
@@ -159,6 +159,8 @@ Mapped so far:
   `MBEDTLS_SSL_KEYING_MATERIAL_EXPORT`. The two macros need wolfSSL's
   `HAVE_MAX_FRAGMENT` and `HAVE_KEYING_MATERIAL`, which wolfPSA's
   `user_settings.h` defines.
+- timing: get_timer, set_delay, get_delay, get_final_delay, on a monotonic
+  clock. `MBEDTLS_TIMING_C` needs Windows or a Unix-like system.
 
 Known differences from Mbed TLS:
 
@@ -267,13 +269,13 @@ runs these against `libwolfpsa.a`. Each is also a target of its own;
 - `mbedtls-compat-unit`: `test/mbedtls_compat/x509_crt_test.c`,
   `pk_test.c` and `pem_test.c` parse Mbed TLS's test certificates and keys.
   `ssl_test.c` checks return codes and verify results, client and server in
-  one process.
+  one process. `timing_test.c` checks the timers.
 - `mbedtls-compat-programs`: the Mbed TLS migration guide client
   (`test/mbedtls_compat/client-tls-mbedtls.c`) and Mbed TLS's sample
-  programs, built unchanged, run against the wolfSSL example server. Mbed
-  TLS's server programs run against the wolfSSL example client. With
-  `MBEDTLS_THREADING_C=1`, `ssl_pthread_server` serves clients at the same
-  time.
+  programs, built unchanged. The clients run against the wolfSSL example
+  server and the servers against the wolfSSL example client. `load_roots`
+  needs neither. With `MBEDTLS_THREADING_C=1`, `ssl_pthread_server` serves
+  clients at the same time.
 - `mbedtls-compat-suite`: Mbed TLS's TLS unit tests, the cases that test
   the public API (below).
 

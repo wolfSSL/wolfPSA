@@ -302,3 +302,8 @@ __WPSA_EMIT__MBEDTLS_SSL_KEYING_MATERIAL_EXPORT
 #endif /* HAVE_KEYING_MATERIAL */
 #endif
 #endif
+/* A monotonic clock, on Windows and Unix-like systems */
+#if defined(WOLFPSA_MBEDTLS_COMPAT) && (defined(USE_WINDOWS_API) || \
+    defined(__unix__) || defined(__APPLE__))
+__WPSA_EMIT__MBEDTLS_TIMING_C
+#endif /* WOLFPSA_MBEDTLS_COMPAT && a monotonic clock */

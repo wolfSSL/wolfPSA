@@ -1,13 +1,13 @@
 #!/bin/sh
 
 # Run the Mbed TLS migration guide client, client-tls-mbedtls.c, and Mbed
-# TLS's sample programs, built unchanged from MBEDTLS_PATH, against the
-# wolfSSL example server, one server per case. A program missing a feature
-# macro prints "... not defined" and exits 0, so that output fails the case,
-# and a case can require a line of output. A case whose wrapper, such as
-# faketime, is not installed is skipped. Then Mbed TLS's server programs,
-# against the wolfSSL example client. WRAP prefixes the programs. Run by the
-# Makefile in this directory, which sets the paths.
+# TLS's sample programs, built unchanged from MBEDTLS_PATH. A case with
+# server options runs against its own wolfSSL example server. A program
+# missing a feature macro prints "... not defined" and exits 0, so that
+# output fails the case, and a case can require a line of output. A case
+# whose wrapper, such as faketime, is not installed is skipped. Then Mbed
+# TLS's server programs, against the wolfSSL example client. WRAP prefixes
+# the programs. Run by the Makefile in this directory, which sets the paths.
 
 : "${BUILD_DIR:?}" "${WOLFSSL_PATH:?}" "${WOLFSSL_SERVER:?}" \
     "${WOLFSSL_CLIENT:?}" "${MBEDTLS_PATH:?}"
@@ -49,6 +49,8 @@ TLS13="-p 11111 -d -v 4"
 TLS12="-p 11111 -d -v 3"
 GOT="tls_get() returned"
 P=programs/ssl
+X=programs/x509
+ROOTS="$DATA/test-ca.crt $DATA/test-ca2.crt $DATA/test-ca-sha256.crt"
 # mini_client's built-in CA, test-ca2 from 2013, encodes its name as only the
 # older server5 certs do, and wolfSSL compares encoded names
 SERVER5="-p 4433 -d -c $DATA/server5-expired.crt -k $DATA/server5.key"
@@ -68,7 +70,8 @@ while IFS='|' read -r name prog args sopts wrap expect want; do
         SKIPS=$((SKIPS + 1))
         continue
     fi
-    start_server "$sopts"
+    srv=
+    [ -z "$sopts" ] || start_server "$sopts"
     out=$(cd "$WOLFSSL_PATH" && $wrap $WRAP "$BUILD_DIR/$prog" $args 2>&1)
     rc=$?
     if [ $rc -eq "$expect" ] &&
@@ -79,8 +82,10 @@ while IFS='|' read -r name prog args sopts wrap expect want; do
         echo "FAIL: $name: exit $rc: $out"
         FAILS=$((FAILS + 1))
     fi
-    kill $srv 2>/dev/null
-    wait $srv 2>/dev/null
+    if [ -n "$srv" ]; then
+        kill $srv 2>/dev/null
+        wait $srv 2>/dev/null
+    fi
 done <<CASES
 TLS 1.3|$C|$LO|$TLS13||0|$GOT 0
 TLS 1.2|$C|$LO|$TLS12||0|$GOT 0
@@ -95,6 +100,7 @@ not a certificate, X509_INVALID_FORMAT|$C|-A README.md $LO|$TLS13||1|$GOT -8576
 IP address host|$C|-S $LO $LO|$TLS13||0|$GOT 0
 wrong IP address host, VERIFY_FAILED|$C|-S 127.0.0.2 $LO|$TLS13||1|$GOT -9984
 IPv6 address host, VERIFY_FAILED|$C|-S ::1 $LO|$TLS13||1|$GOT -9984
+load_roots|$X/load_roots|iterations=10 $ROOTS|||0|10 iterations ->
 mini_client|$P/mini_client||$SERVER5|$CA2_DATE|0|
 mini_client, expired CA, ssl_handshake_failed|$P/mini_client||$SERVER5||7|
 CASES
