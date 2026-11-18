@@ -134,12 +134,51 @@ static psa_status_t run_mac(psa_key_id_t key, psa_algorithm_t alg)
 
 /* Returns PSA_SUCCESS, or PSA_ERROR_NOT_SUPPORTED when the library does not
  * support the case */
+static psa_status_t run_cipher(psa_key_id_t key, psa_algorithm_t alg)
+{
+    uint8_t in[16];
+    uint8_t out[64];
+    size_t len = 0;
+
+    memset(in, 0x5A, sizeof(in));
+    return psa_cipher_encrypt(key, alg, in, sizeof(in), out, sizeof(out),
+                              &len);
+}
+
+static psa_status_t run_kdf(psa_algorithm_t alg)
+{
+    psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
+    uint8_t secret[16];
+    uint8_t label[4] = { 'w', 'a', 'n', 't' };
+    uint8_t out[16];
+    psa_status_t status;
+
+    memset(secret, 0x3C, sizeof(secret));
+    status = psa_key_derivation_setup(&op, alg);
+    if (status == PSA_SUCCESS) {
+        status = psa_key_derivation_input_bytes(&op,
+            PSA_KEY_DERIVATION_INPUT_SECRET, secret, sizeof(secret));
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_key_derivation_input_bytes(&op,
+            PSA_KEY_DERIVATION_INPUT_LABEL, label, sizeof(label));
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_key_derivation_output_bytes(&op, out, sizeof(out));
+    }
+    (void)psa_key_derivation_abort(&op);
+    return status;
+}
+
 static psa_status_t run_case(const struct want_case* c)
 {
     psa_key_attributes_t attr = psa_key_attributes_init();
     psa_key_id_t key = PSA_KEY_ID_NULL;
     psa_status_t status;
 
+    if (PSA_ALG_IS_KEY_DERIVATION(c->alg)) {
+        return run_kdf(c->alg);
+    }
     psa_set_key_type(&attr, c->type);
     psa_set_key_bits(&attr, c->bits);
     psa_set_key_algorithm(&attr, c->alg);
@@ -147,7 +186,7 @@ static psa_status_t run_case(const struct want_case* c)
         psa_set_key_usage_flags(&attr,
             PSA_KEY_USAGE_DERIVE | PSA_KEY_USAGE_EXPORT);
     }
-    else if (PSA_ALG_IS_AEAD(c->alg)) {
+    else if (PSA_ALG_IS_AEAD(c->alg) || PSA_ALG_IS_CIPHER(c->alg)) {
         psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT);
     }
     else if (PSA_ALG_IS_MAC(c->alg)) {
@@ -170,6 +209,9 @@ static psa_status_t run_case(const struct want_case* c)
         }
         else if (PSA_ALG_IS_AEAD(c->alg)) {
             status = run_aead(key, c->type, c->alg);
+        }
+        else if (PSA_ALG_IS_CIPHER(c->alg)) {
+            status = run_cipher(key, c->alg);
         }
         else if (PSA_ALG_IS_MAC(c->alg)) {
             status = run_mac(key, c->alg);
@@ -278,6 +320,15 @@ int main(void)
         { "AES-128-CCM", PSA_KEY_TYPE_AES, 128, PSA_ALG_CCM,
             aes && IS_DEFINED(PSA_WANT_ALG_CCM),
             aesC && IS_DEFINED(MBEDTLS_CCM_C) },
+        { "AES-128 CCM* without a tag", PSA_KEY_TYPE_AES, 128,
+            PSA_ALG_CCM_STAR_NO_TAG,
+            aes && IS_DEFINED(PSA_WANT_ALG_CCM_STAR_NO_TAG), NOT_CHECKED },
+        { "SP800-108 counter HMAC-SHA-256", 0, 0,
+            PSA_ALG_SP800_108_COUNTER_HMAC(PSA_ALG_SHA_256),
+            sha256 && IS_DEFINED(PSA_WANT_ALG_SP800_108_COUNTER_HMAC),
+            NOT_CHECKED },
+        { "SP800-108 counter CMAC", 0, 0, PSA_ALG_SP800_108_COUNTER_CMAC,
+            IS_DEFINED(PSA_WANT_ALG_SP800_108_COUNTER_CMAC), NOT_CHECKED },
         { "ChaCha20-Poly1305", PSA_KEY_TYPE_CHACHA20, 256,
             PSA_ALG_CHACHA20_POLY1305,
             IS_DEFINED(PSA_WANT_KEY_TYPE_CHACHA20) &&
