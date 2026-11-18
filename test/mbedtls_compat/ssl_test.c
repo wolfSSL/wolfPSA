@@ -53,6 +53,10 @@
 /* Self-signed with server5.key, IP address SANs 97.98.99.100 and
  * 6162:6364:2E65:7861:6D70:6C65:2E63:6F6D, the bytes of abcd.example.com */
 #define IP_SAN_FILE "server5-tricky-ip-san.crt.der"
+/* Self-signed with server-key.pem, DNS name SAN "garbage". Mbed TLS's test
+ * files have no single-label name but localhost. */
+#define SINGLE_LABEL_FILE WOLFSSL_CERTS_DIR "/test/server-garbage.pem"
+#define SINGLE_LABEL_KEY_FILE WOLFSSL_CERTS_DIR "/server-key.pem"
 /* The CN of server5.crt and server10.crt */
 #define HOST_NAME "localhost"
 /* Handshake steps for each side */
@@ -97,8 +101,12 @@ static mbedtls_x509_crt chain;
 static mbedtls_pk_context leafKey;
 static mbedtls_x509_crt ekuSrv;
 static mbedtls_x509_crt ipSan;
+static mbedtls_x509_crt singleLabel;
+static mbedtls_pk_context singleLabelKey;
 static const Certs defaultCerts = { &ca, &cert, &key };
 static const Certs ipSanCerts = { &ipSan, &ipSan, &key };
+static const Certs singleLabelCerts = { &singleLabel, &singleLabel,
+    &singleLabelKey };
 /* The client trusts the root of the chain the server sends */
 static const Certs chainCerts = { &root, &chain, &leafKey };
 /* The client does not trust it */
@@ -310,7 +318,7 @@ static int HostRefused(void)
             0, NULL) == 0 &&
         PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
             NULL) == 0 &&
-        mbedtls_ssl_set_hostname(&cli.ssl, "router") ==
+        mbedtls_ssl_set_hostname(&cli.ssl, "my_host") ==
             MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
         Handshake(&s) ==
             MBEDTLS_ERR_SSL_CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME;
@@ -437,6 +445,30 @@ static int IpSanWrong(void)
         ok = ClientVerify(&ipSanCerts, hosts[i],
             MBEDTLS_ERR_X509_CERT_VERIFY_FAILED,
             MBEDTLS_X509_BADCERT_CN_MISMATCH);
+    }
+    return ok;
+}
+
+static int SingleLabel(void)
+{
+    static const struct {
+        const char* host;
+        int want;
+        uint32_t flags;
+    } hosts[] = {
+        { "garbage", 0, 0 },
+        { "GARBAGE", 0, 0 },
+        /* Mbed TLS compares the trailing dot too */
+        { "garbage.", 0, 0 },
+        { "router", MBEDTLS_ERR_X509_CERT_VERIFY_FAILED,
+            MBEDTLS_X509_BADCERT_CN_MISMATCH }
+    };
+    size_t i;
+    int ok = 1;
+
+    for (i = 0; ok && i < sizeof(hosts) / sizeof(hosts[0]); i++) {
+        ok = ClientVerify(&singleLabelCerts, hosts[i].host, hosts[i].want,
+            hosts[i].flags);
     }
     return ok;
 }
@@ -1199,6 +1231,7 @@ static const struct {
     { "untrusted chain", VerifyUntrusted },
     { "IP address SANs", IpSan },
     { "wrong IP address or DNS name", IpSanWrong },
+    { "host name without a dot", SingleLabel },
     { "client certificate for servers only", ClientCertUsage },
     { "VERIFY_NONE", VerifyNone },
     { "CA list set before config_defaults", CaChainBeforeDefaults },
@@ -1247,6 +1280,8 @@ int main(void)
     mbedtls_pk_init(&leafKey);
     mbedtls_x509_crt_init(&ekuSrv);
     mbedtls_x509_crt_init(&ipSan);
+    mbedtls_x509_crt_init(&singleLabel);
+    mbedtls_pk_init(&singleLabelKey);
     if (psa_crypto_init() != PSA_SUCCESS ||
             mbedtls_x509_crt_parse_file(&ca, CA_FILE) != 0 ||
             mbedtls_x509_crt_parse_file(&cert, CERT_FILE) != 0 ||
@@ -1255,7 +1290,10 @@ int main(void)
             mbedtls_x509_crt_parse_file(&chain, CHAIN_FILE) != 0 ||
             mbedtls_pk_parse_keyfile(&leafKey, LEAF_KEY_FILE, NULL) != 0 ||
             mbedtls_x509_crt_parse_file(&ekuSrv, EKU_SRV_FILE) != 0 ||
-            mbedtls_x509_crt_parse_file(&ipSan, IP_SAN_FILE) != 0) {
+            mbedtls_x509_crt_parse_file(&ipSan, IP_SAN_FILE) != 0 ||
+            mbedtls_x509_crt_parse_file(&singleLabel, SINGLE_LABEL_FILE) != 0 ||
+            mbedtls_pk_parse_keyfile(&singleLabelKey, SINGLE_LABEL_KEY_FILE,
+                NULL) != 0) {
         printf("FAIL: loading the certificates and keys\n");
         return 1;
     }
@@ -1268,6 +1306,8 @@ int main(void)
             fails++;
         }
     }
+    mbedtls_pk_free(&singleLabelKey);
+    mbedtls_x509_crt_free(&singleLabel);
     mbedtls_x509_crt_free(&ipSan);
     mbedtls_x509_crt_free(&ekuSrv);
     mbedtls_pk_free(&leafKey);

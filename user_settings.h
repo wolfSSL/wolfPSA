@@ -164,6 +164,8 @@
 #define NO_DH
 /* mbedtls_ssl_conf_ciphersuites() takes cipher suite IDs */
 #define WOLFSSL_SET_CIPHER_BYTES
+/* Mbed TLS takes host names without a dot, such as "router" */
+#define WOLFSSL_ALLOW_SINGLE_LABEL_HOSTNAME
 /* An IP address host name is checked against the certificate's IP SANs */
 #define WOLFSSL_IP_ALT_NAME
 #endif /* WOLFPSA_MBEDTLS_COMPAT */

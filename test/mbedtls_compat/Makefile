@@ -172,6 +172,9 @@ data-check:
 # x509_crt_test sets wolfSSL's allocators. WOLFSSL_FLAGS configures the
 # wolfSSL headers as for libwolfpsa.a.
 $(BUILD_DIR)/x509_crt_test: LAYER_FLAGS += $(WOLFSSL_FLAGS) -I$(WOLFPSA_PATH)
+# ssl_test also reads wolfSSL's test certificates
+$(BUILD_DIR)/ssl_test: LAYER_FLAGS += \
+	-DWOLFSSL_CERTS_DIR='"$(WOLFSSL_PATH)/certs"'
 
 $(CLIENT): client-tls-mbedtls.c
 $(UNIT): $(BUILD_DIR)/%: %.c
