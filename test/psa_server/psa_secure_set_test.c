@@ -302,6 +302,20 @@ static void aead_overlap(psa_algorithm_t alg, const char *name)
         snprintf(what, sizeof(what), "%s open, output %+d bytes from input",
                  name, -shift);
         check(ok, what);
+
+        for (i = 0; i < 2; i++) {
+            memset(buf, 0, sizeof(buf));
+            memcpy(buf + in_off, ref, sizeof(ref));
+            buf[in_off + (i == 0 ? sizeof(ref) - 1 : 0)] ^= 0x01;
+            ok = psa_aead_decrypt(k, alg, nonce, nlen, aad, sizeof(aad),
+                                  buf + in_off, sizeof(ref), buf + out_off,
+                                  sizeof(pt), &len) ==
+                 PSA_ERROR_INVALID_SIGNATURE;
+            snprintf(what, sizeof(what),
+                     "%s open refuses a forged %s, output %+d bytes from input",
+                     name, i == 0 ? "tag" : "ciphertext", -shift);
+            check(ok, what);
+        }
     }
 
     memset(buf, 0, sizeof(buf));
@@ -378,6 +392,7 @@ static void hkdf_stream(psa_algorithm_t alg, const char *name)
     }
     snprintf(what, sizeof(what), "%s wolfCrypt reference", name);
     check(ret == 0, what);
+    memset(out, 0xA5, sizeof(out));
 
     if (PSA_ALG_IS_HKDF(alg)) {
         st = hkdf_start(&op, alg, k_hkdf_ikm, sizeof(k_hkdf_ikm));
