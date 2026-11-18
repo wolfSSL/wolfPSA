@@ -2,7 +2,8 @@
  *
  * Runs against a library built from test/secure-set/user_settings.h: raw
  * r||s ECDSA under NO_ASN, refused imports of compiled-out key families,
- * borrowed one-shot AEAD with overlapping buffers, and streamed HKDF.
+ * borrowed one-shot AEAD with overlapping buffers, streamed multipart GCM
+ * AAD, and streamed HKDF.
  *
  * Copyright (C) 2026 wolfSSL Inc.
  *
@@ -401,6 +402,79 @@ static void hkdf_stream(psa_algorithm_t alg, const char *name)
     (void)psa_key_derivation_abort(&op);
 }
 
+/* Multipart GCM with its AAD in pieces matches the one-shot, and the streamed
+ * AAD leaves no buffered mode for a later update with no output. */
+static void aead_stream_aad(void)
+{
+    psa_key_attributes_t attr = psa_key_attributes_init();
+    psa_aead_operation_t op = PSA_AEAD_OPERATION_INIT;
+    uint8_t key[16];
+    uint8_t nonce[12];
+    uint8_t aad[600];
+    uint8_t pt[100];
+    uint8_t ref[sizeof(pt) + TAG];
+    uint8_t ct[sizeof(pt) + TAG];
+    uint8_t out[sizeof(pt)];
+    psa_key_id_t k = PSA_KEY_ID_NULL;
+    size_t len = 0;
+    size_t got = 0;
+    size_t tag_len = 0;
+    size_t i;
+    int ok;
+
+    memset(key, 0x33, sizeof(key));
+    memset(nonce, 0x09, sizeof(nonce));
+    for (i = 0; i < sizeof(aad); i++) {
+        aad[i] = (uint8_t)(i * 5 + 3);
+    }
+    for (i = 0; i < sizeof(pt); i++) {
+        pt[i] = (uint8_t)(i + 0x40);
+    }
+    psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attr, 128);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT |
+                            PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attr, PSA_ALG_GCM);
+    ok = psa_import_key(&attr, key, sizeof(key), &k) == PSA_SUCCESS &&
+         psa_aead_encrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), aad,
+                          sizeof(aad), pt, sizeof(pt), ref, sizeof(ref),
+                          &len) == PSA_SUCCESS && len == sizeof(ref);
+    check(ok, "GCM one-shot reference with a 600-byte AAD");
+
+    ok = psa_aead_encrypt_setup(&op, k, PSA_ALG_GCM) == PSA_SUCCESS &&
+         psa_aead_set_nonce(&op, nonce, sizeof(nonce)) == PSA_SUCCESS &&
+         psa_aead_update_ad(&op, aad, 7) == PSA_SUCCESS &&
+         psa_aead_update_ad(&op, aad + 7, 300) == PSA_SUCCESS &&
+         psa_aead_update_ad(&op, aad + 307, sizeof(aad) - 307) ==
+         PSA_SUCCESS &&
+         psa_aead_update(&op, pt, sizeof(pt), ct, sizeof(ct), &got) ==
+         PSA_SUCCESS && got == sizeof(pt) &&
+         psa_aead_finish(&op, NULL, 0, &len, ct + got, TAG, &tag_len) ==
+         PSA_SUCCESS && tag_len == TAG && memcmp(ct, ref, sizeof(ref)) == 0;
+    check(ok, "GCM multipart AAD in three pieces matches the one-shot");
+    (void)psa_aead_abort(&op);
+
+    ok = psa_aead_decrypt_setup(&op, k, PSA_ALG_GCM) == PSA_SUCCESS &&
+         psa_aead_set_nonce(&op, nonce, sizeof(nonce)) == PSA_SUCCESS &&
+         psa_aead_update_ad(&op, aad, 301) == PSA_SUCCESS &&
+         psa_aead_update_ad(&op, aad + 301, sizeof(aad) - 301) ==
+         PSA_SUCCESS &&
+         psa_aead_update(&op, ref, sizeof(pt), out, sizeof(out), &got) ==
+         PSA_SUCCESS && got == sizeof(pt) &&
+         psa_aead_verify(&op, NULL, 0, &len, ref + sizeof(pt), TAG) ==
+         PSA_SUCCESS && memcmp(out, pt, sizeof(pt)) == 0;
+    check(ok, "GCM multipart decrypt with streamed AAD verifies");
+    (void)psa_aead_abort(&op);
+
+    ok = psa_aead_encrypt_setup(&op, k, PSA_ALG_GCM) == PSA_SUCCESS &&
+         psa_aead_set_nonce(&op, nonce, sizeof(nonce)) == PSA_SUCCESS &&
+         psa_aead_update_ad(&op, aad, 16) == PSA_SUCCESS &&
+         psa_aead_update(&op, pt, sizeof(pt), NULL, 0, &got) != PSA_SUCCESS;
+    check(ok, "an update with no output after streamed AAD is refused");
+    (void)psa_aead_abort(&op);
+    (void)psa_destroy_key(k);
+}
+
 int main(void)
 {
     check(psa_crypto_init() == PSA_SUCCESS, "psa_crypto_init");
@@ -409,6 +483,7 @@ int main(void)
     test_import_ecc_checked();
     aead_overlap(PSA_ALG_GCM, "GCM");
     aead_overlap(PSA_ALG_CCM, "CCM");
+    aead_stream_aad();
     hkdf_stream(PSA_ALG_HKDF(PSA_ALG_SHA_256), "HKDF");
     hkdf_stream(PSA_ALG_HKDF_EXPAND(PSA_ALG_SHA_256), "HKDF-Expand");
     printf("%s: %d failure(s)\n", g_failures ? "FAIL" : "PASS", g_failures);

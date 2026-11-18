@@ -394,6 +394,7 @@ static psa_status_t wolfpsa_aead_setup(psa_aead_operation_t *operation,
         return PSA_ERROR_INVALID_ARGUMENT;
     }
     ctx->direction = (usage == PSA_KEY_USAGE_ENCRYPT) ? 1 : 0;
+    ctx->multipart = multipart;
 #ifdef HAVE_AESCCM
     if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM) &&
         wc_AesCcmCheckTagSize((int)ctx->tag_length) != 0) {
@@ -580,21 +581,108 @@ psa_status_t psa_aead_generate_nonce(psa_aead_operation_t *operation,
     return PSA_SUCCESS;
 }
 
+#if (defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
+    (defined(HAVE_CHACHA) && defined(HAVE_POLY1305))
+/* Start the GCM or ChaCha20-Poly1305 stream: the nonce is set and AAD and
+ * data may follow, in pieces. */
+static int wolfpsa_aead_stream_init(wolfpsa_aead_ctx_t *ctx)
+{
+    int ret = NOT_COMPILED_IN;
+
+#if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
+    if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
+        /* wolfCrypt requires wc_AesInit() before the GCM streaming init; the
+         * abort path releases it via ctx->gcm_inited. */
+        ret = wc_AesInit(&ctx->aes.gcm, NULL, wolfPSA_GetDefaultDevID());
+        if (ret == 0) {
+            ctx->gcm_inited = 1;
+            ret = (ctx->direction) ?
+                wc_AesGcmEncryptInit(&ctx->aes.gcm, ctx->key,
+                                     (word32)ctx->key_length, ctx->nonce,
+                                     (word32)ctx->nonce_length) :
+                wc_AesGcmDecryptInit(&ctx->aes.gcm, ctx->key,
+                                     (word32)ctx->key_length, ctx->nonce,
+                                     (word32)ctx->nonce_length);
+        }
+    }
+#endif
+#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+    if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CHACHA20_POLY1305)) {
+        ret = wc_ChaCha20Poly1305_Init(&ctx->chacha, ctx->key, ctx->nonce,
+                                       ctx->direction);
+    }
+#endif
+    return ret;
+}
+
+#endif
+
+#if defined(WOLFPSA_AEAD_STREAM_AAD) && \
+    ((defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
+     (defined(HAVE_CHACHA) && defined(HAVE_POLY1305)))
+/* Multipart GCM and ChaCha20-Poly1305 take AAD into the stream as it comes,
+ * so a long AAD needs no buffer. Feeds it and returns 1 when this applies. */
+static int wolfpsa_aead_stream_ad(wolfpsa_aead_ctx_t *ctx,
+                                  const uint8_t *input, size_t input_length,
+                                  psa_status_t *status)
+{
+    int ret = 0;
+
+    if (!ctx->multipart) {
+        return 0;
+    }
+#if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
+    if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
+        if (!ctx->streaming) {
+            ret = wolfpsa_aead_stream_init(ctx);
+        }
+        if (ret == 0) {
+            ret = (ctx->direction) ?
+                wc_AesGcmEncryptUpdate(&ctx->aes.gcm, NULL, NULL, 0, input,
+                                       (word32)input_length) :
+                wc_AesGcmDecryptUpdate(&ctx->aes.gcm, NULL, NULL, 0, input,
+                                       (word32)input_length);
+        }
+        ctx->streaming = 1;
+        *status = wc_error_to_psa_status(ret);
+        return 1;
+    }
+#endif
+#if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
+    if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CHACHA20_POLY1305)) {
+        if (!ctx->streaming) {
+            ret = wolfpsa_aead_stream_init(ctx);
+        }
+        if (ret == 0) {
+            ret = wc_ChaCha20Poly1305_UpdateAad(&ctx->chacha, input,
+                                                (word32)input_length);
+        }
+        ctx->streaming = 1;
+        *status = wc_error_to_psa_status(ret);
+        return 1;
+    }
+#endif
+    (void)input;
+    (void)input_length;
+    (void)status;
+    return 0;
+}
+#endif
+
 psa_status_t psa_aead_update_ad(psa_aead_operation_t *operation,
                                 const uint8_t *input,
                                 size_t input_length)
 {
     wolfpsa_aead_ctx_t *ctx = wolfpsa_aead_get_ctx(operation);
     psa_status_t status;
+    int streamed = 0;
 
     if (ctx == NULL) {
         return PSA_ERROR_BAD_STATE;
     }
     if (ctx->body_started) {
-        /* The AAD is fed to the streaming primitive in one shot on the first
-         * data update: AAD appended after that would never be authenticated.
-         * The PSA Crypto API forbids the sequence anyway -- all AAD must be
-         * passed before the first psa_aead_update(). */
+        /* AAD after the first data update would never be authenticated, and
+         * the PSA Crypto API forbids the sequence anyway. */
         status = PSA_ERROR_BAD_STATE;
         psa_aead_abort(operation);
         return status;
@@ -613,8 +701,7 @@ psa_status_t psa_aead_update_ad(psa_aead_operation_t *operation,
         psa_aead_abort(operation);
         return status;
     }
-    /* The streaming backends (GCM, ChaCha) take word32 AAD lengths; the
-     * AAD is fed in one shot on the first data update. */
+    /* The streaming backends (GCM, ChaCha) take word32 AAD lengths. */
     if (input_length > SIZE_MAX - ctx->aad_length ||
         wolfpsa_check_word32_length(ctx->aad_length + input_length) !=
         PSA_SUCCESS) {
@@ -623,7 +710,18 @@ psa_status_t psa_aead_update_ad(psa_aead_operation_t *operation,
         return status;
     }
 
-    status = wolfpsa_aead_append(&ctx->aad, &ctx->aad_length, input, input_length);
+#if defined(WOLFPSA_AEAD_STREAM_AAD) && \
+    ((defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)) || \
+     (defined(HAVE_CHACHA) && defined(HAVE_POLY1305)))
+    streamed = wolfpsa_aead_stream_ad(ctx, input, input_length, &status);
+    if (streamed && status == PSA_SUCCESS) {
+        ctx->aad_length += input_length;
+    }
+#endif
+    if (!streamed) {
+        status = wolfpsa_aead_append(&ctx->aad, &ctx->aad_length, input,
+                                     input_length);
+    }
     if (status == PSA_SUCCESS) {
         ctx->ad_started = 1;
     }
@@ -905,26 +1003,14 @@ static psa_status_t wolfpsa_aead_stream_update(wolfpsa_aead_ctx_t *ctx,
     int ret;
 
     aad = wolfpsa_aead_nonnull_data(ctx->aad, ctx->aad_length);
-    aad_len = ctx->aad_length;
+    aad_len = (ctx->aad != NULL) ? ctx->aad_length : 0;
     (void)in; (void)n; (void)out; (void)aad; (void)aad_len; (void)first;
     (void)ret;
 
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_GCM)) {
 #if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM)
         if (first) {
-            /* wolfCrypt requires wc_AesInit() before the GCM streaming
-             * init; the abort path releases it via ctx->gcm_inited. */
-            ret = wc_AesInit(&ctx->aes.gcm, NULL, wolfPSA_GetDefaultDevID());
-            if (ret == 0) {
-                ctx->gcm_inited = 1;
-                ret = (ctx->direction) ?
-                    wc_AesGcmEncryptInit(&ctx->aes.gcm, ctx->key,
-                                         (word32)ctx->key_length, ctx->nonce,
-                                         (word32)ctx->nonce_length) :
-                    wc_AesGcmDecryptInit(&ctx->aes.gcm, ctx->key,
-                                         (word32)ctx->key_length, ctx->nonce,
-                                         (word32)ctx->nonce_length);
-            }
+            ret = wolfpsa_aead_stream_init(ctx);
             if (ret != 0) {
                 return wc_error_to_psa_status(ret);
             }
@@ -947,8 +1033,7 @@ static psa_status_t wolfpsa_aead_stream_update(wolfpsa_aead_ctx_t *ctx,
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CHACHA20_POLY1305)) {
 #if defined(HAVE_CHACHA) && defined(HAVE_POLY1305)
         if (first) {
-            ret = wc_ChaCha20Poly1305_Init(&ctx->chacha, ctx->key,
-                                           ctx->nonce, ctx->direction);
+            ret = wolfpsa_aead_stream_init(ctx);
             if (ret != 0) {
                 return wc_error_to_psa_status(ret);
             }

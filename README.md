@@ -104,6 +104,12 @@ Define it only when nothing else can change those buffers during the call,
 for example a Secure service whose inputs sit in its own memory. Outputs that
 partly overlap the input or overlap the AAD still take the copying path.
 
+`WOLFPSA_AEAD_STREAM_AAD` feeds multipart GCM and ChaCha20-Poly1305 AAD into
+the cipher as `psa_aead_update_ad()` receives it, so the operation holds no
+copy of the AAD however long it is. `psa_aead_update()` then needs an output
+buffer, as the PSA Crypto API requires: the buffered mode that takes a NULL
+output and emits everything from `psa_aead_finish()` is refused.
+
 ## Testing (PSA Architecture Test Suite)
 
 See `test-psa-api/README.md` for instructions on how to run the tests.

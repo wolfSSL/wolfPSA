@@ -91,6 +91,7 @@ typedef struct wolfpsa_aead_ctx {
     int ccm_ks_valid;
 #endif
     int borrowed; /* aad and input point at a one-shot caller's buffers */
+    int multipart; /* driven through the public multipart API */
 } wolfpsa_aead_ctx_t;
 
 static inline wolfpsa_aead_ctx_t*

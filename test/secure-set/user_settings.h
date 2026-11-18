@@ -20,7 +20,8 @@
  */
 
 /* A small Secure-image set: no ASN.1, no RSA, P-256 ECC, AES-GCM/CCM/CTR,
- * SHA-256 and HKDF, with every other key family compiled out. */
+ * SHA-256 and HKDF, with every other key family compiled out. Multipart GCM
+ * streams its AAD. */
 
 #ifndef WOLFSSL_USER_SETTINGS_H
 #define WOLFSSL_USER_SETTINGS_H
@@ -53,5 +54,7 @@
 #define NO_PWDBASED
 #define NO_PBKDF2
 #define WOLFPSA_AEAD_BORROW
+#define WOLFSSL_AESGCM_STREAM
+#define WOLFPSA_AEAD_STREAM_AAD
 
 #endif /* WOLFSSL_USER_SETTINGS_H */
