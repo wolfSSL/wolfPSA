@@ -1,6 +1,7 @@
 # Mbed TLS compatibility
 
-Details of the Mbed TLS 4.x API that `MBEDTLS_COMPAT=1` adds. See
+Details of the Mbed TLS 4.x API that `MBEDTLS_COMPAT=1` adds, and of the
+TF-PSA-Crypto parts that every build has. See
 [README.md](../README.md#mbed-tls-compatibility) to build and use it.
 
 ## Build and configuration
@@ -74,6 +75,17 @@ Other:
 - `mbedtls_pem_*`: init, read_buffer, get_buffer, free
 - `mbedtls_timing_*`: get_timer, set_delay, get_delay, get_final_delay, on
   a monotonic clock. `MBEDTLS_TIMING_C` needs Windows or a Unix-like system.
+
+TF-PSA-Crypto, in every build:
+
+- `mbedtls_pk_*`: init, free, parse_key, parse_keyfile, parse_public_key,
+  parse_public_keyfile, get_bitlen, can_do_psa. Private keys are RSA and EC,
+  PEM or DER, traditional or PKCS #8. Public keys are RSA, EC, X25519 and
+  X448, PEM or DER, SubjectPublicKeyInfo or, for RSA, PKCS #1. EC keys are
+  on the curves the PSA engine has.
+- `mbedtls/threading.h` with `MBEDTLS_THREADING_C`, on pthreads
+- `mbedtls_psa_crypto_free`, `mbedtls_platform_zeroize` and
+  `mbedtls/platform.h`
 
 ## Coming soon
 
@@ -213,6 +225,8 @@ Other:
   overlap wolfCrypt codes.
 - `mbedtls_pem_read_buffer` returns `MBEDTLS_ERR_PEM_FEATURE_UNAVAILABLE`
   for encrypted PEM. No `mbedtls_pem_write_buffer`.
+- `mbedtls_pk_parse_key` and `mbedtls_pk_parse_public_key` do not take
+  encrypted keys or EC keys with a compressed public key.
 - No global mutexes such as `mbedtls_threading_gmtime_mutex`.
 
 ## Tests
