@@ -534,6 +534,27 @@ void mbedtls_ssl_conf_max_tls_version(mbedtls_ssl_config* conf,
     }
 }
 
+#ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
+/* By RFC 6066 code, which wolfSSL_UseMaxFragment() takes too */
+static const int mbedMflLens[] = { MAX_RECORD_SIZE, 512, 1024, 2048, 4096 };
+wc_static_assert(XELEM_CNT(mbedMflLens) == MBEDTLS_SSL_MAX_FRAG_LEN_INVALID);
+wc_static_assert(MBEDTLS_SSL_MAX_FRAG_LEN_512 == WOLFSSL_MFL_2_9 &&
+    MBEDTLS_SSL_MAX_FRAG_LEN_4096 == WOLFSSL_MFL_2_12);
+
+int mbedtls_ssl_conf_max_frag_len(mbedtls_ssl_config* conf,
+    unsigned char mfl_code)
+{
+    WOLFSSL_ENTER("mbedtls_ssl_conf_max_frag_len");
+
+    if (conf == NULL || mfl_code >= MBEDTLS_SSL_MAX_FRAG_LEN_INVALID) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    conf->mfl_code = mfl_code;
+    conf->changes++;
+    return 0;
+}
+#endif /* MBEDTLS_SSL_MAX_FRAGMENT_LENGTH */
+
 /* Not copied: the list must stay valid while conf is in use */
 void mbedtls_ssl_conf_ciphersuites(mbedtls_ssl_config* conf,
     const int* ciphersuites)
@@ -799,6 +820,23 @@ static int MbedSetSuites(WOLFSSL* ssl, const int* ids)
         MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
 }
 
+/* A server uses the max fragment length its client asks for */
+static int MbedSetMaxFrag(WOLFSSL* ssl, const mbedtls_ssl_config* conf)
+{
+    int ret = 0;
+
+#if defined(MBEDTLS_SSL_MAX_FRAGMENT_LENGTH) && defined(MBEDTLS_SSL_CLI_C)
+    if (conf->endpoint == MBEDTLS_SSL_IS_CLIENT &&
+            conf->mfl_code != MBEDTLS_SSL_MAX_FRAG_LEN_NONE) {
+        ret = MbedRet(wolfSSL_UseMaxFragment(ssl, conf->mfl_code),
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+    }
+#endif /* MBEDTLS_SSL_MAX_FRAGMENT_LENGTH && MBEDTLS_SSL_CLI_C */
+    (void)ssl;
+    (void)conf;
+    return ret;
+}
+
 /* Replaces the WOLFSSL with a new one from the config, with this context's
  * callbacks, host name and session. Leaves none on failure. */
 static int MbedSslNew(mbedtls_ssl_context* ssl)
@@ -830,6 +868,10 @@ static int MbedSslNew(mbedtls_ssl_context* ssl)
         wolfSSL_SetIOReadCtx(ssl->ssl, ssl);
         wolfSSL_SetIOWriteCtx(ssl->ssl, ssl);
         wolfSSL_SetCertCbCtx(ssl->ssl, ssl);
+#ifdef MBEDTLS_SSL_KEYING_MATERIAL_EXPORT
+        /* The randoms and secrets wolfSSL exports keys from */
+        wolfSSL_KeepArrays(ssl->ssl);
+#endif /* MBEDTLS_SSL_KEYING_MATERIAL_EXPORT */
         ret = MbedSetVersion(ssl->ssl, ssl->conf);
     }
     if (ret == 0) {
@@ -837,6 +879,9 @@ static int MbedSslNew(mbedtls_ssl_context* ssl)
     }
     if (ret == 0) {
         ret = MbedSetHostname(ssl->ssl, ssl->hostname);
+    }
+    if (ret == 0) {
+        ret = MbedSetMaxFrag(ssl->ssl, ssl->conf);
     }
     if (ret == 0 && session != NULL) {
         /* One that expired since gets a full handshake, as in Mbed TLS */
@@ -1099,20 +1144,45 @@ int mbedtls_ssl_read(mbedtls_ssl_context* ssl, unsigned char* buf, size_t len)
     return (ret == MBEDTLS_ERR_SSL_CONN_EOF) ? 0 : ret;
 }
 
+/* As in Mbed TLS, the handshake first, then one record of the size it set */
 int mbedtls_ssl_write(mbedtls_ssl_context* ssl,
     const unsigned char* buf, size_t len)
 {
+    int max;
     int ret;
 
     WOLFSSL_ENTER("mbedtls_ssl_write");
 
-    ret = MbedSslStart(ssl);
+    ret = mbedtls_ssl_is_handshake_over(ssl) ? 0 : mbedtls_ssl_handshake(ssl);
     if (ret != 0) {
         return ret;
     }
-    /* As in Mbed TLS, at most one record */
-    ret = wolfSSL_write(ssl->ssl, buf, MbedIoLen(len, MAX_RECORD_SIZE));
+    max = mbedtls_ssl_get_max_out_record_payload(ssl);
+    if (len > (size_t)max &&
+            ssl->conf->transport == MBEDTLS_SSL_TRANSPORT_DATAGRAM) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    ret = wolfSSL_write(ssl->ssl, buf, MbedIoLen(len, max));
     return (ret > 0) ? ret : MbedSslErr(ssl, ret);
+}
+
+/* The configured max fragment length, or the negotiated one if smaller */
+int mbedtls_ssl_get_max_out_record_payload(const mbedtls_ssl_context* ssl)
+{
+    int max = MAX_RECORD_SIZE;
+    int negotiated;
+
+    WOLFSSL_ENTER("mbedtls_ssl_get_max_out_record_payload");
+
+    if (ssl == NULL || ssl->conf == NULL) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+#ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
+    max = mbedMflLens[ssl->conf->mfl_code];
+#endif /* MBEDTLS_SSL_MAX_FRAGMENT_LENGTH */
+    /* An error until the handshake is done */
+    negotiated = wolfSSL_GetMaxOutputSize(ssl->ssl);
+    return (negotiated > 0 && negotiated < max) ? negotiated : max;
 }
 
 /* Mbed TLS sends close_notify without waiting for the peer's reply */
@@ -1132,6 +1202,24 @@ int mbedtls_ssl_close_notify(mbedtls_ssl_context* ssl)
     }
     return MbedSslErr(ssl, ret);
 }
+
+#ifdef MBEDTLS_SSL_KEYING_MATERIAL_EXPORT
+/* wolfSSL checks the rest: handshake done, label and context lengths */
+int mbedtls_ssl_export_keying_material(mbedtls_ssl_context* ssl,
+    uint8_t* out, const size_t key_len, const char* label,
+    const size_t label_len, const unsigned char* context,
+    const size_t context_len, const int use_context)
+{
+    WOLFSSL_ENTER("mbedtls_ssl_export_keying_material");
+
+    if (ssl == NULL || key_len > MBEDTLS_SSL_EXPORT_MAX_KEY_LEN) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    return MbedRet(wolfSSL_export_keying_material(ssl->ssl, out, key_len,
+        label, label_len, context, context_len, use_context),
+        MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+}
+#endif /* MBEDTLS_SSL_KEYING_MATERIAL_EXPORT */
 
 void mbedtls_ssl_session_init(mbedtls_ssl_session* session)
 {
