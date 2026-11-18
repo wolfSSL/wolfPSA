@@ -83,8 +83,8 @@
 #define RECORD_SZ 16384
 /* Threads that look up the cipher suites at once */
 #define SUITE_THREADS 8
-/* The version and config bytes at the start of a saved session */
-#define SESSION_HDR_SZ 5
+/* The version, config and field size bytes at the start of a saved session */
+#define SESSION_HDR_SZ 7
 
 /* Data in one direction. closed is set by the writer. */
 typedef struct {
@@ -1219,7 +1219,8 @@ static int LargeLength(void)
 }
 
 #if defined(MBEDTLS_SSL_MAX_FRAGMENT_LENGTH) || \
-    defined(MBEDTLS_SSL_KEYING_MATERIAL_EXPORT)
+    defined(MBEDTLS_SSL_KEYING_MATERIAL_EXPORT) || \
+    defined(MBEDTLS_SSL_PROTO_TLS1_3)
 /* A server, and a client that offers only version and does not verify */
 static int PeersVersion(mbedtls_ssl_protocol_version version)
 {
@@ -1242,7 +1243,7 @@ static int Connected(void)
     return Handshake(&s) == 0 && s == 0;
 }
 #endif /* MBEDTLS_SSL_MAX_FRAGMENT_LENGTH ||
-          MBEDTLS_SSL_KEYING_MATERIAL_EXPORT */
+          MBEDTLS_SSL_KEYING_MATERIAL_EXPORT || MBEDTLS_SSL_PROTO_TLS1_3 */
 
 #ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
 /* Each end's code, and the most data per record each then sends */
@@ -1608,6 +1609,34 @@ static int AuthmodeNoneAfterSetup(void)
     return ok;
 }
 
+#ifdef HAVE_EXT_CACHE
+/* Each allocation of a load fails in turn, leaving the session empty.
+ * wolfSSL's decoder does not say why, so each failure is BAD_INPUT_DATA. */
+static int LoadNoMemory(const unsigned char* buf, size_t len)
+{
+    mbedtls_ssl_session session;
+    wolfSSL_Free_cb ff;
+    wolfSSL_Realloc_cb rf;
+    size_t olen = 0;
+    int ret = -1;
+    int ok = 1;
+
+    mbedtls_ssl_session_init(&session);
+    (void)wolfSSL_GetAllocators(&realMalloc, &ff, &rf);
+    (void)wolfSSL_SetAllocators(FailMalloc, ff, rf);
+    for (failAt = 1; ok && ret != 0 && failAt <= NO_MEMORY_TRIES; failAt++) {
+        allocs = 0;
+        ret = mbedtls_ssl_session_load(&session, buf, len);
+        ok = ret == 0 || (ret == MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+            mbedtls_ssl_session_save(&session, NULL, 0, &olen) ==
+                MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+    }
+    failAt = 0;
+    (void)wolfSSL_SetAllocators(realMalloc, ff, rf);
+    mbedtls_ssl_session_free(&session);
+    return ok && ret == 0;
+}
+
 /* Saves and reloads the session. Bad sizes and headers must fail. */
 static int SessionReload(mbedtls_ssl_session* session)
 {
@@ -1672,10 +1701,29 @@ static int SessionReload(mbedtls_ssl_session* session)
             olen == len && memcmp(part, buf, len) == 0;
         free(part);
     }
+    ok = ok && LoadNoMemory(buf, len);
     mbedtls_ssl_session_free(&other);
     free(buf);
     return ok;
 }
+#else
+/* wolfSSL saves and loads sessions only with HAVE_EXT_CACHE */
+static int SessionReload(mbedtls_ssl_session* session)
+{
+    mbedtls_ssl_session other;
+    const unsigned char buf[SESSION_HDR_SZ] = { 0 };
+    size_t olen = 0;
+    int ok;
+
+    mbedtls_ssl_session_init(&other);
+    ok = mbedtls_ssl_session_save(session, NULL, 0, &olen) ==
+            MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE &&
+        mbedtls_ssl_session_load(&other, buf, sizeof(buf)) ==
+            MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+    mbedtls_ssl_session_free(&other);
+    return ok;
+}
+#endif /* HAVE_EXT_CACHE */
 
 /* A TLS 1.2 handshake, then one with its session, set before conf_* calls as
  * curl does. The client verifies with authmode and the CAs of certs, then
@@ -1766,6 +1814,27 @@ static int ResumeSaved(void)
     return Resume(MBEDTLS_SSL_VERIFY_OPTIONAL, &untrustedCerts,
         MBEDTLS_SSL_VERIFY_NONE, 1, 0, MBEDTLS_X509_BADCERT_NOT_TRUSTED);
 }
+
+#ifdef MBEDTLS_SSL_PROTO_TLS1_3
+/* As in Mbed TLS, a TLS 1.3 session without a ticket is not saved. The
+ * client has not read a ticket by the end of the handshake. */
+static int SaveTls13(void)
+{
+    mbedtls_ssl_session session;
+    size_t olen = 0;
+    int ok;
+
+    mbedtls_ssl_session_init(&session);
+    ok = PeersVersion(MBEDTLS_SSL_VERSION_TLS1_3) && Connected() &&
+        mbedtls_ssl_get_session(&cli.ssl, &session) == 0 &&
+        mbedtls_ssl_session_save(&session, NULL, 0, &olen) ==
+            MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+    mbedtls_ssl_session_free(&session);
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+#endif /* MBEDTLS_SSL_PROTO_TLS1_3 */
 
 /* The same endpoint and transport again keep the config */
 static int EndpointSame(void)
@@ -2219,6 +2288,9 @@ static const struct {
     { "session without a client certificate, server REQUIRED",
         ResumeServerRequired },
     { "session saved, loaded and resumed", ResumeSaved },
+#ifdef MBEDTLS_SSL_PROTO_TLS1_3
+    { "TLS 1.3 session without a ticket not saved", SaveTls13 },
+#endif /* MBEDTLS_SSL_PROTO_TLS1_3 */
     { "same endpoint and transport set again", EndpointSame },
     { "session reset after a conf error", ResetConfError },
     { "handshake after a conf error", HandshakeConfError },

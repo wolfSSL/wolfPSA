@@ -1548,11 +1548,12 @@ int mbedtls_ssl_set_session(mbedtls_ssl_context* ssl,
 }
 
 #ifdef HAVE_EXT_CACHE
-/* Saved session: 5-byte header, verify result, wolfSSL_i2d_SSL_SESSION() */
-#define MBED_SESSION_HDR_SZ   5
+/* Saved session: 7-byte header, verify result, wolfSSL_i2d_SSL_SESSION() */
+#define MBED_SESSION_HDR_SZ   7
 #define MBED_SESSION_DATA_IDX (MBED_SESSION_HDR_SZ + OPAQUE32_LEN)
 
-/* wolfSSL's version and the wolfSSL options that change the data's format */
+/* wolfSSL's version, the wolfSSL options that change the data's format, and
+ * the sizes of its hash fields */
 static void MbedSessionHeader(byte* hdr)
 {
     word16 opts = 0;
@@ -1601,14 +1602,21 @@ static void MbedSessionHeader(byte* hdr)
     hdr[1] = (byte)(LIBWOLFSSL_VERSION_HEX >> 12);
     hdr[2] = (byte)LIBWOLFSSL_VERSION_HEX;
     c16toa(opts, hdr + 3);
+    hdr[5] = (byte)KEYID_SIZE;
+    hdr[6] = (byte)TICKET_BINDING_HASH_SZ;
 }
 
 static int MbedSessionSave(const mbedtls_ssl_session* session,
     unsigned char* buf, size_t buf_len, size_t* olen)
 {
     unsigned char* p;
-    int sz = wolfSSL_i2d_SSL_SESSION(session->session, NULL);
+    int sz;
 
+    /* Set up by a TLS 1.2 handshake or a TLS 1.3 ticket */
+    if (!wolfSSL_SessionIsSetup(session->session)) {
+        return MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+    }
+    sz = wolfSSL_i2d_SSL_SESSION(session->session, NULL);
     if (sz <= 0) {
         return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
     }

@@ -26,7 +26,9 @@ TF-PSA-Crypto parts that every build has. See
   or `NO_CERTS`), `MBEDTLS_X509_CRT_PARSE_C` is not defined.
 - `mbedtls_ssl_session_save` and `mbedtls_ssl_session_load` need
   `HAVE_EXT_CACHE`, which wolfPSA's `user_settings.h` defines. Without it,
-  they return `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`.
+  they return `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`. As TLS 1.3 resumes only
+  with a ticket, `mbedtls_ssl_session_save` also returns it for a TLS 1.3
+  session until the client, with `HAVE_SESSION_TICKET`, reads a ticket.
 - TLS needs the X.509 API and wolfSSL's TLS with `HAVE_SNI`: without them,
   for example with `WOLFCRYPT_ONLY`, `MBEDTLS_SSL_TLS_C` is not defined.
   `MBEDTLS_NET_C` needs TLS and wolfSSL's socket I/O (no `WOLFSSL_USER_IO`).
@@ -145,11 +147,17 @@ TLS:
 - `mbedtls_ssl_set_hostname` during a handshake applies from the next
   `mbedtls_ssl_session_reset`. Mbed TLS uses the new name for the rest of
   that handshake.
-- A saved session has Mbed TLS's 5-byte header, then wolfSSL's session
-  data. The header has the wolfSSL version and the wolfSSL build options
-  that change the data, so a session saved by Mbed TLS, or by another
-  wolfSSL version or build, fails to load with
-  `MBEDTLS_ERR_SSL_VERSION_MISMATCH`.
+- A saved session has a 7-byte header, then wolfSSL's session data. The
+  header has the wolfSSL version, the wolfSSL build options that change the
+  data and the sizes of its hash fields, so a session saved by Mbed TLS, or
+  by another wolfSSL release or build, fails to load with
+  `MBEDTLS_ERR_SSL_VERSION_MISMATCH`. wolfSSL development builds between
+  releases can have the same version and other session data. The header
+  does not tell those apart, and loading fails with
+  `MBEDTLS_ERR_SSL_BAD_INPUT_DATA` when the data's length differs.
+- `mbedtls_ssl_session_load` returns `MBEDTLS_ERR_SSL_BAD_INPUT_DATA` when
+  wolfSSL fails to allocate the session, since wolfSSL's decoder does not
+  say why it failed.
 - A server resumes sessions from wolfSSL's session cache, where Mbed TLS
   needs `mbedtls_ssl_conf_session_cache`. A server that verifies client
   certificates reports `MBEDTLS_X509_BADCERT_MISSING` for a resumed session.
