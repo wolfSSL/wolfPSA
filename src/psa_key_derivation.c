@@ -26,6 +26,7 @@
 #include <limits.h>
 #include <stdint.h>
 #include "psa_config.h"
+#include "psa_want_gate.h"
 
 #if defined(WOLFSSL_PSA_ENGINE)
 
@@ -564,14 +565,18 @@ psa_status_t psa_key_derivation_setup(psa_key_derivation_operation_t *operation,
         return PSA_ERROR_NOT_SUPPORTED;
     }
 #endif
-#if defined(NO_HMAC)
+#ifndef WOLFPSA_SP800_108_HMAC
     if (PSA_ALG_IS_SP800_108_COUNTER_HMAC(kdf_alg)) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
 #endif
+#ifndef WOLFPSA_SP800_108_CMAC
+    if (kdf_alg == PSA_ALG_SP800_108_COUNTER_CMAC) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+#endif
 #if !defined(WOLFSSL_CMAC) || defined(NO_AES)
-    if (kdf_alg == PSA_ALG_SP800_108_COUNTER_CMAC ||
-        kdf_alg == PSA_ALG_PBKDF2_AES_CMAC_PRF_128) {
+    if (kdf_alg == PSA_ALG_PBKDF2_AES_CMAC_PRF_128) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
 #endif
@@ -1615,6 +1620,7 @@ cleanup:
     return PSA_ERROR_NOT_SUPPORTED;
 }
 
+#ifdef WOLFPSA_SP800_108_HMAC
 /*
  * SP 800-108r1 counter-mode KDF — HMAC variant.
  *
@@ -1771,7 +1777,9 @@ hmac_cleanup:
     return status;
 #endif /* NO_HMAC */
 }
+#endif /* WOLFPSA_SP800_108_HMAC */
 
+#ifdef WOLFPSA_SP800_108_CMAC
 /*
  * SP 800-108r1 counter-mode KDF — CMAC variant.
  *
@@ -1941,6 +1949,7 @@ cmac_cleanup:
     return status;
 #endif /* WOLFSSL_CMAC && !NO_AES */
 }
+#endif /* WOLFPSA_SP800_108_CMAC */
 
 static psa_status_t wolfpsa_kdf_compute_output(wolfpsa_kdf_ctx_t *ctx,
                                                uint8_t *output,
@@ -1963,12 +1972,16 @@ static psa_status_t wolfpsa_kdf_compute_output(wolfpsa_kdf_ctx_t *ctx,
     if (PSA_ALG_IS_PBKDF2(ctx->alg)) {
         return wolfpsa_kdf_pbkdf2(ctx, output, output_length);
     }
+#ifdef WOLFPSA_SP800_108_HMAC
     if (PSA_ALG_IS_SP800_108_COUNTER_HMAC(ctx->alg)) {
         return wolfpsa_kdf_sp800_108_hmac(ctx, output, output_length);
     }
+#endif
+#ifdef WOLFPSA_SP800_108_CMAC
     if (ctx->alg == PSA_ALG_SP800_108_COUNTER_CMAC) {
         return wolfpsa_kdf_sp800_108_cmac(ctx, output, output_length);
     }
+#endif
 
     return PSA_ERROR_NOT_SUPPORTED;
 }

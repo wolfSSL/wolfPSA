@@ -32,8 +32,8 @@
 #ifndef WOLFPSA_WANT_GATED
 #error "build the library with PSA_WANT_WITHOUT=PSA_WANT_ALG_GCM"
 #endif
-#ifdef PSA_WANT_ALG_GCM
-#error "PSA_WANT_ALG_GCM should be filtered out of the generated config"
+#if defined(PSA_WANT_ALG_GCM) || defined(PSA_WANT_ALG_SP800_108_COUNTER_HMAC)
+#error "GCM and SP800-108 HMAC should be filtered out of the generated config"
 #endif
 
 static int g_failures;
@@ -124,12 +124,44 @@ static void test_wolfcrypt_gcm_kept(void)
     check(ok, "wolfCrypt one-shot GCM is still available");
 }
 
+static psa_status_t kdf_run(psa_algorithm_t alg)
+{
+    psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
+    static const uint8_t secret[16] = { 0x3c };
+    uint8_t out[32];
+    psa_status_t st;
+
+    st = psa_key_derivation_setup(&op, alg);
+    if (st == PSA_SUCCESS) {
+        st = psa_key_derivation_input_bytes(&op,
+            PSA_KEY_DERIVATION_INPUT_SECRET, secret, sizeof(secret));
+    }
+    if (st == PSA_SUCCESS) {
+        st = psa_key_derivation_input_bytes(&op,
+            PSA_KEY_DERIVATION_INPUT_INFO, NULL, 0);
+    }
+    if (st == PSA_SUCCESS) {
+        st = psa_key_derivation_output_bytes(&op, out, sizeof(out));
+    }
+    (void)psa_key_derivation_abort(&op);
+    return st;
+}
+
+static void test_sp800_108_refused(void)
+{
+    check(kdf_run(PSA_ALG_SP800_108_COUNTER_HMAC(PSA_ALG_SHA_256)) ==
+          PSA_ERROR_NOT_SUPPORTED, "SP800-108 HMAC is not supported");
+    check(kdf_run(PSA_ALG_HKDF(PSA_ALG_SHA_256)) == PSA_SUCCESS,
+          "HKDF on the same HMAC still derives");
+}
+
 int main(void)
 {
     check(psa_crypto_init() == PSA_SUCCESS, "psa_crypto_init");
     test_gcm_refused();
     test_ccm_kept();
     test_wolfcrypt_gcm_kept();
+    test_sp800_108_refused();
     printf("%s: %d failure(s)\n", g_failures ? "FAIL" : "PASS", g_failures);
     return g_failures ? 1 : 0;
 }

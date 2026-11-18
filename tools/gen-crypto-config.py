@@ -57,7 +57,9 @@ WANT_RE = re.compile(r"PSA_WANT_[A-Z0-9_]+")
 # TF-PSA-Crypto options, defined without a value as in TF-PSA
 OPTION_RE = re.compile(r"MBEDTLS_[A-Z0-9_]+")
 # Algorithms whose wolfPSA code follows PSA_WANT under WOLFPSA_WANT_GATED
-GATED = ("PSA_WANT_ALG_CCM", "PSA_WANT_ALG_CHACHA20_POLY1305", "PSA_WANT_ALG_GCM")
+GATED = ("PSA_WANT_ALG_CCM", "PSA_WANT_ALG_CHACHA20_POLY1305", "PSA_WANT_ALG_GCM",
+         "PSA_WANT_ALG_SP800_108_COUNTER_CMAC",
+         "PSA_WANT_ALG_SP800_108_COUNTER_HMAC")
 
 
 def main(argv):
@@ -73,7 +75,7 @@ def main(argv):
         argv = argv[:1] + argv[3:]
     if len(argv) < 4:
         sys.stderr.write(
-            "usage: gen-crypto-config.py [--without PSA_WANT_ALG_<aead>]... "
+            "usage: gen-crypto-config.py [--without PSA_WANT_ALG_<alg>]... "
             "<out> <cc> <probe.c> [flags...]\n")
         return 2
 

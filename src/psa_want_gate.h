@@ -24,8 +24,8 @@
 
 #include <wolfssl/wolfcrypt/settings.h>
 
-/* Under WOLFPSA_WANT_GATED (gen-crypto-config.py --without) an AEAD algorithm also
- * needs its PSA_WANT_ALG_*, so wolfCrypt keeps a primitive PSA does not expose. */
+/* Under WOLFPSA_WANT_GATED (gen-crypto-config.py --without) these algorithms also
+ * need their PSA_WANT_ALG_*, so wolfCrypt keeps a primitive PSA does not expose. */
 #include <psa/crypto_config.h>
 
 #if defined(HAVE_AESGCM) && \
@@ -39,6 +39,16 @@
 #if defined(HAVE_CHACHA) && defined(HAVE_POLY1305) && \
     (!defined(WOLFPSA_WANT_GATED) || defined(PSA_WANT_ALG_CHACHA20_POLY1305))
     #define WOLFPSA_CHACHAPOLY
+#endif
+#if !defined(NO_HMAC) && \
+    (!defined(WOLFPSA_WANT_GATED) || \
+     defined(PSA_WANT_ALG_SP800_108_COUNTER_HMAC))
+    #define WOLFPSA_SP800_108_HMAC
+#endif
+#if defined(WOLFSSL_CMAC) && !defined(NO_AES) && \
+    (!defined(WOLFPSA_WANT_GATED) || \
+     defined(PSA_WANT_ALG_SP800_108_COUNTER_CMAC))
+    #define WOLFPSA_SP800_108_CMAC
 #endif
 
 #endif /* WOLFPSA_WANT_GATE_H */
