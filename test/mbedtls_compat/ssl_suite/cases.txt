@@ -12,9 +12,7 @@
 # select.py fails when it differs from Mbed TLS's.
 #
 # Feature needed, for fail:
-#   session        mbedtls_ssl_session_save and _load; PSK too for a session
-#                  without a certificate
-#   ticket         session tickets, then session save and load
+#   ticket         session tickets
 #   export-len     wolfSSL taking a TLS 1.2 export label and context over 62
 #                  bytes, as docs/mbedtls-compatibility.md says
 #   dtls           DTLS
@@ -128,10 +126,10 @@ target fail   renegotiation renegotiation                             DTLS reneg
 target notrun internal      renegotiation                             DTLS renegotiation: after bad MAC on client
 target notrun internal      renegotiation                             DTLS renegotiation: after bad MAC on server
 api    notrun get_hostname  ssl_set_hostname_twice                    SSL SET_HOSTNAME memory leak: call ssl_set_hostname twice
-target fail   session       ssl_session_serialize_version_check       SSL session serialization: Wrong major version
-target fail   session       ssl_session_serialize_version_check       SSL session serialization: Wrong minor version
-target fail   session       ssl_session_serialize_version_check       SSL session serialization: Wrong patch version
-target fail   session       ssl_session_serialize_version_check       SSL session serialization: Wrong config
+target fail   psk           ssl_session_serialize_version_check       SSL session serialization: Wrong major version
+target fail   psk           ssl_session_serialize_version_check       SSL session serialization: Wrong minor version
+target fail   psk           ssl_session_serialize_version_check       SSL session serialization: Wrong patch version
+target fail   psk           ssl_session_serialize_version_check       SSL session serialization: Wrong config
 target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: CLI: session serialization: Wrong major version
 target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: CLI: session serialization: Wrong minor version
 target fail   ticket        ssl_session_serialize_version_check       TLS 1.3: CLI: session serialization: Wrong patch version
@@ -145,30 +143,30 @@ api    notrun tls_prf       ssl_tls_prf                               SSL TLS_PR
 api    notrun tls_prf       ssl_tls_prf                               SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA256
 api    notrun tls_prf       ssl_tls_prf                               SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA384 SHA-384 not enabled
 api    notrun tls_prf       ssl_tls_prf                               SSL TLS_PRF MBEDTLS_SSL_TLS_PRF_SHA256 SHA-256 not enabled
-target fail   session       ssl_serialize_session_load_save           Session serialization, load-save: no ticket, no cert
+target fail   psk           ssl_serialize_session_load_save           Session serialization, load-save: no ticket, no cert
 target fail   ticket        ssl_serialize_session_load_save           Session serialization, load-save: small ticket, no cert
 target fail   ticket        ssl_serialize_session_load_save           Session serialization, load-save: large ticket, no cert
-target fail   session       ssl_serialize_session_load_save           Session serialization, load-save: no ticket, cert
+target pass   -             ssl_serialize_session_load_save           Session serialization, load-save: no ticket, cert
 target fail   ticket        ssl_serialize_session_load_save           Session serialization, load-save: small ticket, cert
 target fail   ticket        ssl_serialize_session_load_save           Session serialization, load-save: large ticket, cert
 target fail   ticket        ssl_serialize_session_load_save           TLS 1.3: CLI: Session serialization, load-save: no ticket
 target fail   ticket        ssl_serialize_session_load_save           TLS 1.3: CLI: Session serialization, load-save: small ticket
 target fail   ticket        ssl_serialize_session_load_save           TLS 1.3: CLI: Session serialization, load-save: large ticket
 target fail   ticket        ssl_serialize_session_load_save           TLS 1.3: SRV: Session serialization, load-save
-target fail   session       ssl_serialize_session_save_buf_size       Session serialization, save buffer size: no ticket, no cert
+target fail   psk           ssl_serialize_session_save_buf_size       Session serialization, save buffer size: no ticket, no cert
 target fail   ticket        ssl_serialize_session_save_buf_size       Session serialization, save buffer size: small ticket, no cert
 target fail   ticket        ssl_serialize_session_save_buf_size       Session serialization, save buffer size: large ticket, no cert
-target fail   session       ssl_serialize_session_save_buf_size       Session serialization, save buffer size: no ticket, cert
+target pass   -             ssl_serialize_session_save_buf_size       Session serialization, save buffer size: no ticket, cert
 target fail   ticket        ssl_serialize_session_save_buf_size       Session serialization, save buffer size: small ticket, cert
 target fail   ticket        ssl_serialize_session_save_buf_size       Session serialization, save buffer size: large ticket, cert
 target fail   ticket        ssl_serialize_session_save_buf_size       TLS 1.3: CLI: Session serialization, save buffer size: no ticket
 target fail   ticket        ssl_serialize_session_save_buf_size       TLS 1.3: CLI: Session serialization, save buffer size: small ticket
 target fail   ticket        ssl_serialize_session_save_buf_size       TLS 1.3: CLI: Session serialization, save buffer size: large ticket
 target fail   ticket        ssl_serialize_session_save_buf_size       TLS 1.3: SRV: Session serialization, save buffer size
-target fail   session       ssl_serialize_session_load_buf_size       Session serialization, load buffer size: no ticket, no cert
+target fail   psk           ssl_serialize_session_load_buf_size       Session serialization, load buffer size: no ticket, no cert
 target fail   ticket        ssl_serialize_session_load_buf_size       Session serialization, load buffer size: small ticket, no cert
 target fail   ticket        ssl_serialize_session_load_buf_size       Session serialization, load buffer size: large ticket, no cert
-target fail   session       ssl_serialize_session_load_buf_size       Session serialization, load buffer size: no ticket, cert
+target pass   -             ssl_serialize_session_load_buf_size       Session serialization, load buffer size: no ticket, cert
 target fail   ticket        ssl_serialize_session_load_buf_size       Session serialization, load buffer size: small ticket, cert
 target fail   ticket        ssl_serialize_session_load_buf_size       Session serialization, load buffer size: large ticket, cert
 target fail   ticket        ssl_serialize_session_load_buf_size       TLS 1.3: CLI: Session serialization, load buffer size: no ticket

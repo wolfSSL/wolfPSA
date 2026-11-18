@@ -145,6 +145,8 @@
 #define HAVE_CMAC_KDF
 
 #ifdef WOLFPSA_MBEDTLS_COMPAT
+/* mbedtls_ssl_session_save() and _load() */
+#define HAVE_EXT_CACHE
 /* Mbed TLS accepts NULL parameters after an ECDSA signature OID */
 #define WOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED
 /* Mbed TLS accepts serial number 0 */

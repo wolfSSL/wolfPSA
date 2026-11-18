@@ -83,6 +83,8 @@
 #define RECORD_SZ 16384
 /* Threads that look up the cipher suites at once */
 #define SUITE_THREADS 8
+/* The version and config bytes at the start of a saved session */
+#define SESSION_HDR_SZ 5
 
 /* Data in one direction. closed is set by the writer. */
 typedef struct {
@@ -1606,13 +1608,83 @@ static int AuthmodeNoneAfterSetup(void)
     return ok;
 }
 
+/* Saves and reloads the session. Bad sizes and headers must fail. */
+static int SessionReload(mbedtls_ssl_session* session)
+{
+    mbedtls_ssl_session other;
+    unsigned char* buf = NULL;
+    unsigned char* part;
+    size_t len = 0;
+    size_t olen = 0;
+    size_t i;
+    int ok = mbedtls_ssl_session_save(session, NULL, 0, &len) ==
+        MBEDTLS_ERR_SSL_BUFFER_TOO_SMALL && len > SESSION_HDR_SZ;
+
+    mbedtls_ssl_session_init(&other);
+    /* Each buffer has its exact size, for ASan */
+    for (i = 1; ok && i < len; i++) {
+        part = (unsigned char*)malloc(i);
+        ok = part != NULL &&
+            mbedtls_ssl_session_save(session, part, i, &olen) ==
+                MBEDTLS_ERR_SSL_BUFFER_TOO_SMALL && olen == len;
+        free(part);
+    }
+    if (ok) {
+        buf = (unsigned char*)calloc(1, len + 1);
+        ok = buf != NULL &&
+            mbedtls_ssl_session_save(session, buf, len, &olen) == 0 &&
+            olen == len &&
+            mbedtls_ssl_session_load(&other, buf, len + 1) ==
+                MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    for (i = 0; ok && i < len; i++) {
+        part = (unsigned char*)malloc((i > 0) ? i : 1);
+        if (part != NULL) {
+            memcpy(part, buf, i);
+        }
+        ok = part != NULL && mbedtls_ssl_session_load(&other, part, i) ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+        free(part);
+    }
+    for (i = 0; ok && i < SESSION_HDR_SZ * 8; i++) {
+        buf[i / 8] ^= (unsigned char)(1 << (i % 8));
+        ok = mbedtls_ssl_session_load(&other, buf, len) ==
+            MBEDTLS_ERR_SSL_VERSION_MISMATCH;
+        buf[i / 8] ^= (unsigned char)(1 << (i % 8));
+    }
+    /* A failed load empties a loaded session, so it has nothing to save */
+    if (ok) {
+        ok = mbedtls_ssl_session_load(&other, buf, len) == 0 &&
+            mbedtls_ssl_session_load(&other, NULL, len) ==
+                MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+            mbedtls_ssl_session_save(&other, NULL, 0, &olen) ==
+                MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    if (ok) {
+        mbedtls_ssl_session_free(session);
+        ok = mbedtls_ssl_session_load(session, buf, len) == 0;
+    }
+    /* Saved again, the same data */
+    if (ok) {
+        part = (unsigned char*)malloc(len);
+        ok = part != NULL &&
+            mbedtls_ssl_session_save(session, part, len, &olen) == 0 &&
+            olen == len && memcmp(part, buf, len) == 0;
+        free(part);
+    }
+    mbedtls_ssl_session_free(&other);
+    free(buf);
+    return ok;
+}
+
 /* A TLS 1.2 handshake, then one with its session, set before conf_* calls as
  * curl does. The client verifies with authmode and the CAs of certs, then
  * trusts only root, which changes the result of a full handshake. A resumed
  * session keeps the first result, calls no verify callback and is exported
- * into the same session. want and flags are the client's. */
+ * into the same session. With saved, the session is saved and loaded first.
+ * want and flags are the client's. */
 static int Resume(int authmode, const Certs* certs, int srvAuthmode,
-    int want, uint32_t flags)
+    int saved, int want, uint32_t flags)
 {
 #ifdef MBEDTLS_SSL_CACHE_C
     mbedtls_ssl_cache_context cache;
@@ -1640,7 +1712,8 @@ static int Resume(int authmode, const Certs* certs, int srvAuthmode,
         ok = mbedtls_ssl_session_reset(&cli.ssl) == 0 &&
             mbedtls_ssl_session_reset(&srv.ssl) == 0 &&
             Handshake(&s) == 0 && s == 0 &&
-            mbedtls_ssl_get_session(&cli.ssl, &session) == 0;
+            mbedtls_ssl_get_session(&cli.ssl, &session) == 0 &&
+            (!saved || SessionReload(&session));
     }
     if (ok) {
         memset(&toClient, 0, sizeof(toClient));
@@ -1670,21 +1743,28 @@ static int Resume(int authmode, const Certs* certs, int srvAuthmode,
 static int ResumeRequired(void)
 {
     return Resume(MBEDTLS_SSL_VERIFY_REQUIRED, &defaultCerts,
-        MBEDTLS_SSL_VERIFY_NONE, 0, 0);
+        MBEDTLS_SSL_VERIFY_NONE, 0, 0, 0);
 }
 
 static int ResumeOptional(void)
 {
     return Resume(MBEDTLS_SSL_VERIFY_OPTIONAL, &untrustedCerts,
-        MBEDTLS_SSL_VERIFY_NONE, 0, MBEDTLS_X509_BADCERT_NOT_TRUSTED);
+        MBEDTLS_SSL_VERIFY_NONE, 0, 0, MBEDTLS_X509_BADCERT_NOT_TRUSTED);
 }
 
 /* The session has no client certificate, so a full handshake */
 static int ResumeServerRequired(void)
 {
     return Resume(MBEDTLS_SSL_VERIFY_REQUIRED, &defaultCerts,
-        MBEDTLS_SSL_VERIFY_REQUIRED, MBEDTLS_ERR_X509_CERT_VERIFY_FAILED,
+        MBEDTLS_SSL_VERIFY_REQUIRED, 0, MBEDTLS_ERR_X509_CERT_VERIFY_FAILED,
         MBEDTLS_X509_BADCERT_NOT_TRUSTED);
+}
+
+/* The saved session contains the first handshake's verify result */
+static int ResumeSaved(void)
+{
+    return Resume(MBEDTLS_SSL_VERIFY_OPTIONAL, &untrustedCerts,
+        MBEDTLS_SSL_VERIFY_NONE, 1, 0, MBEDTLS_X509_BADCERT_NOT_TRUSTED);
 }
 
 /* The same endpoint and transport again keep the config */
@@ -2138,6 +2218,7 @@ static const struct {
     { "session resumed, OPTIONAL", ResumeOptional },
     { "session without a client certificate, server REQUIRED",
         ResumeServerRequired },
+    { "session saved, loaded and resumed", ResumeSaved },
     { "same endpoint and transport set again", EndpointSame },
     { "session reset after a conf error", ResetConfError },
     { "handshake after a conf error", HandshakeConfError },

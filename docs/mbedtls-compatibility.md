@@ -24,6 +24,9 @@ TF-PSA-Crypto parts that every build has. See
   example Mbed TLS's `test-ca2.crt` and `test-ca-any_policy.crt`.
 - The X.509 API needs wolfCrypt's certificate parsing: without it (`NO_ASN`
   or `NO_CERTS`), `MBEDTLS_X509_CRT_PARSE_C` is not defined.
+- `mbedtls_ssl_session_save` and `mbedtls_ssl_session_load` need
+  `HAVE_EXT_CACHE`, which wolfPSA's `user_settings.h` defines. Without it,
+  they return `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`.
 - TLS needs the X.509 API and wolfSSL's TLS with `HAVE_SNI`: without them,
   for example with `WOLFCRYPT_ONLY`, `MBEDTLS_SSL_TLS_C` is not defined.
   `MBEDTLS_NET_C` needs TLS and wolfSSL's socket I/O (no `WOLFSSL_USER_IO`).
@@ -49,8 +52,7 @@ TLS:
   set_user_data_n, get_user_data_p, get_user_data_n
 - Cipher suite lookup: `mbedtls_ssl_list_ciphersuites`,
   `mbedtls_ssl_get_ciphersuite_name`, `mbedtls_ssl_get_ciphersuite_id`
-- `mbedtls_ssl_session_*`: init, free; save and load return
-  `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`
+- `mbedtls_ssl_session_*`: init, free, save, load
 - `mbedtls_ssl_conf_max_frag_len` and
   `mbedtls_ssl_get_max_out_record_payload`, with
   `MBEDTLS_SSL_MAX_FRAGMENT_LENGTH`
@@ -91,7 +93,7 @@ TF-PSA-Crypto, in every build:
 
 TLS:
 
-- Session save and load, and session tickets
+- Session tickets
 - The peer certificate (`mbedtls_ssl_get_peer_cert`), for certificate
   pinning
 - CRLs through `mbedtls_ssl_conf_ca_chain`
@@ -143,6 +145,11 @@ TLS:
 - `mbedtls_ssl_set_hostname` during a handshake applies from the next
   `mbedtls_ssl_session_reset`. Mbed TLS uses the new name for the rest of
   that handshake.
+- A saved session has Mbed TLS's 5-byte header, then wolfSSL's session
+  data. The header has the wolfSSL version and the wolfSSL build options
+  that change the data, so a session saved by Mbed TLS, or by another
+  wolfSSL version or build, fails to load with
+  `MBEDTLS_ERR_SSL_VERSION_MISMATCH`.
 - A server resumes sessions from wolfSSL's session cache, where Mbed TLS
   needs `mbedtls_ssl_conf_session_cache`. A server that verifies client
   certificates reports `MBEDTLS_X509_BADCERT_MISSING` for a resumed session.
