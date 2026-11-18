@@ -37,6 +37,7 @@
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/x509_crt.h>
+#include <mbedtls/timing.h>
 #ifdef MBEDTLS_SSL_CACHE_C
     #include <mbedtls/ssl_cache.h>
 #endif /* MBEDTLS_SSL_CACHE_C */
@@ -1423,6 +1424,28 @@ static int UserData(void)
     return ok;
 }
 
+#ifdef MBEDTLS_TIMING_C
+/* Setting the callbacks cancels the delay running */
+static int TimerCb(void)
+{
+    mbedtls_ssl_context ssl;
+    mbedtls_timing_delay_context timer;
+    int ok;
+
+    mbedtls_ssl_init(&ssl);
+    mbedtls_timing_set_delay(&timer, 100, 200);
+    ok = mbedtls_timing_get_delay(&timer) == 0;
+    mbedtls_ssl_set_timer_cb(&ssl, &timer, mbedtls_timing_set_delay,
+        mbedtls_timing_get_delay);
+    ok = ok && mbedtls_timing_get_delay(&timer) == -1;
+    mbedtls_ssl_set_timer_cb(&ssl, NULL, NULL, NULL);
+    mbedtls_ssl_set_timer_cb(NULL, &timer, mbedtls_timing_set_delay,
+        mbedtls_timing_get_delay);
+    mbedtls_ssl_free(&ssl);
+    return ok;
+}
+#endif /* MBEDTLS_TIMING_C */
+
 static const struct {
     const char* name;
     int (*test)(void);
@@ -1489,6 +1512,9 @@ static const struct {
     { "accept would block", AcceptWouldBlock },
     { "cipher suite ID from its name", SuiteIdFromName },
     { "handshake over", HandshakeOver },
+#ifdef MBEDTLS_TIMING_C
+    { "timer callbacks", TimerCb },
+#endif /* MBEDTLS_TIMING_C */
     { "user data kept through session reset", UserData }
 };
 

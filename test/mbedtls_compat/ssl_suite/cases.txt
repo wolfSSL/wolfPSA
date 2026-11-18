@@ -23,7 +23,7 @@
 #   renegotiation  DTLS renegotiation
 #   context        mbedtls_ssl_context_save and _load, DTLS
 #   defaults       a config without mbedtls_ssl_config_defaults
-#   timing         MBEDTLS_TIMING_C
+#   timing         MBEDTLS_HAVE_TIME
 #   cid            DTLS connection ID
 # Why, for notrun:
 #   ccm            TLS-ECDHE-ECDSA-WITH-AES-256-CCM: not in wolfSSL

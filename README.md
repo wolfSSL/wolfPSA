@@ -146,12 +146,12 @@ Mapped so far:
   endpoint, transport, get_endpoint, set_user_data_p, set_user_data_n,
   get_user_data_p, get_user_data_n
 - ssl: init, free, setup, context_get_config, session_reset, set_bio,
-  set_hostname, set_session, get_session, handshake, is_handshake_over,
-  get_verify_result, get_ciphersuite, get_ciphersuite_id_from_ssl,
-  get_version, get_version_number, get_bytes_avail, read, write,
-  close_notify, set_user_data_p, set_user_data_n, get_user_data_p,
-  get_user_data_n; list_ciphersuites, get_ciphersuite_name,
-  get_ciphersuite_id
+  set_timer_cb, set_hostname, set_session, get_session, handshake,
+  is_handshake_over, get_verify_result, get_ciphersuite,
+  get_ciphersuite_id_from_ssl, get_version, get_version_number,
+  get_bytes_avail, read, write, close_notify, set_user_data_p,
+  set_user_data_n, get_user_data_p, get_user_data_n; list_ciphersuites,
+  get_ciphersuite_name, get_ciphersuite_id
 - ssl_session: init, free; save and load return
   `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE`
 - ssl_conf: max_frag_len, with `MBEDTLS_SSL_MAX_FRAGMENT_LENGTH`; ssl:

@@ -944,6 +944,22 @@ void mbedtls_ssl_set_bio(mbedtls_ssl_context* ssl, void* p_bio,
     }
 }
 
+/* Stored for DTLS. As in Mbed TLS, cancels the timer running. */
+void mbedtls_ssl_set_timer_cb(mbedtls_ssl_context* ssl, void* p_timer,
+    mbedtls_ssl_set_timer_t* f_set_timer, mbedtls_ssl_get_timer_t* f_get_timer)
+{
+    WOLFSSL_ENTER("mbedtls_ssl_set_timer_cb");
+
+    if (ssl != NULL) {
+        ssl->p_timer = p_timer;
+        ssl->f_set_timer = f_set_timer;
+        ssl->f_get_timer = f_get_timer;
+        if (f_set_timer != NULL) {
+            f_set_timer(p_timer, 0, 0);
+        }
+    }
+}
+
 /* Before mbedtls_ssl_setup too, as in Mbed TLS. NULL skips the name check. */
 int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname)
 {

@@ -154,6 +154,9 @@ typedef int mbedtls_ssl_send_t(void* ctx, const unsigned char* buf,
 typedef int mbedtls_ssl_recv_t(void* ctx, unsigned char* buf, size_t len);
 typedef int mbedtls_ssl_recv_timeout_t(void* ctx, unsigned char* buf,
     size_t len, uint32_t timeout);
+typedef void mbedtls_ssl_set_timer_t(void* ctx, uint32_t int_ms,
+    uint32_t fin_ms);
+typedef int mbedtls_ssl_get_timer_t(void* ctx);
 
 typedef union {
     uintptr_t n;
@@ -195,6 +198,9 @@ typedef struct mbedtls_ssl_context {
     mbedtls_ssl_send_t* f_send;
     mbedtls_ssl_recv_t* f_recv;
     mbedtls_ssl_recv_timeout_t* f_recv_timeout;
+    void* p_timer;
+    mbedtls_ssl_set_timer_t* f_set_timer;
+    mbedtls_ssl_get_timer_t* f_get_timer;
     int io_err; /* the last BIO call's error, 0 after data */
     int authmode;
     uint32_t verify_flags; /* MBEDTLS_X509_BADCERT_* of the failed check */
@@ -264,6 +270,8 @@ int mbedtls_ssl_session_reset(mbedtls_ssl_context* ssl);
 void mbedtls_ssl_set_bio(mbedtls_ssl_context* ssl, void* p_bio,
     mbedtls_ssl_send_t* f_send, mbedtls_ssl_recv_t* f_recv,
     mbedtls_ssl_recv_timeout_t* f_recv_timeout);
+void mbedtls_ssl_set_timer_cb(mbedtls_ssl_context* ssl, void* p_timer,
+    mbedtls_ssl_set_timer_t* f_set_timer, mbedtls_ssl_get_timer_t* f_get_timer);
 int mbedtls_ssl_set_hostname(mbedtls_ssl_context* ssl, const char* hostname);
 int mbedtls_ssl_handshake(mbedtls_ssl_context* ssl);
 int mbedtls_ssl_is_handshake_over(mbedtls_ssl_context* ssl);
