@@ -50,6 +50,8 @@ and the build and test details.
 
 ## Build
 
+wolfPSA requires a C99 compiler, as TF-PSA-Crypto and Mbed TLS do.
+
 wolfPSA compiles wolfCrypt, and with `MBEDTLS_COMPAT=1` wolfSSL's TLS, from a
 wolfSSL source tree. By default this is `../wolfssl`, a clone of wolfSSL
 master next to this repository:

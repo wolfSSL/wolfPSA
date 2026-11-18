@@ -34,9 +34,10 @@ MBEDTLS_STAMP := $(MBEDTLS_CLONE)-$(MBEDTLS_REF)
 
 # Mbed TLS's test data
 DATA := $(MBEDTLS_PATH)/framework/data_files
-# Parsing, TLS return codes and verify results in one process, and timers
+# Parsing, TLS return codes and verify results in one process, timers and
+# error strings
 UNIT := $(addprefix $(BUILD_DIR)/,x509_crt_test pk_test pem_test ssl_test \
-	timing_test)
+	timing_test error_test)
 
 # The peers are the wolfSSL example server and client, from a wolfSSL
 # configured out of tree from WOLFSSL_PATH, so they do not depend on wolfPSA's
@@ -59,6 +60,8 @@ ifeq ($(MBEDTLS_THREADING_C),1)
 PROGRAMS += $(BUILD_DIR)/programs/ssl/ssl_pthread_server
 endif
 PROGRAMS += $(BUILD_DIR)/programs/x509/load_roots
+# strerror, run on each error code in the headers
+PROGRAMS += $(BUILD_DIR)/programs/util/strerror
 # Mbed TLS test certificates, data only. certs.c and the generated
 # test_certs.h build against the headers of their Mbed TLS tree, CERTS_TREE:
 # MBEDTLS_PATH for unit and programs, the clone for the suite.
@@ -119,7 +122,7 @@ link = $(CC) $(1) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $(WARNFLAGS) \
 
 # Used by programs.sh
 export BUILD_DIR WOLFSSL_PATH WOLFSSL_SERVER WOLFSSL_CLIENT MBEDTLS_PATH \
-	MBEDTLS_THREADING_C
+	MBEDTLS_THREADING_C WOLFPSA_PATH
 # With ASAN=1: let a preloaded library, such as faketime's, come first
 ASAN_LINK_ORDER := verify_asan_link_order=0
 export ASAN_OPTIONS := $(if $(ASAN_OPTIONS),$(ASAN_OPTIONS):)$(ASAN_LINK_ORDER)
