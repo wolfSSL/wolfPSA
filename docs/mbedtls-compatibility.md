@@ -76,8 +76,8 @@ X.509:
 Other:
 
 - `mbedtls_strerror`
-- `mbedtls_net_*`: init, connect, bind, accept, close, free, recv, send,
-  usleep
+- `mbedtls_net_*`: init, connect, bind, accept (TCP and UDP), close, free,
+  recv, send, usleep
 - `mbedtls_pem_*`: init, read_buffer, get_buffer, free
 - `mbedtls_timing_*`: get_timer, set_delay, get_delay, get_final_delay
 - `mbedtls_ms_time` and `mbedtls_time`
@@ -112,8 +112,8 @@ TLS:
 - CRLs through `mbedtls_ssl_conf_ca_chain`
 - ALPN (`mbedtls_ssl_conf_alpn_protocols`, `mbedtls_ssl_get_alpn_protocol`)
 - PSK and opaque keys
-- DTLS: timers, cookies, connection ID, renegotiation, context save and
-  load, and UDP in `mbedtls_net_accept`
+- DTLS: timers, cookies, connection ID, renegotiation, and context save
+  and load
 - RSA keys up to 4096 bits
 
 X.509:
@@ -186,7 +186,6 @@ TLS:
   uses the extension in TLS 1.2 only.
 - `mbedtls_ssl_conf_dbg` and `mbedtls_ssl_conf_cert_profile` are accepted
   and ignored.
-- `mbedtls_net_accept` is TCP only.
 
 Certificate verification:
 
@@ -272,6 +271,10 @@ Other:
   `mbedtls_md_hmac`, `mbedtls_md_file`, `mbedtls_md_list` and
   `mbedtls_md_info_from_string`. For HMAC, use `psa_mac_*`.
 - No global mutexes such as `mbedtls_threading_gmtime_mutex`.
+- After a UDP `mbedtls_net_accept`, the new listening socket has the old
+  one's address and, except on Windows, its blocking mode. Mbed TLS binds
+  it to the accepted socket's address, which for a socket bound to every
+  address is a single one, such as `127.0.0.1`, and leaves it blocking.
 
 ## Tests
 
@@ -293,7 +296,8 @@ runs these against `libwolfpsa.a`. Each is also a target of its own;
   programs, built unchanged. The clients run against the wolfSSL example
   server and the servers against the wolfSSL example client and
   `ssl_client1`. `load_roots` needs neither. With `MBEDTLS_THREADING_C=1`,
-  `ssl_pthread_server` serves clients at the same time.
+  `ssl_pthread_server` serves clients at the same time. `udp_proxy`
+  forwards DTLS between the wolfSSL example client and server.
 - `mbedtls-compat-suite`: Mbed TLS's TLS unit tests, the cases that test
   the public API (below).
 

@@ -51,6 +51,7 @@
 #include <limits.h>
 #include "mbedtls_compat_internal.h"
 #ifndef USE_WINDOWS_API
+    #include <fcntl.h>
     #include <netdb.h>
     #include <signal.h>
     #include <sys/select.h>
@@ -84,7 +85,8 @@ static int MbedNetPrepare(void)
 #endif /* USE_WINDOWS_API */
 }
 
-static int MbedNetBind(int fd, const struct addrinfo* ai, int proto)
+static int MbedNetBind(int fd, const struct sockaddr* addr, XSOCKLENT addrLen,
+    int proto)
 {
     int on = 1;
 
@@ -92,7 +94,7 @@ static int MbedNetBind(int fd, const struct addrinfo* ai, int proto)
             (XSOCKLENT)sizeof(on)) != 0) {
         return MBEDTLS_ERR_NET_SOCKET_FAILED;
     }
-    if (bind(fd, ai->ai_addr, (XSOCKLENT)ai->ai_addrlen) != 0) {
+    if (bind(fd, addr, addrLen) != 0) {
         return MBEDTLS_ERR_NET_BIND_FAILED;
     }
     if (proto == MBEDTLS_NET_PROTO_TCP &&
@@ -144,7 +146,8 @@ static int MbedNetOpen(mbedtls_net_context* ctx, const char* host,
             continue;
         }
         if (server) {
-            ret = MbedNetBind(ctx->fd, ai, proto);
+            ret = MbedNetBind(ctx->fd, ai->ai_addr, (XSOCKLENT)ai->ai_addrlen,
+                proto);
         }
         else if (connect(ctx->fd, ai->ai_addr,
                 (XSOCKLENT)ai->ai_addrlen) == 0) {
@@ -192,26 +195,111 @@ static int MbedNetWouldBlock(void)
     return err == SOCKET_EWOULDBLOCK || err == SOCKET_EAGAIN;
 }
 
-/* TCP only. client_ip gets the 4 or 16 bytes of the client's address. */
+/* Waits for a datagram and leaves it queued */
+static int MbedNetPeek(int fd, struct sockaddr_storage* addr,
+    XSOCKLENT* addrLen)
+{
+    char peek[1];
+    int ret;
+
+    ret = (int)recvfrom(fd, peek, sizeof(peek), MSG_PEEK,
+        (struct sockaddr*)addr, addrLen);
+#ifdef USE_WINDOWS_API
+    /* Only the first byte fits, which is enough */
+    if (ret < 0 && WSAGetLastError() == WSAEMSGSIZE) {
+        ret = 0;
+    }
+#endif /* USE_WINDOWS_API */
+    return ret;
+}
+
+/* Gives the bound socket to the client and binds a new one for the next */
+static int MbedNetUdpAccept(mbedtls_net_context* bind_ctx,
+    mbedtls_net_context* client_ctx, const struct sockaddr_storage* addr,
+    XSOCKLENT addrLen)
+{
+    struct sockaddr_storage local;
+    XSOCKLENT localLen = (XSOCKLENT)sizeof(local);
+    int fd;
+#ifndef USE_WINDOWS_API
+    int flags;
+#endif /* !USE_WINDOWS_API */
+    int ret = 0;
+
+    /* Before connect() narrows an address such as 0.0.0.0 */
+    if (getsockname(bind_ctx->fd, (struct sockaddr*)&local, &localLen) != 0) {
+        return MBEDTLS_ERR_NET_SOCKET_FAILED;
+    }
+    if (connect(bind_ctx->fd, (const struct sockaddr*)addr, addrLen) != 0) {
+        return MBEDTLS_ERR_NET_ACCEPT_FAILED;
+    }
+    client_ctx->fd = bind_ctx->fd;
+    bind_ctx->fd = -1;
+
+    fd = (int)socket(local.ss_family, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) {
+        return MBEDTLS_ERR_NET_SOCKET_FAILED;
+    }
+#ifndef USE_WINDOWS_API
+    /* Keeps the blocking mode, which Winsock cannot read */
+    flags = fcntl(client_ctx->fd, F_GETFL);
+    if (flags < 0 || fcntl(fd, F_SETFL, flags & O_NONBLOCK) != 0) {
+        ret = MBEDTLS_ERR_NET_SOCKET_FAILED;
+    }
+#endif /* !USE_WINDOWS_API */
+    if (ret == 0) {
+        ret = MbedNetBind(fd, (const struct sockaddr*)&local, localLen,
+            MBEDTLS_NET_PROTO_UDP);
+    }
+    if (ret == 0) {
+        bind_ctx->fd = fd;
+    }
+    else {
+        CloseSocket(fd);
+    }
+    return ret;
+}
+
+/* client_ip gets the 4 or 16 bytes of the client's address */
 int mbedtls_net_accept(mbedtls_net_context* bind_ctx,
     mbedtls_net_context* client_ctx, void* client_ip, size_t buf_size,
     size_t* cip_len)
 {
     struct sockaddr_storage addr;
     XSOCKLENT addrLen = (XSOCKLENT)sizeof(addr);
+    int type = 0;
+    XSOCKLENT typeLen = (XSOCKLENT)sizeof(type);
     const void* ip;
     size_t ipLen;
+    int ret;
 
     WOLFSSL_ENTER("mbedtls_net_accept");
 
     if (bind_ctx == NULL || client_ctx == NULL || bind_ctx->fd < 0) {
         return MBEDTLS_ERR_NET_INVALID_CONTEXT;
     }
-    client_ctx->fd = (int)accept(bind_ctx->fd, (struct sockaddr*)&addr,
-        &addrLen);
-    if (client_ctx->fd < 0) {
+    if (getsockopt(bind_ctx->fd, SOL_SOCKET, SO_TYPE, (char*)&type,
+            &typeLen) != 0 || (type != SOCK_STREAM && type != SOCK_DGRAM)) {
+        return MBEDTLS_ERR_NET_ACCEPT_FAILED;
+    }
+
+    if (type == SOCK_STREAM) {
+        client_ctx->fd = (int)accept(bind_ctx->fd, (struct sockaddr*)&addr,
+            &addrLen);
+        ret = client_ctx->fd;
+    }
+    else {
+        ret = MbedNetPeek(bind_ctx->fd, &addr, &addrLen);
+    }
+    if (ret < 0) {
         return MbedNetWouldBlock() ? MBEDTLS_ERR_SSL_WANT_READ :
             MBEDTLS_ERR_NET_ACCEPT_FAILED;
+    }
+    if (type == SOCK_DGRAM) {
+        ret = MbedNetUdpAccept(bind_ctx, client_ctx, &addr, addrLen);
+        if (ret != 0) {
+            return ret;
+        }
     }
     if (client_ip == NULL) {
         return 0;

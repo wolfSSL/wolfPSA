@@ -6,8 +6,9 @@
 # missing a feature macro prints "... not defined" and exits 0, so that
 # output fails the case, and a case can require a line of output. A case
 # whose wrapper, such as faketime, is not installed is skipped. Then Mbed
-# TLS's server programs, against the wolfSSL example client and ssl_client1.
-# Then strerror, on each error code in wolfPSA's headers. WRAP prefixes the
+# TLS's server programs, against the wolfSSL example client and ssl_client1,
+# and udp_proxy between the wolfSSL example DTLS client and server. Then
+# strerror, on each error code in wolfPSA's headers. WRAP prefixes the
 # programs. Run by the Makefile in this directory, which sets the paths.
 
 : "${BUILD_DIR:?}" "${WOLFSSL_PATH:?}" "${WOLFSSL_SERVER:?}" \
@@ -150,7 +151,7 @@ fi
 # server is not checked, only its log for sanitizer reports.
 start_program() {
     rm -f "$LOG"
-    (cd "$WOLFSSL_PATH" && exec $WRAP "$BUILD_DIR/$1") >"$LOG" 2>&1 &
+    (cd "$WOLFSSL_PATH" && exec $WRAP "$BUILD_DIR/$1" $2) >"$LOG" 2>&1 &
     srv=$!
     i=0
     while ! grep -q "Waiting for a remote connection" "$LOG" 2>/dev/null &&
@@ -247,7 +248,25 @@ ssl_server, reset after a failure|$P/ssl_server|!-v 4 -A certs/ca-cert.pem;-v 4
 ssl_fork_server, TLS 1.3 and 1.2|$P/ssl_fork_server|-v 4;-v 3
 $THREADED
 CASES
-rm -f "$LOG"
+
+# udp_proxy between the wolfSSL example DTLS client and server
+start_server "-u $SERVER_WOLF"
+peer=$srv
+start_program programs/test/udp_proxy "server_addr=$LO listen_addr=$LO"
+out=$(cd "$WOLFSSL_PATH" && "$WOLFSSL_CLIENT" -u -p 5556 2>&1)
+rc=$?
+kill $srv $peer 2>/dev/null
+wait $srv $peer 2>/dev/null
+if [ $rc -eq 0 ] && echo "$out" | grep -qF "I hear you" &&
+        grep -qF "S <- C ClientHello" "$LOG" &&
+        ! grep -q "$SANITIZER" "$LOG"; then
+    echo "PASS: udp_proxy, DTLS 1.2"
+else
+    echo "FAIL: udp_proxy, DTLS 1.2: exit $rc: $out
+proxy: $(cat "$LOG")"
+    FAILS=$((FAILS + 1))
+fi
+rm -f "$LOG" "$READY"
 
 # Run strerror on each numeric error code in the headers. It prints a
 # description and exits with the code, so the exit status is its low byte.
