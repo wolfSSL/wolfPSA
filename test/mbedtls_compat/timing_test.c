@@ -19,12 +19,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-/* Mbed TLS 4.x timers. The first two cases are from test_suite_timing. */
+/* Mbed TLS 4.x timers and mbedtls_ms_time(). The first two cases are from
+ * test_suite_timing, the last two from test_suite_platform. */
 
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
+#include <mbedtls/platform_time.h>
 #include <mbedtls/timing.h>
 
 #define INT_MS 100
@@ -126,6 +128,28 @@ static int NullArgs(void)
         mbedtls_timing_get_final_delay(NULL) == 0;
 }
 
+/* It never goes back and moves on */
+static int MsTime(void)
+{
+    mbedtls_ms_time_t start = mbedtls_ms_time();
+    mbedtls_ms_time_t now;
+    int naps = 0;
+
+    do {
+        Nap();
+        now = mbedtls_ms_time();
+    } while (now == start && ++naps < MAX_WAIT_MS / NAP_MS);
+    return now > start;
+}
+
+static int Seconds(void)
+{
+    mbedtls_time_t t = 0;
+    mbedtls_time_t now = mbedtls_time(&t);
+
+    return now != (mbedtls_time_t)-1 && now == t;
+}
+
 static const struct {
     const char* name;
     int (*test)(void);
@@ -135,7 +159,9 @@ static const struct {
     { "milliseconds", FollowsTime },
     { "delays", Delays },
     { "cancel", Cancel },
-    { "NULL arguments", NullArgs }
+    { "NULL arguments", NullArgs },
+    { "get milliseconds", MsTime },
+    { "get seconds", Seconds }
 };
 
 int main(void)

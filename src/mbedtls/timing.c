@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-/* Mbed TLS 4.x timers on a monotonic clock (MBEDTLS_COMPAT=1). */
+/* Mbed TLS 4.x timers and mbedtls_ms_time() (MBEDTLS_COMPAT=1). */
 
 /* clock_gettime() with -std=c99 */
 #if defined(WOLFPSA_MBEDTLS_COMPAT) && !defined(_POSIX_C_SOURCE)
@@ -37,19 +37,21 @@
 #include <wolfssl/wolfcrypt/logging.h>
 #include <mbedtls/timing.h>
 
-/* The generated config has it on Windows and Unix-like systems */
-#if defined(MBEDTLS_TIMING_C) != \
+/* The generated config has them on Windows and Unix-like systems */
+#if defined(MBEDTLS_HAVE_TIME) != \
         (defined(USE_WINDOWS_API) || defined(__unix__) || defined(__APPLE__))
-    #error "MBEDTLS_TIMING_C does not match the platform"
-#endif /* MBEDTLS_TIMING_C != (USE_WINDOWS_API || __unix__ || __APPLE__) */
+    #error "MBEDTLS_HAVE_TIME does not match the platform"
+#endif /* MBEDTLS_HAVE_TIME != (USE_WINDOWS_API || __unix__ || __APPLE__) */
+#if defined(MBEDTLS_TIMING_C) != defined(MBEDTLS_HAVE_TIME)
+    #error "MBEDTLS_TIMING_C does not match MBEDTLS_HAVE_TIME"
+#endif /* MBEDTLS_TIMING_C != MBEDTLS_HAVE_TIME */
 
-#if defined(MBEDTLS_TIMING_C)
+#if defined(MBEDTLS_HAVE_TIME)
 
 #ifdef USE_WINDOWS_API
     #include <windows.h>
 #else
-    #include <time.h>
-    /* As in Mbed TLS, on Linux the timers count time suspended too */
+    /* As in Mbed TLS, on Linux the clock counts time suspended too */
     #if defined(__linux__) && defined(CLOCK_BOOTTIME)
         #define MBED_TIMING_CLOCK CLOCK_BOOTTIME
     #else
@@ -57,32 +59,36 @@
     #endif /* __linux__ && CLOCK_BOOTTIME */
 #endif /* USE_WINDOWS_API */
 
-/* Milliseconds from a monotonic clock, else from time() as in Mbed TLS */
-static int64_t MbedTimingNow(void)
+/* Falls back to time(), as Mbed TLS */
+mbedtls_ms_time_t mbedtls_ms_time(void)
 {
 #ifdef USE_WINDOWS_API
-    return (int64_t)GetTickCount64();
+    return (mbedtls_ms_time_t)GetTickCount64();
 #else
     struct timespec ts;
 
     if (clock_gettime(MBED_TIMING_CLOCK, &ts) != 0) {
-        return (int64_t)time(NULL) * 1000;
+        return (mbedtls_ms_time_t)time(NULL) * 1000;
     }
-    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    return (mbedtls_ms_time_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 #endif /* USE_WINDOWS_API */
 }
+
+#endif /* MBEDTLS_HAVE_TIME */
+
+#if defined(MBEDTLS_TIMING_C)
 
 unsigned long long mbedtls_timing_get_timer(struct mbedtls_timing_hr_time* val,
     int reset)
 {
-    int64_t now;
+    mbedtls_ms_time_t now;
 
     WOLFSSL_ENTER("mbedtls_timing_get_timer");
 
     if (val == NULL) {
         return 0;
     }
-    now = MbedTimingNow();
+    now = mbedtls_ms_time();
     if (reset) {
         val->ms = now;
         return 0;
