@@ -52,7 +52,7 @@ endif
 # library's own configuration (config.h, via HAVE_CONFIG_H) - layering
 # wolfPSA's user_settings.h on top would let a test declare wolfCrypt
 # structs (Hmac, wc_Sha256) with a layout the linked library does not
-# use.
+# use. The variant libraries below and their tests use it too.
 USER_SETTINGS_PATH ?= $(WOLFPSA_PATH)
 WOLFSSL_CPPFLAGS ?= -DWOLFSSL_USER_SETTINGS
 
@@ -232,12 +232,14 @@ psa_tls_client:
 
 # devId crypto-callback coverage. wolfCrypt compiles its callback dispatch out
 # unless WOLF_CRYPTO_CB is defined, and this test reads wolfCrypt structures
-# directly, so it links against a dedicated library built from the repository
-# user_settings.h with that knob enabled instead of the shared libwolfpsa.
+# directly, so it links against a dedicated library built from
+# USER_SETTINGS_PATH with that knob enabled instead of the shared libwolfpsa.
 CRYPTOCB_BUILD_DIR := $(abspath .)/build-cryptocb$(if $(SANITIZE_FLAGS),-asan)
 CRYPTOCB_LIB := $(CRYPTOCB_BUILD_DIR)/libwolfpsa-cryptocb.a
-VARIANT_INC := -I$(abspath $(WOLFSSL_PATH)) -I$(WOLFPSA_ABS) \
-	-I$(WOLFPSA_ABS)/wolfpsa -I$(WOLFPSA_ABS)/src
+# A variant library and its test use the same user_settings.h
+VARIANT_SETTINGS := $(abspath $(USER_SETTINGS_PATH))
+VARIANT_INC := -I$(abspath $(WOLFSSL_PATH)) -I$(VARIANT_SETTINGS) \
+	-I$(WOLFPSA_ABS) -I$(WOLFPSA_ABS)/wolfpsa -I$(WOLFPSA_ABS)/src
 CRYPTOCB_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLF_CRYPTO_CB $(VARIANT_INC) \
 	-I$(CRYPTOCB_BUILD_DIR)/include
 
@@ -254,6 +256,7 @@ define variant_lib
 		LIBNAME=$@ \
 		BUILD_DIR=$(1) \
 		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
+		USER_SETTINGS_PATH=$(VARIANT_SETTINGS) \
 		WOLFSSL_CPPFLAGS="-DWOLFSSL_USER_SETTINGS $(2)" \
 		CFLAGS="$(CFLAGS)" \
 		LDFLAGS="$(SANITIZE_FLAGS)" $(3)

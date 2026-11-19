@@ -83,8 +83,9 @@
 #define RECORD_SZ 16384
 /* Threads that look up the cipher suites at once */
 #define SUITE_THREADS 8
-/* The version, config and field size bytes at the start of a saved session */
-#define SESSION_HDR_SZ 7
+/* The version, config, field size and format bytes at the start of a saved
+ * session */
+#define SESSION_HDR_SZ 8
 
 /* Data in one direction. closed is set by the writer. */
 typedef struct {
@@ -1629,7 +1630,7 @@ static int LoadNoMemory(const unsigned char* buf, size_t len)
         ret = mbedtls_ssl_session_load(&session, buf, len);
         ok = ret == 0 || (ret == MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
             mbedtls_ssl_session_save(&session, NULL, 0, &olen) ==
-                MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+                MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE);
     }
     failAt = 0;
     (void)wolfSSL_SetAllocators(realMalloc, ff, rf);
@@ -1687,7 +1688,7 @@ static int SessionReload(mbedtls_ssl_session* session)
             mbedtls_ssl_session_load(&other, NULL, len) ==
                 MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
             mbedtls_ssl_session_save(&other, NULL, 0, &olen) ==
-                MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+                MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
     }
     if (ok) {
         mbedtls_ssl_session_free(session);
@@ -1814,6 +1815,39 @@ static int ResumeSaved(void)
     return Resume(MBEDTLS_SSL_VERIFY_OPTIONAL, &untrustedCerts,
         MBEDTLS_SSL_VERIFY_NONE, 1, 0, MBEDTLS_X509_BADCERT_NOT_TRUSTED);
 }
+
+#ifdef HAVE_EXT_CACHE
+/* As in Mbed TLS, the session is a copy, so the handshake does not set up
+ * one taken before it. Mbed TLS has none to take then. */
+static int SessionCopied(void)
+{
+    mbedtls_ssl_session session;
+    size_t olen = 0;
+    int ret = -1;
+    int s = 0;
+    int ok;
+
+    mbedtls_ssl_session_init(&session);
+    ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+    if (ok) {
+        mbedtls_ssl_conf_max_tls_version(&cli.conf, MBEDTLS_SSL_VERSION_TLS1_2);
+        ok = mbedtls_ssl_session_reset(&cli.ssl) == 0;
+    }
+    if (ok) {
+        ret = mbedtls_ssl_get_session(&cli.ssl, &session);
+        ok = Handshake(&s) == 0 && s == 0 && (ret != 0 ||
+            mbedtls_ssl_session_save(&session, NULL, 0, &olen) ==
+                MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE);
+    }
+    mbedtls_ssl_session_free(&session);
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+#endif /* HAVE_EXT_CACHE */
 
 #ifdef MBEDTLS_SSL_PROTO_TLS1_3
 /* As in Mbed TLS, a TLS 1.3 session without a ticket is not saved. The
@@ -2287,7 +2321,12 @@ static const struct {
     { "session resumed, OPTIONAL", ResumeOptional },
     { "session without a client certificate, server REQUIRED",
         ResumeServerRequired },
+#ifdef HAVE_EXT_CACHE
     { "session saved, loaded and resumed", ResumeSaved },
+    { "session from before the handshake not set up by it", SessionCopied },
+#else
+    { "session save and load unavailable, then resumed", ResumeSaved },
+#endif /* HAVE_EXT_CACHE */
 #ifdef MBEDTLS_SSL_PROTO_TLS1_3
     { "TLS 1.3 session without a ticket not saved", SaveTls13 },
 #endif /* MBEDTLS_SSL_PROTO_TLS1_3 */

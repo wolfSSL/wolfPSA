@@ -147,10 +147,11 @@ TLS:
 - `mbedtls_ssl_set_hostname` during a handshake applies from the next
   `mbedtls_ssl_session_reset`. Mbed TLS uses the new name for the rest of
   that handshake.
-- A saved session has a 7-byte header, then wolfSSL's session data. The
-  header has the wolfSSL version, the wolfSSL build options that change the
-  data and the sizes of its hash fields, so a session saved by Mbed TLS, or
-  by another wolfSSL release or build, fails to load with
+- A saved session has an 8-byte header, the 4-byte verify result, then
+  wolfSSL's session data. The header has a format number, the wolfSSL
+  version, the wolfSSL build options that change the data and the sizes of
+  its hash fields, so a session saved by Mbed TLS, with another format, or by
+  another wolfSSL release or build, fails to load with
   `MBEDTLS_ERR_SSL_VERSION_MISMATCH`. wolfSSL development builds between
   releases can have the same version and other session data. The header
   does not tell those apart, and loading fails with

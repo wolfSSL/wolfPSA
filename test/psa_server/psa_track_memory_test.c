@@ -97,6 +97,13 @@ static void test_pem(int want, const char *what)
 #endif /* MBEDTLS_PEM_PARSE_C */
 
 #ifdef MBEDTLS_SSL_TLS_C
+#ifdef HAVE_EXT_CACHE
+    #define SESSION_LOAD_ERR MBEDTLS_ERR_SSL_BAD_INPUT_DATA
+#else
+    /* No session save or load without HAVE_EXT_CACHE */
+    #define SESSION_LOAD_ERR MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE
+#endif /* HAVE_EXT_CACHE */
+
 /* The calls that allocate what the config or context keeps */
 static void test_ssl(int want, const char *when)
 {
@@ -118,7 +125,7 @@ static void test_ssl(int want, const char *when)
     mbedtls_ssl_session_init(&session);
     snprintf(what, sizeof(what), "mbedtls_ssl_session_load %s", when);
     check(what, mbedtls_ssl_session_load(&session, msg, sizeof(msg)),
-          (want != 0) ? want : MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+          (want != 0) ? want : SESSION_LOAD_ERR);
     /* Allocates nothing, so works before init too, as in Mbed TLS */
     snprintf(what, sizeof(what), "mbedtls_ssl_list_ciphersuites %s", when);
     check(what, ids[0] != 0 && mbedtls_ssl_get_ciphersuite_id(
