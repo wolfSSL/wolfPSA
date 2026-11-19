@@ -250,17 +250,15 @@ static int MbedNameParse(unsigned char* der, word32* idx, word32 end,
 #define MBED_SEQ_INNER     0x01 /* The first item inside each */
 #define MBED_SEQ_NOT_EMPTY 0x02
 
-/* Items of the SEQUENCE OF at idx, with the MBED_SEQ_* flags */
+/* Items from idx to end, with the MBED_SEQ_* flags */
 static int MbedSeqParse(unsigned char* der, word32 idx, word32 end,
     mbedtls_x509_sequence* seq, int flags)
 {
     mbedtls_x509_sequence* cur = NULL;
     mbedtls_x509_buf item;
     word32 next;
-    int ret;
+    int ret = 0;
 
-    ret = MbedDerItem(der, &idx, end, &item);
-    end = idx + (word32)item.len;
     while (ret == 0 && idx < end) {
         ret = MbedDerItem(der, &idx, end, &item);
         next = idx + (word32)item.len;
@@ -288,44 +286,6 @@ static int MbedSeqParse(unsigned char* der, word32 idx, word32 end,
     return ret;
 }
 
-/* AuthorityKeyIdentifier at idx: the key ID, issuer and serial, each at most
- * once and in that order */
-static int MbedAuthKeyIdParse(unsigned char* der, word32 idx, word32 end,
-    mbedtls_x509_authority* akid)
-{
-    mbedtls_x509_buf item;
-    word32 start;
-    int last = -1;
-    int ret;
-
-    ret = MbedDerItem(der, &idx, end, &item);
-    end = idx + (word32)item.len;
-    while (ret == 0 && idx < end) {
-        start = idx;
-        ret = MbedDerItem(der, &idx, end, &item);
-        if (ret == 0 && (item.tag & MBEDTLS_ASN1_TAG_VALUE_MASK) <= last) {
-            ret = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
-        }
-        else if (ret == 0 && item.tag == ASN_CONTEXT_SPECIFIC) {
-            akid->keyIdentifier = item;
-            akid->keyIdentifier.tag = MBEDTLS_ASN1_OCTET_STRING;
-        }
-        else if (ret == 0 &&
-                item.tag == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | 1)) {
-            /* GeneralNames, implicit tag */
-            ret = MbedSeqParse(der, start, end, &akid->authorityCertIssuer,
-                0);
-        }
-        else if (ret == 0 && item.tag == (ASN_CONTEXT_SPECIFIC | 2)) {
-            akid->authorityCertSerialNumber = item;
-            akid->authorityCertSerialNumber.tag = MBEDTLS_ASN1_INTEGER;
-        }
-        last = item.tag & MBEDTLS_ASN1_TAG_VALUE_MASK;
-        idx += (word32)item.len;
-    }
-    return ret;
-}
-
 #define MBED_OID(s) (const byte*)(s), (word32)(sizeof(s) - 1)
 
 typedef struct {
@@ -334,21 +294,28 @@ typedef struct {
     const char* name;
 } MbedOidName;
 
-/* The extensions Mbed TLS reports in ext_types */
+/* The extensions Mbed TLS reports in ext_types, and the tag of each value */
 static const struct {
     const byte* oid;
     word32 len;
+    byte tag;
     int type;
 } mbedExts[] = {
-    { MBED_OID("\x55\x1D\x13"), MBEDTLS_X509_EXT_BASIC_CONSTRAINTS },
-    { MBED_OID("\x55\x1D\x0F"), MBEDTLS_X509_EXT_KEY_USAGE },
-    { MBED_OID("\x55\x1D\x25"), MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE },
-    { MBED_OID("\x55\x1D\x11"), MBEDTLS_X509_EXT_SUBJECT_ALT_NAME },
-    { MBED_OID("\x60\x86\x48\x01\x86\xF8\x42\x01\x01"),
+    { MBED_OID("\x55\x1D\x13"), ASN_SEQUENCE | ASN_CONSTRUCTED,
+        MBEDTLS_X509_EXT_BASIC_CONSTRAINTS },
+    { MBED_OID("\x55\x1D\x0F"), ASN_BIT_STRING, MBEDTLS_X509_EXT_KEY_USAGE },
+    { MBED_OID("\x55\x1D\x25"), ASN_SEQUENCE | ASN_CONSTRUCTED,
+        MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE },
+    { MBED_OID("\x55\x1D\x11"), ASN_SEQUENCE | ASN_CONSTRUCTED,
+        MBEDTLS_X509_EXT_SUBJECT_ALT_NAME },
+    { MBED_OID("\x60\x86\x48\x01\x86\xF8\x42\x01\x01"), ASN_BIT_STRING,
         MBEDTLS_X509_EXT_NS_CERT_TYPE },
-    { MBED_OID("\x55\x1D\x20"), MBEDTLS_X509_EXT_CERTIFICATE_POLICIES },
-    { MBED_OID("\x55\x1D\x0E"), MBEDTLS_X509_EXT_SUBJECT_KEY_IDENTIFIER },
-    { MBED_OID("\x55\x1D\x23"), MBEDTLS_X509_EXT_AUTHORITY_KEY_IDENTIFIER }
+    { MBED_OID("\x55\x1D\x20"), ASN_SEQUENCE | ASN_CONSTRUCTED,
+        MBEDTLS_X509_EXT_CERTIFICATE_POLICIES },
+    { MBED_OID("\x55\x1D\x0E"), ASN_OCTET_STRING,
+        MBEDTLS_X509_EXT_SUBJECT_KEY_IDENTIFIER },
+    { MBED_OID("\x55\x1D\x23"), ASN_SEQUENCE | ASN_CONSTRUCTED,
+        MBEDTLS_X509_EXT_AUTHORITY_KEY_IDENTIFIER }
 };
 
 static int MbedOidIs(const mbedtls_x509_buf* oid, const byte* want,
@@ -467,9 +434,9 @@ static int MbedSanParse(const mbedtls_x509_buf* san, mbedtls_x509_buf* hwType,
     return ret;
 }
 
-/* Subject alternative names at idx, checked as Mbed TLS checks them */
-static int MbedSanSeqParse(mbedtls_x509_crt* crt, unsigned char* der,
-    word32 idx, word32 end)
+/* GeneralNames from idx to end, checked as Mbed TLS checks them */
+static int MbedSanSeqParse(unsigned char* der, word32 idx, word32 end,
+    mbedtls_x509_sequence* seq)
 {
     const mbedtls_x509_sequence* cur;
     mbedtls_x509_buf hwType;
@@ -477,9 +444,9 @@ static int MbedSanSeqParse(mbedtls_x509_crt* crt, unsigned char* der,
     mbedtls_x509_name name;
     int ret;
 
-    ret = MbedSeqParse(der, idx, end, &crt->subject_alt_names, 0);
-    for (cur = &crt->subject_alt_names; ret == 0 && cur != NULL &&
-            cur->buf.p != NULL; cur = cur->next) {
+    ret = MbedSeqParse(der, idx, end, seq, 0);
+    for (cur = seq; ret == 0 && cur != NULL && cur->buf.p != NULL;
+            cur = cur->next) {
         if (MbedSanType(&cur->buf) < 0) {
             ret = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
         }
@@ -494,6 +461,39 @@ static int MbedSanSeqParse(mbedtls_x509_crt* crt, unsigned char* der,
     return ret;
 }
 
+/* AuthorityKeyIdentifier from idx to end: key ID, issuer, serial, in order */
+static int MbedAuthKeyIdParse(unsigned char* der, word32 idx, word32 end,
+    mbedtls_x509_authority* akid)
+{
+    mbedtls_x509_buf item;
+    int last = -1;
+    int ret = 0;
+
+    while (ret == 0 && idx < end) {
+        ret = MbedDerItem(der, &idx, end, &item);
+        if (ret == 0 && (item.tag & MBEDTLS_ASN1_TAG_VALUE_MASK) <= last) {
+            ret = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
+        }
+        else if (ret == 0 && item.tag == ASN_CONTEXT_SPECIFIC) {
+            akid->keyIdentifier = item;
+            akid->keyIdentifier.tag = MBEDTLS_ASN1_OCTET_STRING;
+        }
+        else if (ret == 0 &&
+                item.tag == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | 1)) {
+            /* GeneralNames, implicit tag */
+            ret = MbedSanSeqParse(der, idx, idx + (word32)item.len,
+                &akid->authorityCertIssuer);
+        }
+        else if (ret == 0 && item.tag == (ASN_CONTEXT_SPECIFIC | 2)) {
+            akid->authorityCertSerialNumber = item;
+            akid->authorityCertSerialNumber.tag = MBEDTLS_ASN1_INTEGER;
+        }
+        last = item.tag & MBEDTLS_ASN1_TAG_VALUE_MASK;
+        idx += (word32)item.len;
+    }
+    return ret;
+}
+
 /* Extensions at idx. Scalar values come from wolfCrypt's decode. */
 static int MbedExtParse(mbedtls_x509_crt* crt, unsigned char* der,
     word32 idx, word32 end)
@@ -502,6 +502,7 @@ static int MbedExtParse(mbedtls_x509_crt* crt, unsigned char* der,
     mbedtls_x509_buf oid;
     word32 extEnd;
     size_t i;
+    byte tag = 0;
     int type;
     int ret;
 
@@ -519,20 +520,25 @@ static int MbedExtParse(mbedtls_x509_crt* crt, unsigned char* der,
             idx += (word32)item.len;
         }
         if (ret == 0) {
-            ret = MbedDerItem(der, &idx, extEnd, &item);
+            ret = MbedDerTag(der, &idx, extEnd, ASN_OCTET_STRING, 1,
+                MBEDTLS_ERR_X509_INVALID_EXTENSIONS, &item);
         }
         type = 0;
         for (i = 0; ret == 0 && i < sizeof(mbedExts) / sizeof(mbedExts[0]);
                 i++) {
             if (MbedOidIs(&oid, mbedExts[i].oid, mbedExts[i].len)) {
                 type = mbedExts[i].type;
+                tag = mbedExts[i].tag;
             }
         }
-        if ((crt->ext_types & type) != 0) {
+        /* Each once, with one value that fills the OCTET STRING */
+        if ((crt->ext_types & type) != 0 || (type != 0 &&
+                MbedDerTag(der, &idx, extEnd, tag, 1,
+                MBEDTLS_ERR_X509_INVALID_EXTENSIONS, &item) != 0)) {
             ret = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
         }
         else if (type == MBEDTLS_X509_EXT_SUBJECT_ALT_NAME) {
-            ret = MbedSanSeqParse(crt, der, idx, extEnd);
+            ret = MbedSanSeqParse(der, idx, extEnd, &crt->subject_alt_names);
         }
         else if (type == MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE) {
             ret = MbedSeqParse(der, idx, extEnd, &crt->ext_key_usage,
@@ -543,7 +549,7 @@ static int MbedExtParse(mbedtls_x509_crt* crt, unsigned char* der,
                 MBED_SEQ_INNER | MBED_SEQ_NOT_EMPTY);
         }
         else if (type == MBEDTLS_X509_EXT_SUBJECT_KEY_IDENTIFIER) {
-            ret = MbedDerItem(der, &idx, extEnd, &crt->subject_key_id);
+            crt->subject_key_id = item;
         }
         else if (type == MBEDTLS_X509_EXT_AUTHORITY_KEY_IDENTIFIER) {
             ret = MbedAuthKeyIdParse(der, idx, extEnd,
