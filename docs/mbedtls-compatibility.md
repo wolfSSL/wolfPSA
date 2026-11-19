@@ -229,6 +229,9 @@ X.509:
   specific error.
 - `mbedtls_x509_crt_info` does not name the hash of an RSASSA-PSS
   signature, as Mbed TLS without `MBEDTLS_X509_RSASSA_PSS_SUPPORT`.
+- `mbedtls_x509_crt_info` prints each IPv6 group as one 16-bit value, such
+  as `2001:DB8:0:0:0:0:0:1`. Mbed TLS prints the two bytes of a group
+  without padding, as `201:DB8:00:00:00:00:00:01`.
 - With `NO_ASN_TIME`, `mbedtls_x509_time_is_past` and
   `mbedtls_x509_time_is_future` return 0, as Mbed TLS does without
   `MBEDTLS_HAVE_TIME_DATE`.

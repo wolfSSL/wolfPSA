@@ -1449,7 +1449,7 @@ static int MbedInfoHwModuleName(char** p, size_t* n, const char* prefix,
     return ret;
 }
 
-/* IPv4 in dotted decimal, IPv6 in hex without leading zeros, as Mbed TLS */
+/* IPv4 in dotted decimal, IPv6 as eight hex groups without leading zeros */
 static int MbedInfoIp(char** p, size_t* n, const mbedtls_x509_buf* ip)
 {
     size_t i;
@@ -1460,10 +1460,9 @@ static int MbedInfoIp(char** p, size_t* n, const mbedtls_x509_buf* ip)
             ret = MbedAdvance(XSNPRINTF(*p, *n, "%s%u", (i > 0) ? "." : "",
                 (unsigned int)ip->p[i]), p, n);
         }
-        else {
-            ret = MbedAdvance(XSNPRINTF(*p, *n, "%s%X",
-                (i > 0 && i % 2 == 0) ? ":" : "", (unsigned int)ip->p[i]),
-                p, n);
+        else if (i % 2 == 0) {
+            ret = MbedAdvance(XSNPRINTF(*p, *n, "%s%X", (i > 0) ? ":" : "",
+                ((unsigned int)ip->p[i] << 8) | ip->p[i + 1]), p, n);
         }
     }
     return ret;
@@ -1676,6 +1675,9 @@ int mbedtls_x509_crt_verify_info(char* buf, size_t size, const char* prefix,
     size_t i;
     int ret = 0;
 
+    if (size > 0) {
+        buf[0] = '\0';
+    }
     for (i = 0; ret == 0 && i < XELEM_CNT(mbedVerifyInfo); i++) {
         if ((flags & mbedVerifyInfo[i].flag) != 0) {
             ret = MbedAdvance(XSNPRINTF(p, n, "%s%s\n", prefix,

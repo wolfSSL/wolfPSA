@@ -1041,6 +1041,10 @@ static int CertInfoCase(char* line)
     if (ret == 0) {
         ret = mbedtls_x509_crt_info(buf, sizeof(buf), "", &crt);
     }
+    else if (ret > 0) {
+        /* Some of the file's certificates did not parse */
+        ret = ERR;
+    }
     if (ret < 0) {
         printf("FAIL: %s: returned %d\n", file, ret);
         fails++;
@@ -1104,7 +1108,7 @@ static int CertInfo(void)
     return fails;
 }
 
-/* Subject alternative names Mbed TLS does not print */
+/* Subject alternative names not in Mbed TLS's x509_cert_info cases */
 static int SanInfo(void)
 {
     /* A hardware module name OID and no value */
@@ -1123,7 +1127,10 @@ static int SanInfo(void)
             "30180603551D110411300FA00D06032A0304A0060C0461626364", NULL,
             "<unsupported>" },
         { "malformed otherName, which parsing refuses",
-            "300D0603551D110406300482026162", hwNoValue, "<malformed>" }
+            "300D0603551D110406300482026162", hwNoValue, "<malformed>" },
+        { "IPv6 with a low byte under 0x10",
+            "301B0603551D11041430128710" "20010DB8000000000000000000000001",
+            NULL, "iPAddress : 2001:DB8:0:0:0:0:0:1" }
     };
     mbedtls_x509_buf* first;
     mbedtls_x509_crt crt;
@@ -1185,7 +1192,9 @@ static int VerifyInfo(void)
     int ret;
 
     for (i = 0; i < sizeof(infos) / sizeof(infos[0]); i++) {
-        memset(buf, 0, sizeof(buf));
+        /* Old text, which no flags must also clear */
+        memset(buf, 'x', sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = '\0';
         ret = mbedtls_x509_crt_verify_info(buf, sizeof(buf), infos[i].prefix,
             infos[i].flags);
         fails += ExpectStr("verify info", buf, infos[i].want);
