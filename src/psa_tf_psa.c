@@ -34,8 +34,10 @@
 
 #include <psa/crypto.h>
 #include <mbedtls/base64.h>
+#include <mbedtls/md.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/platform_util.h>
+#include <mbedtls/psa_util.h>
 #include <mbedtls/threading.h>
 #include <wolfssl/wolfcrypt/memory.h>
 #include <wolfssl/wolfcrypt/misc.h>
@@ -535,6 +537,199 @@ int mbedtls_pk_can_do_psa(const mbedtls_pk_context* pk, psa_algorithm_t alg,
     }
     return 0;
 }
+
+#if defined(MBEDTLS_MD_C)
+struct mbedtls_md_info_t {
+    mbedtls_md_type_t type;
+};
+
+static const mbedtls_md_info_t mdInfo[] = {
+#if defined(PSA_WANT_ALG_MD5)
+    { MBEDTLS_MD_MD5 },
+#endif /* PSA_WANT_ALG_MD5 */
+#if defined(PSA_WANT_ALG_RIPEMD160)
+    { MBEDTLS_MD_RIPEMD160 },
+#endif /* PSA_WANT_ALG_RIPEMD160 */
+#if defined(PSA_WANT_ALG_SHA_1)
+    { MBEDTLS_MD_SHA1 },
+#endif /* PSA_WANT_ALG_SHA_1 */
+#if defined(PSA_WANT_ALG_SHA_224)
+    { MBEDTLS_MD_SHA224 },
+#endif /* PSA_WANT_ALG_SHA_224 */
+#if defined(PSA_WANT_ALG_SHA_256)
+    { MBEDTLS_MD_SHA256 },
+#endif /* PSA_WANT_ALG_SHA_256 */
+#if defined(PSA_WANT_ALG_SHA_384)
+    { MBEDTLS_MD_SHA384 },
+#endif /* PSA_WANT_ALG_SHA_384 */
+#if defined(PSA_WANT_ALG_SHA_512)
+    { MBEDTLS_MD_SHA512 },
+#endif /* PSA_WANT_ALG_SHA_512 */
+#if defined(PSA_WANT_ALG_SHA3_224)
+    { MBEDTLS_MD_SHA3_224 },
+#endif /* PSA_WANT_ALG_SHA3_224 */
+#if defined(PSA_WANT_ALG_SHA3_256)
+    { MBEDTLS_MD_SHA3_256 },
+#endif /* PSA_WANT_ALG_SHA3_256 */
+#if defined(PSA_WANT_ALG_SHA3_384)
+    { MBEDTLS_MD_SHA3_384 },
+#endif /* PSA_WANT_ALG_SHA3_384 */
+#if defined(PSA_WANT_ALG_SHA3_512)
+    { MBEDTLS_MD_SHA3_512 },
+#endif /* PSA_WANT_ALG_SHA3_512 */
+};
+
+/* As TF-PSA-Crypto's md maps PSA statuses */
+static int MdRet(psa_status_t status)
+{
+    switch (status) {
+        case PSA_SUCCESS:
+        case PSA_ERROR_INVALID_ARGUMENT:
+        case PSA_ERROR_INSUFFICIENT_MEMORY:
+        case PSA_ERROR_CORRUPTION_DETECTED:
+        case PSA_ERROR_HARDWARE_FAILURE:
+            return status;
+        case PSA_ERROR_NOT_SUPPORTED:
+            return MBEDTLS_ERR_MD_FEATURE_UNAVAILABLE;
+        case PSA_ERROR_COMMUNICATION_FAILURE:
+            return PSA_ERROR_HARDWARE_FAILURE;
+        default:
+            return PSA_ERROR_GENERIC_ERROR;
+    }
+}
+
+/* NULL until mbedtls_md_setup */
+static psa_hash_operation_t* MdOp(const mbedtls_md_context_t* ctx)
+{
+    return (ctx == NULL) ? NULL : (psa_hash_operation_t*)ctx->md_ctx;
+}
+
+static psa_algorithm_t MdAlg(const mbedtls_md_info_t* md_info)
+{
+    return mbedtls_md_psa_alg_from_type(md_info->type);
+}
+
+const mbedtls_md_info_t* mbedtls_md_info_from_type(mbedtls_md_type_t md_type)
+{
+    size_t i;
+
+    for (i = 0; i < XELEM_CNT(mdInfo); i++) {
+        if (mdInfo[i].type == md_type) {
+            return &mdInfo[i];
+        }
+    }
+    return NULL;
+}
+
+void mbedtls_md_init(mbedtls_md_context_t* ctx)
+{
+    if (ctx != NULL) {
+        XMEMSET(ctx, 0, sizeof(*ctx));
+    }
+}
+
+void mbedtls_md_free(mbedtls_md_context_t* ctx)
+{
+    psa_hash_operation_t* op = MdOp(ctx);
+
+    if (op != NULL) {
+        (void)psa_hash_abort(op);
+        XFREE(op, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+    if (ctx != NULL) {
+        XMEMSET(ctx, 0, sizeof(*ctx));
+    }
+}
+
+int mbedtls_md_setup(mbedtls_md_context_t* ctx,
+    const mbedtls_md_info_t* md_info, int hmac)
+{
+    psa_hash_operation_t* op;
+
+    if (ctx == NULL || md_info == NULL || hmac != 0) {
+        return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
+    }
+    op = (psa_hash_operation_t*)XMALLOC(sizeof(*op), NULL,
+        DYNAMIC_TYPE_TMP_BUFFER);
+    if (op == NULL) {
+        return MBEDTLS_ERR_MD_ALLOC_FAILED;
+    }
+    *op = psa_hash_operation_init();
+    ctx->md_info = md_info;
+    ctx->md_ctx = op;
+    return 0;
+}
+
+int mbedtls_md_clone(mbedtls_md_context_t* dst,
+    const mbedtls_md_context_t* src)
+{
+    psa_hash_operation_t* op = MdOp(dst);
+
+    if (op == NULL || MdOp(src) == NULL || dst->md_info != src->md_info) {
+        return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
+    }
+    /* dst may be in use, as Mbed TLS's own hashes allow */
+    (void)psa_hash_abort(op);
+    return MdRet(psa_hash_clone(MdOp(src), op));
+}
+
+unsigned char mbedtls_md_get_size(const mbedtls_md_info_t* md_info)
+{
+    return (md_info == NULL) ? 0 :
+        (unsigned char)PSA_HASH_LENGTH(MdAlg(md_info));
+}
+
+mbedtls_md_type_t mbedtls_md_get_type(const mbedtls_md_info_t* md_info)
+{
+    return (md_info == NULL) ? MBEDTLS_MD_NONE : md_info->type;
+}
+
+int mbedtls_md_starts(mbedtls_md_context_t* ctx)
+{
+    psa_hash_operation_t* op = MdOp(ctx);
+
+    if (op == NULL) {
+        return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
+    }
+    (void)psa_hash_abort(op);
+    return MdRet(psa_hash_setup(op, MdAlg(ctx->md_info)));
+}
+
+int mbedtls_md_update(mbedtls_md_context_t* ctx, const unsigned char* input,
+    size_t ilen)
+{
+    psa_hash_operation_t* op = MdOp(ctx);
+
+    if (op == NULL) {
+        return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
+    }
+    return MdRet(psa_hash_update(op, input, ilen));
+}
+
+int mbedtls_md_finish(mbedtls_md_context_t* ctx, unsigned char* output)
+{
+    psa_hash_operation_t* op = MdOp(ctx);
+    size_t len;
+
+    if (op == NULL) {
+        return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
+    }
+    return MdRet(psa_hash_finish(op, output,
+        mbedtls_md_get_size(ctx->md_info), &len));
+}
+
+int mbedtls_md(const mbedtls_md_info_t* md_info, const unsigned char* input,
+    size_t ilen, unsigned char* output)
+{
+    size_t len;
+
+    if (md_info == NULL) {
+        return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
+    }
+    return MdRet(psa_hash_compute(MdAlg(md_info), input, ilen, output,
+        mbedtls_md_get_size(md_info), &len));
+}
+#endif /* MBEDTLS_MD_C */
 
 #if defined(MBEDTLS_FS_IO)
 int wolfPSA_MbedLoadFile(const char* path, unsigned char** buf, size_t* len)

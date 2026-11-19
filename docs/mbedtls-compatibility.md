@@ -93,6 +93,11 @@ TF-PSA-Crypto, in every build:
   X448, PEM or DER, SubjectPublicKeyInfo or, for RSA, PKCS #1. EC keys are
   on the curves the PSA engine has.
 - `mbedtls_base64_*`: encode, decode
+- `mbedtls_md_*`: info_from_type, init, free, setup, clone, get_size,
+  get_size_from_type, get_type, starts, update, finish, and `mbedtls_md`,
+  for the hashes the PSA engine has
+- `mbedtls/psa_util.h`: `mbedtls_md_psa_alg_from_type` and
+  `mbedtls_md_type_from_psa_alg`
 - `mbedtls/threading.h` with `MBEDTLS_THREADING_C`, on pthreads
 - `mbedtls_psa_crypto_free`, `mbedtls_platform_zeroize` and
   `mbedtls/platform.h`
@@ -120,8 +125,10 @@ Other:
 
 - The rest of `mbedtls/pk.h`: key writing, sign and verify, PSA key
   wrapping
-- `mbedtls/md.h`, `mbedtls/asn1.h`, `mbedtls/asn1write.h`,
-  `mbedtls/nist_kw.h`, `mbedtls/psa_util.h` and `mbedtls/constant_time.h`
+- `mbedtls/asn1.h`, `mbedtls/asn1write.h`, `mbedtls/nist_kw.h` and
+  `mbedtls/constant_time.h`
+- The rest of `mbedtls/psa_util.h`: `mbedtls_psa_get_random` and ECDSA
+  signature conversion
 - Build files: pkg-config, a CMake package and Mbed TLS's library names
   (`libmbedtls`, `libmbedx509`, `libtfpsacrypto`)
 - A Zephyr option for the compatibility layer
@@ -259,6 +266,11 @@ Other:
   for encrypted PEM. No `mbedtls_pem_write_buffer`.
 - `mbedtls_pk_parse_key` and `mbedtls_pk_parse_public_key` do not take
   encrypted keys or EC keys with a compressed public key.
+- `mbedtls/md.h` has the public API only. The functions TF-PSA-Crypto
+  declares only with `MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS` are not
+  implemented, such as `mbedtls_md_hmac_setup`, `mbedtls_md_hmac_starts`,
+  `mbedtls_md_hmac`, `mbedtls_md_file`, `mbedtls_md_list` and
+  `mbedtls_md_info_from_string`. For HMAC, use `psa_mac_*`.
 - No global mutexes such as `mbedtls_threading_gmtime_mutex`.
 
 ## Tests

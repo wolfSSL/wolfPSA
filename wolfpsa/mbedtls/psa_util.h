@@ -26,5 +26,19 @@
 
 #include "tf-psa-crypto/build_info.h"
 #include "psa/crypto.h"
+#include "mbedtls/md.h"
+
+/* The md types have the values of the PSA hash algorithms */
+static inline psa_algorithm_t mbedtls_md_psa_alg_from_type(
+    mbedtls_md_type_t md_type)
+{
+    return PSA_ALG_CATEGORY_HASH | (psa_algorithm_t)md_type;
+}
+
+static inline mbedtls_md_type_t mbedtls_md_type_from_psa_alg(
+    psa_algorithm_t psa_alg)
+{
+    return (mbedtls_md_type_t)(psa_alg & PSA_ALG_HASH_MASK);
+}
 
 #endif /* MBEDTLS_PSA_UTIL_H */

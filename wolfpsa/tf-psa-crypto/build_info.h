@@ -42,6 +42,16 @@
 /* mbedtls/pk.h: private keys, PEM or DER */
 #define MBEDTLS_PK_C
 #define MBEDTLS_PK_PARSE_C
+/* mbedtls/md.h, without the functions TF-PSA-Crypto declares as private */
+#if defined(PSA_WANT_ALG_MD5) || defined(PSA_WANT_ALG_RIPEMD160) || \
+        defined(PSA_WANT_ALG_SHA_1) || defined(PSA_WANT_ALG_SHA_224) || \
+        defined(PSA_WANT_ALG_SHA_256) || defined(PSA_WANT_ALG_SHA_384) || \
+        defined(PSA_WANT_ALG_SHA_512) || defined(PSA_WANT_ALG_SHA3_224) || \
+        defined(PSA_WANT_ALG_SHA3_256) || defined(PSA_WANT_ALG_SHA3_384) || \
+        defined(PSA_WANT_ALG_SHA3_512)
+    #define MBEDTLS_MD_C
+    #define MBEDTLS_MD_LIGHT
+#endif /* a hash that mbedtls/md.h has */
 
 #if defined(PSA_WANT_KEY_TYPE_AES)
     #define MBEDTLS_AES_C

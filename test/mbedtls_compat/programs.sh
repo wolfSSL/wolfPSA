@@ -56,6 +56,16 @@ U=programs/util
 DER=$BUILD_DIR/server5.crt.der
 PEM2DER="filename=$DATA/server5.crt output_file=$DER"
 rm -f "$DER"
+K=tf-psa-crypto/programs/psa/key_ladder_demo
+# key_ladder_demo wraps with labels a and b; only those labels unwrap
+KL=$BUILD_DIR/key_ladder
+KL_KEY="master=$KL/master.key"
+KL_WRAP="wrap $KL_KEY label=a label=b input=$KL/input output=$KL/wrapped"
+KL_UNWRAP="unwrap $KL_KEY label=a label=b input=$KL/wrapped output=$KL/output"
+KL_OTHER="unwrap $KL_KEY label=ab input=$KL/wrapped output=$KL/other"
+rm -rf "$KL"
+mkdir -p "$KL"
+echo "Some input to wrap" > "$KL/input"
 ROOTS="$DATA/test-ca.crt $DATA/test-ca2.crt $DATA/test-ca-sha256.crt"
 # mini_client's built-in CA, test-ca2 from 2013, encodes its name as only the
 # older server5 certs do, and wolfSSL compares encoded names
@@ -113,6 +123,10 @@ wrong IP address host, VERIFY_FAILED|$C|-S 127.0.0.2 $LO|$TLS13||1|$GOT -9984
 IPv6 address host, VERIFY_FAILED|$C|-S ::1 $LO|$TLS13||1|$GOT -9984
 load_roots|$X/load_roots|iterations=10 $ROOTS|||0|10 iterations ->
 pem2der|$U/pem2der|$PEM2DER|||0|DER file ... ok
+key_ladder_demo generate|$K|generate $KL_KEY|||0|
+key_ladder_demo wrap|$K|$KL_WRAP|||0|
+key_ladder_demo unwrap|$K|$KL_UNWRAP|||0|
+key_ladder_demo, other labels, INVALID_SIGNATURE|$K|$KL_OTHER|||1|Error -149
 mini_client|$P/mini_client||$SERVER5|$CA2_DATE|0|
 mini_client, expired CA, ssl_handshake_failed|$P/mini_client||$SERVER5||7|
 ssl_client1|$P/ssl_client1||$SERVER2||0|$VERIFY ok
@@ -123,6 +137,12 @@ if cmp -s "$DER" "$DATA/server5.crt.der"; then
     echo "PASS: pem2der output"
 else
     echo "FAIL: pem2der output differs from server5.crt.der"
+    FAILS=$((FAILS + 1))
+fi
+if cmp -s "$KL/input" "$KL/output"; then
+    echo "PASS: key_ladder_demo output"
+else
+    echo "FAIL: key_ladder_demo output differs from its input"
     FAILS=$((FAILS + 1))
 fi
 
