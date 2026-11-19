@@ -75,6 +75,7 @@ static const Case cases[] = {
         0 },
     { "authorityKeyId_subjectKeyId_issuer_tag2_malformed.crt.der", ERR, 0 },
     { "authorityKeyId_subjectKeyId_tag_len_malformed.crt.der", ERR, 0 },
+    { "authorityKeyId_no_keyid.crt.der", 0, 1 },
     /* Over WOLFSSL_MAX_PATH_LEN. Mbed TLS: 0, 1 */
     { IN "server1_pathlen_int_max-1.crt", ERR, 0 },
     /* wolfSSL skips spaces in base64. Mbed TLS: 1, 1 and ERR, 0 */
@@ -698,6 +699,12 @@ static int Extensions(void)
             MBEDTLS_ERR_X509_BAD_INPUT_DATA },
         { "authority cert issuer with a truncated otherName OID",
             "30130603551D23040C300AA105A00306052B820101",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "authority cert issuer without a serial number",
+            "300E0603551D2304073005A103820161",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "authority cert serial number without an issuer",
+            "300F0603551D2304083006800101820101",
             MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
         { "policies in a SET", "30100603551D2004093107300506032A0304",
             MBEDTLS_ERR_X509_INVALID_EXTENSIONS },

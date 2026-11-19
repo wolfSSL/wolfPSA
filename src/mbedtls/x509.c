@@ -461,35 +461,35 @@ static int MbedSanSeqParse(unsigned char* der, word32 idx, word32 end,
     return ret;
 }
 
-/* AuthorityKeyIdentifier from idx to end: key ID, issuer, serial, in order */
+/* AuthorityKeyIdentifier from idx to end: key ID, then issuer and serial */
 static int MbedAuthKeyIdParse(unsigned char* der, word32 idx, word32 end,
     mbedtls_x509_authority* akid)
 {
+    const int err = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
     mbedtls_x509_buf item;
-    int last = -1;
     int ret = 0;
 
-    while (ret == 0 && idx < end) {
-        ret = MbedDerItem(der, &idx, end, &item);
-        if (ret == 0 && (item.tag & MBEDTLS_ASN1_TAG_VALUE_MASK) <= last) {
-            ret = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
-        }
-        else if (ret == 0 && item.tag == ASN_CONTEXT_SPECIFIC) {
-            akid->keyIdentifier = item;
-            akid->keyIdentifier.tag = MBEDTLS_ASN1_OCTET_STRING;
-        }
-        else if (ret == 0 &&
-                item.tag == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | 1)) {
+    if (idx < end && der[idx] == ASN_CONTEXT_SPECIFIC) {
+        ret = MbedDerTag(der, &idx, end, ASN_CONTEXT_SPECIFIC, 0, err,
+            &akid->keyIdentifier);
+        akid->keyIdentifier.tag = MBEDTLS_ASN1_OCTET_STRING;
+        idx += (word32)akid->keyIdentifier.len;
+    }
+    /* The issuer and serial number are both present or both absent */
+    if (ret == 0 && idx < end) {
+        ret = MbedDerTag(der, &idx, end,
+            ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | 1, 0, err, &item);
+        if (ret == 0) {
             /* GeneralNames, implicit tag */
             ret = MbedSanSeqParse(der, idx, idx + (word32)item.len,
                 &akid->authorityCertIssuer);
+            idx += (word32)item.len;
         }
-        else if (ret == 0 && item.tag == (ASN_CONTEXT_SPECIFIC | 2)) {
-            akid->authorityCertSerialNumber = item;
+        if (ret == 0) {
+            ret = MbedDerTag(der, &idx, end, ASN_CONTEXT_SPECIFIC | 2, 1, err,
+                &akid->authorityCertSerialNumber);
             akid->authorityCertSerialNumber.tag = MBEDTLS_ASN1_INTEGER;
         }
-        last = item.tag & MBEDTLS_ASN1_TAG_VALUE_MASK;
-        idx += (word32)item.len;
     }
     return ret;
 }
