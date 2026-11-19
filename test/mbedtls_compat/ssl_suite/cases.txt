@@ -11,12 +11,12 @@
 # Function: the test function in test_suite_ssl.function that runs the case.
 # select.py fails when it differs from Mbed TLS's.
 #
-# Waits on, for fail:
+# Feature needed, for fail:
 #   session        mbedtls_ssl_session_save and _load; PSK too for a session
 #                  without a certificate
 #   ticket         session tickets, then session save and load
 #   export-len     wolfSSL taking a TLS 1.2 export label and context over 62
-#                  bytes, as the README says
+#                  bytes, as docs/mbedtls-compatibility.md says
 #   dtls           DTLS
 #   psk            PSK
 #   opaque         opaque keys
@@ -35,7 +35,7 @@
 #   group_list     the same for mbedtls_ssl_get_supported_group_list or
 #                  MBEDTLS_SSL_IANA_TLS_GROUPS_INFO
 #
-# Columns: group, expect, waits on or why, function, description
+# Columns: group, expect, feature needed or why, function, description
 api    fail   psk           test_multiple_psks                        Attempt to register multiple PSKs
 api    fail   psk           test_multiple_psks_opaque                 Attempt to register multiple PSKS, incl. opaque PSK, #0
 api    fail   psk           test_multiple_psks_opaque                 Attempt to register multiple PSKs, incl. opaque PSK, #1

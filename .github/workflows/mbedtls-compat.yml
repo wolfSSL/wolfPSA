@@ -7,7 +7,7 @@ on:
 jobs:
   # make MBEDTLS_COMPAT=1 mbedtls-compat-test: the Mbed TLS 4.x API on
   # wolfSSL, tested with our tests, Mbed TLS's sample programs and its ssl
-  # suite. See the README.
+  # suite. See docs/mbedtls-compatibility.md.
   mbedtls-compat:
     runs-on: ubuntu-latest
     timeout-minutes: 15
