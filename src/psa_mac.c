@@ -266,7 +266,9 @@ static psa_status_t wolfpsa_mac_setup(psa_mac_operation_t *operation,
     uint8_t *key_data = NULL;
     size_t key_data_length = 0;
     wolfpsa_mac_ctx_t *ctx = NULL;
-    int ret;
+    size_t trunc_len;
+    int hash_type;
+    int ret = NOT_COMPILED_IN;
 
     if (operation == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
@@ -288,62 +290,59 @@ static psa_status_t wolfpsa_mac_setup(psa_mac_operation_t *operation,
     ctx = (wolfpsa_mac_ctx_t *)XMALLOC(sizeof(*ctx), NULL,
                                        DYNAMIC_TYPE_TMP_BUFFER);
     if (ctx == NULL) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        return PSA_ERROR_INSUFFICIENT_MEMORY;
+        status = PSA_ERROR_INSUFFICIENT_MEMORY;
     }
-    XMEMSET(ctx, 0, sizeof(*ctx));
-
-    ctx->alg = alg;
-    ctx->key_type = attributes.type;
-    ctx->key_bits = attributes.bits;
-    ctx->mac_length = PSA_MAC_LENGTH(attributes.type, attributes.bits, alg);
-    ctx->full_length = PSA_MAC_LENGTH(attributes.type, attributes.bits,
-                                       PSA_ALG_FULL_LENGTH_MAC(alg));
-    if (wolfpsa_check_word32_length(key_data_length) != PSA_SUCCESS) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        wc_ForceZero(ctx, sizeof(*ctx));
-        XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        return PSA_ERROR_INVALID_ARGUMENT;
+    if (status == PSA_SUCCESS) {
+        XMEMSET(ctx, 0, sizeof(*ctx));
+        ctx->alg = alg;
+        ctx->key_type = attributes.type;
+        ctx->key_bits = attributes.bits;
+        ctx->mac_length = PSA_MAC_LENGTH(attributes.type, attributes.bits,
+                                         alg);
+        ctx->full_length = PSA_MAC_LENGTH(attributes.type, attributes.bits,
+                                          PSA_ALG_FULL_LENGTH_MAC(alg));
+        if (wolfpsa_check_word32_length(key_data_length) != PSA_SUCCESS) {
+            status = PSA_ERROR_INVALID_ARGUMENT;
+        }
     }
 
-    if (PSA_ALG_IS_HMAC(alg)) {
-        int hash_type = wolfpsa_hash_type_from_alg(alg);
+    if (status == PSA_SUCCESS && PSA_ALG_IS_HMAC(alg)) {
+        hash_type = wolfpsa_hash_type_from_alg(alg);
         if (hash_type == WC_HASH_TYPE_NONE) {
-            wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-            wc_ForceZero(ctx, sizeof(*ctx));
-            XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            return PSA_ERROR_NOT_SUPPORTED;
+            status = PSA_ERROR_NOT_SUPPORTED;
         }
-        ctx->type = WOLFPSA_MAC_HMAC;
 #ifdef WOLF_CRYPTO_CB
-        ctx->key = (uint8_t *)XMALLOC(key_data_length == 0 ? 1 :
-                                      key_data_length, NULL,
-                                      DYNAMIC_TYPE_TMP_BUFFER);
-        if (ctx->key == NULL) {
-            wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-            wc_ForceZero(ctx, sizeof(*ctx));
-            XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            return PSA_ERROR_INSUFFICIENT_MEMORY;
+        if (status == PSA_SUCCESS) {
+            ctx->key = (uint8_t *)XMALLOC(key_data_length == 0 ? 1 :
+                                          key_data_length, NULL,
+                                          DYNAMIC_TYPE_TMP_BUFFER);
+            if (ctx->key == NULL) {
+                status = PSA_ERROR_INSUFFICIENT_MEMORY;
+            }
         }
-        if (key_data_length > 0) {
-            XMEMCPY(ctx->key, key_data, key_data_length);
+        if (status == PSA_SUCCESS) {
+            if (key_data_length > 0) {
+                XMEMCPY(ctx->key, key_data, key_data_length);
+            }
+            ctx->key_length = key_data_length;
         }
-        ctx->key_length = key_data_length;
 #endif
-
-        ret = wc_HmacInit(&ctx->ctx.hmac, NULL, wolfPSA_GetDefaultDevID());
-        if (ret == 0) {
+        if (status == PSA_SUCCESS) {
+            ctx->type = WOLFPSA_MAC_HMAC;
+            ret = wc_HmacInit(&ctx->ctx.hmac, NULL, wolfPSA_GetDefaultDevID());
+            if (ret == 0) {
 #ifdef WOLF_CRYPTO_CB
-            ret = wc_HmacSetKey(&ctx->ctx.hmac, hash_type, ctx->key,
-                                (word32)ctx->key_length);
+                ret = wc_HmacSetKey(&ctx->ctx.hmac, hash_type, ctx->key,
+                                    (word32)ctx->key_length);
 #else
-            ret = wc_HmacSetKey(&ctx->ctx.hmac, hash_type, key_data,
-                                (word32)key_data_length);
+                ret = wc_HmacSetKey(&ctx->ctx.hmac, hash_type, key_data,
+                                    (word32)key_data_length);
 #endif
+            }
         }
     }
 #ifdef WOLFSSL_CMAC
-    else if (PSA_ALG_IS_BLOCK_CIPHER_MAC(alg) &&
+    else if (status == PSA_SUCCESS && PSA_ALG_IS_BLOCK_CIPHER_MAC(alg) &&
              PSA_ALG_FULL_LENGTH_MAC(alg) == PSA_ALG_CMAC) {
         ret = wc_InitCmac_ex(&ctx->ctx.cmac, key_data,
                              (word32)key_data_length, WC_CMAC_AES, NULL, NULL,
@@ -351,48 +350,35 @@ static psa_status_t wolfpsa_mac_setup(psa_mac_operation_t *operation,
         ctx->type = WOLFPSA_MAC_CMAC;
     }
 #endif
-    else {
-        ret = NOT_COMPILED_IN;
-    }
 
-    if (ctx->mac_length == 0 || ctx->full_length == 0 ||
-        ctx->mac_length > ctx->full_length) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        wolfpsa_mac_free_underlying(ctx);
-        wc_ForceZero(ctx, sizeof(*ctx));
-        XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        return PSA_ERROR_INVALID_ARGUMENT;
+    if (status == PSA_SUCCESS &&
+        (ctx->mac_length == 0 || ctx->full_length == 0 ||
+         ctx->mac_length > ctx->full_length)) {
+        status = PSA_ERROR_INVALID_ARGUMENT;
     }
-
-    if ((alg & PSA_ALG_MAC_TRUNCATION_MASK) != 0) {
-        size_t trunc_len = PSA_MAC_TRUNCATED_LENGTH(alg);
+    if (status == PSA_SUCCESS && (alg & PSA_ALG_MAC_TRUNCATION_MASK) != 0) {
+        trunc_len = PSA_MAC_TRUNCATED_LENGTH(alg);
         if (trunc_len > ctx->full_length) {
-            wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-            wolfpsa_mac_free_underlying(ctx);
-            wc_ForceZero(ctx, sizeof(*ctx));
-            XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            return PSA_ERROR_INVALID_ARGUMENT;
+            status = PSA_ERROR_INVALID_ARGUMENT;
         }
-        if (trunc_len < 4u) {
-            wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-            wolfpsa_mac_free_underlying(ctx);
-            wc_ForceZero(ctx, sizeof(*ctx));
-            XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            return PSA_ERROR_NOT_SUPPORTED;
+        else if (trunc_len < 4u) {
+            status = PSA_ERROR_NOT_SUPPORTED;
         }
+    }
+    if (status == PSA_SUCCESS && ret != 0) {
+        status = wc_error_to_psa_status(ret);
     }
 
     wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-
-    if (ret != 0) {
+    if (status == PSA_SUCCESS) {
+        operation->opaque = (uintptr_t)ctx;
+    }
+    else if (ctx != NULL) {
         wolfpsa_mac_free_underlying(ctx);
         wc_ForceZero(ctx, sizeof(*ctx));
         XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        return wc_error_to_psa_status(ret);
     }
-
-    operation->opaque = (uintptr_t)ctx;
-    return PSA_SUCCESS;
+    return status;
 }
 
 psa_status_t psa_mac_sign_setup(psa_mac_operation_t *operation,
