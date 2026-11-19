@@ -246,8 +246,25 @@ static int MbedNameParse(unsigned char* der, word32* idx, word32 end,
     return ret;
 }
 
+/* PolicyInformation from idx to end: the OID into oid, then qualifiers */
+static int MbedPolicyParse(unsigned char* der, word32 idx, word32 end,
+    mbedtls_x509_buf* oid)
+{
+    const int err = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
+    mbedtls_x509_buf item;
+    int ret;
+
+    ret = MbedDerTag(der, &idx, end, ASN_OBJECT_ID, 0, err, oid);
+    idx += (word32)oid->len;
+    if (ret == 0 && idx < end) {
+        ret = MbedDerTag(der, &idx, end, ASN_SEQUENCE | ASN_CONSTRUCTED, 1,
+            err, &item);
+    }
+    return ret;
+}
+
 /* MbedSeqParse() flags */
-#define MBED_SEQ_INNER     0x01 /* The first item inside each */
+#define MBED_SEQ_POLICY    0x01 /* PolicyInformation, keep the OID of each */
 #define MBED_SEQ_NOT_EMPTY 0x02
 
 /* Items from idx to end, with the MBED_SEQ_* flags */
@@ -262,8 +279,10 @@ static int MbedSeqParse(unsigned char* der, word32 idx, word32 end,
     while (ret == 0 && idx < end) {
         ret = MbedDerItem(der, &idx, end, &item);
         next = idx + (word32)item.len;
-        if (ret == 0 && (flags & MBED_SEQ_INNER) != 0) {
-            ret = MbedDerItem(der, &idx, next, &item);
+        if (ret == 0 && (flags & MBED_SEQ_POLICY) != 0) {
+            ret = item.tag == (ASN_SEQUENCE | ASN_CONSTRUCTED) ?
+                MbedPolicyParse(der, idx, next, &item) :
+                MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
         }
         if (ret == 0 && cur == NULL) {
             cur = seq;
@@ -546,7 +565,7 @@ static int MbedExtParse(mbedtls_x509_crt* crt, unsigned char* der,
         }
         else if (type == MBEDTLS_X509_EXT_CERTIFICATE_POLICIES) {
             ret = MbedSeqParse(der, idx, extEnd, &crt->certificate_policies,
-                MBED_SEQ_INNER | MBED_SEQ_NOT_EMPTY);
+                MBED_SEQ_POLICY | MBED_SEQ_NOT_EMPTY);
         }
         else if (type == MBEDTLS_X509_EXT_SUBJECT_KEY_IDENTIFIER) {
             crt->subject_key_id = item;
