@@ -67,10 +67,9 @@ typedef enum {
 
 typedef struct mbedtls_md_info_t mbedtls_md_info_t;
 
-/* md_ctx is a psa_hash_operation_t */
 typedef struct mbedtls_md_context_t {
     const mbedtls_md_info_t* md_info;
-    void* md_ctx;
+    psa_hash_operation_t md_ctx;
 } mbedtls_md_context_t;
 
 #if defined(MBEDTLS_MD_C)

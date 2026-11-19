@@ -599,9 +599,9 @@ static int MdRet(psa_status_t status)
 }
 
 /* NULL until mbedtls_md_setup */
-static psa_hash_operation_t* MdOp(const mbedtls_md_context_t* ctx)
+static psa_hash_operation_t* MdOp(mbedtls_md_context_t* ctx)
 {
-    return (ctx == NULL) ? NULL : (psa_hash_operation_t*)ctx->md_ctx;
+    return (ctx == NULL || ctx->md_info == NULL) ? NULL : &ctx->md_ctx;
 }
 
 static psa_algorithm_t MdAlg(const mbedtls_md_info_t* md_info)
@@ -630,13 +630,8 @@ void mbedtls_md_init(mbedtls_md_context_t* ctx)
 
 void mbedtls_md_free(mbedtls_md_context_t* ctx)
 {
-    psa_hash_operation_t* op = MdOp(ctx);
-
-    if (op != NULL) {
-        (void)psa_hash_abort(op);
-        XFREE(op, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    }
     if (ctx != NULL) {
+        (void)psa_hash_abort(&ctx->md_ctx);
         XMEMSET(ctx, 0, sizeof(*ctx));
     }
 }
@@ -644,19 +639,11 @@ void mbedtls_md_free(mbedtls_md_context_t* ctx)
 int mbedtls_md_setup(mbedtls_md_context_t* ctx,
     const mbedtls_md_info_t* md_info, int hmac)
 {
-    psa_hash_operation_t* op;
-
     if (ctx == NULL || md_info == NULL || hmac != 0) {
         return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
     }
-    op = (psa_hash_operation_t*)XMALLOC(sizeof(*op), NULL,
-        DYNAMIC_TYPE_TMP_BUFFER);
-    if (op == NULL) {
-        return MBEDTLS_ERR_MD_ALLOC_FAILED;
-    }
-    *op = psa_hash_operation_init();
     ctx->md_info = md_info;
-    ctx->md_ctx = op;
+    ctx->md_ctx = psa_hash_operation_init();
     return 0;
 }
 
@@ -664,13 +651,20 @@ int mbedtls_md_clone(mbedtls_md_context_t* dst,
     const mbedtls_md_context_t* src)
 {
     psa_hash_operation_t* op = MdOp(dst);
+    psa_hash_operation_t copy = psa_hash_operation_init();
+    psa_status_t status;
 
-    if (op == NULL || MdOp(src) == NULL || dst->md_info != src->md_info) {
+    if (op == NULL || src == NULL || dst->md_info != src->md_info) {
         return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
     }
-    /* dst may be in use, as Mbed TLS's own hashes allow */
-    (void)psa_hash_abort(op);
-    return MdRet(psa_hash_clone(MdOp(src), op));
+    /* dst may be in use, as Mbed TLS's own hashes allow, or be src */
+    status = psa_hash_clone(&src->md_ctx, &copy);
+    if (status == PSA_SUCCESS) {
+        (void)psa_hash_abort(op);
+        /* A wolfPSA operation is a handle, so it can be moved */
+        *op = copy;
+    }
+    return MdRet(status);
 }
 
 unsigned char mbedtls_md_get_size(const mbedtls_md_info_t* md_info)

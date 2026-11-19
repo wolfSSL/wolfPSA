@@ -28,6 +28,8 @@
 #include <mbedtls/md.h>
 #include <mbedtls/psa_util.h>
 
+#if defined(MBEDTLS_MD_C)
+
 #define BAD MBEDTLS_ERR_MD_BAD_INPUT_DATA
 
 static const unsigned char abc[] = "abc";
@@ -107,7 +109,8 @@ static int Same(const unsigned char* out, const char* want)
     return memcmp(hex, want, 2 * len) == 0;
 }
 
-/* "abc" in two parts, cloned after the first into a context in use */
+/* "abc" in two parts, cloned after the first into a context in use. A clone
+ * from a context not started, or from itself, keeps the first part. */
 static int TwoParts(const mbedtls_md_info_t* info, const char* want)
 {
     mbedtls_md_context_t ctx;
@@ -120,10 +123,12 @@ static int TwoParts(const mbedtls_md_info_t* info, const char* want)
     mbedtls_md_init(&copy);
     ok = mbedtls_md_setup(&ctx, info, 0) == 0 &&
         mbedtls_md_setup(&copy, info, 0) == 0 &&
-        mbedtls_md_starts(&copy) == 0 &&
-        mbedtls_md_update(&copy, abc, 3) == 0 &&
         mbedtls_md_starts(&ctx) == 0 &&
         mbedtls_md_update(&ctx, abc, 1) == 0 &&
+        mbedtls_md_clone(&ctx, &copy) != 0 &&
+        mbedtls_md_clone(&ctx, &ctx) == 0 &&
+        mbedtls_md_starts(&copy) == 0 &&
+        mbedtls_md_update(&copy, abc, 3) == 0 &&
         mbedtls_md_clone(&copy, &ctx) == 0 &&
         mbedtls_md_update(&ctx, abc + 1, 2) == 0 &&
         mbedtls_md_update(&copy, abc + 1, 2) == 0 &&
@@ -166,9 +171,10 @@ static void Vectors(void)
 
 static void BadInput(void)
 {
+    const size_t last = sizeof(vectors) / sizeof(vectors[0]) - 1;
     const mbedtls_md_info_t* info = mbedtls_md_info_from_type(vectors[0].type);
     const mbedtls_md_info_t* other =
-        mbedtls_md_info_from_type(vectors[1].type);
+        mbedtls_md_info_from_type(vectors[last].type);
     mbedtls_md_context_t ctx;
     mbedtls_md_context_t dst;
     unsigned char buf[MBEDTLS_MD_MAX_SIZE] = { 0 };
@@ -192,8 +198,10 @@ static void BadInput(void)
     Check(mbedtls_md_setup(&ctx, info, 0) == 0 &&
         mbedtls_md_update(&ctx, buf, 1) == PSA_ERROR_GENERIC_ERROR,
         "update", "before starts");
+    /* other is info in a build with one hash */
     Check(mbedtls_md_setup(&dst, other, 0) == 0 &&
-        mbedtls_md_starts(&ctx) == 0 && mbedtls_md_clone(&dst, &ctx) == BAD &&
+        mbedtls_md_starts(&ctx) == 0 &&
+        (other == info || mbedtls_md_clone(&dst, &ctx) == BAD) &&
         mbedtls_md_clone(NULL, &ctx) == BAD &&
         mbedtls_md_clone(&dst, NULL) == BAD, "clone", "to another md");
     mbedtls_md_free(&ctx);
@@ -212,3 +220,13 @@ int main(void)
     mbedtls_psa_crypto_free();
     return (fails == 0) ? 0 : 1;
 }
+
+#else
+
+int main(void)
+{
+    printf("SKIP: no hash that mbedtls/md.h has\n");
+    return 0;
+}
+
+#endif /* MBEDTLS_MD_C */
