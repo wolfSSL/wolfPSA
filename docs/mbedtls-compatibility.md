@@ -221,12 +221,13 @@ Certificate verification:
 X.509:
 
 - `mbedtls_x509_crt` has the public fields. A certificate whose key
-  `mbedtls_pk_parse_public_key` does not accept, such as Ed25519, ML-DSA or
-  an RSA-PSS key, returns an empty `pk`, where Mbed TLS rejects it. pk
-  calls on it fail, and `mbedtls_x509_crt_info` shows `NONE key size`. A
-  certificate that wolfCrypt rejects returns
-  `MBEDTLS_ERR_X509_INVALID_FORMAT`, where Mbed TLS often returns a more
-  specific error.
+  `mbedtls_pk_parse_public_key` does not accept returns an empty `pk`,
+  where Mbed TLS rejects it. This includes Ed25519, Ed448, ML-DSA and
+  RSA-PSS keys, EC keys on a curve the PSA engine does not have, and RSA
+  or EC keys that pk does not decode. pk calls on it fail, and
+  `mbedtls_x509_crt_info` shows `NONE key size`. A certificate that
+  wolfCrypt rejects returns `MBEDTLS_ERR_X509_INVALID_FORMAT`, where
+  Mbed TLS often returns a more specific error.
 - `mbedtls_x509_crt_info` does not name the hash of an RSASSA-PSS
   signature, as Mbed TLS without `MBEDTLS_X509_RSASSA_PSS_SUPPORT`.
 - `mbedtls_x509_crt_info` prints each IPv6 group as one 16-bit value, such

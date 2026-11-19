@@ -441,6 +441,8 @@ static int MbedSanParse(const mbedtls_x509_buf* san, mbedtls_x509_buf* hwType,
 {
     int ret = 0;
 
+    XMEMSET(hwType, 0, sizeof(*hwType));
+    XMEMSET(hwSerial, 0, sizeof(*hwSerial));
     XMEMSET(name, 0, sizeof(*name));
     switch (MbedSanType(san)) {
         case MBEDTLS_X509_SAN_OTHER_NAME:
@@ -697,7 +699,9 @@ static int MbedCertFields(mbedtls_x509_crt* crt, const DecodedCert* cert)
         ret = mbedtls_pk_parse_public_key(&crt->pk, crt->pk_raw.p,
             crt->pk_raw.len);
         /* A key pk cannot hold, such as Ed25519, leaves pk empty */
-        if (ret != MBEDTLS_ERR_X509_ALLOC_FAILED) {
+        if (ret == MBEDTLS_ERR_PK_KEY_INVALID_FORMAT ||
+                ret == MBEDTLS_ERR_PK_UNKNOWN_PK_ALG ||
+                ret == MBEDTLS_ERR_PK_UNKNOWN_NAMED_CURVE) {
             ret = 0;
         }
     }

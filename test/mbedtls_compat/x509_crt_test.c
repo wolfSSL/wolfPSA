@@ -1084,8 +1084,8 @@ static int CertInfo(void)
             /* Without it, no hash after RSASSA-PSS */
             skip = strstr(line, "MBEDTLS_X509_RSASSA_PSS_SUPPORT") != NULL;
         }
-        else if (strncmp(line, CERT_INFO, sizeof(CERT_INFO) - 1) == 0) {
-            if (!skip) {
+        else {
+            if (!skip && strncmp(line, CERT_INFO, sizeof(CERT_INFO) - 1) == 0) {
                 fails += CertInfoCase(line);
                 cases++;
             }
