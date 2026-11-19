@@ -22,11 +22,14 @@
 /* mbedtls/base64.h. Most cases come from TF-PSA-Crypto's
  * tests/suites/test_suite_base64.data. */
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #include <psa/crypto.h>
 #include <mbedtls/base64.h>
+
+#if defined(MBEDTLS_BASE64_C)
 
 #define INVALID MBEDTLS_ERR_BASE64_INVALID_CHARACTER
 #define TOO_SMALL MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL
@@ -123,6 +126,48 @@ static void Encode(void)
                 (want == 0 || dst[want] == 0), name);
         }
     }
+}
+
+/* Sizes past wolfCrypt's per-call limit. src is not read when sizing. */
+static void EncodeSize(void)
+{
+    static const unsigned char src[] = "foo";
+    unsigned char dst[5];
+    size_t len = 0;
+
+    Check(mbedtls_base64_encode(NULL, 0, &len, src, 3) == TOO_SMALL &&
+        len == sizeof(dst), "encode size query");
+    len = 0;
+    Check(mbedtls_base64_encode(dst, sizeof(dst), &len, src, 3) == 0 &&
+        len == 4 && memcmp(dst, "Zm9v", sizeof(dst)) == 0,
+        "encode into the queried size");
+    len = 0;
+    Check(mbedtls_base64_encode(NULL, 0, &len, src, 0x3FFFFFFF) ==
+        TOO_SMALL && len == 0x55555555, "encode size of 1 GiB");
+    len = 0;
+    Check(mbedtls_base64_encode(NULL, 0, &len, src, SIZE_MAX) == TOO_SMALL &&
+        len == SIZE_MAX, "encode size overflow");
+}
+
+/* Longer than one 3 KiB wolfCrypt call */
+static void EncodeChunks(void)
+{
+    static unsigned char src[3 * 1100 + 1];
+    static unsigned char dst[4 * 1101 + 1];
+    size_t len = 0;
+    size_t i;
+    int ok;
+
+    for (i = 0; i + 3 <= sizeof(src); i += 3) {
+        memcpy(src + i, "foo", 3);
+    }
+    src[i] = 'f';
+    ok = mbedtls_base64_encode(dst, sizeof(dst), &len, src, sizeof(src)) ==
+        0 && len == sizeof(dst) - 1;
+    for (i = 0; ok && i + 4 < len; i += 4) {
+        ok = memcmp(dst + i, "Zm9v", 4) == 0;
+    }
+    Check(ok && memcmp(dst + i, "Zg==", 5) == 0, "encode chunks");
 }
 
 /* As the suite: the exact size, one byte less, and no buffer */
@@ -230,8 +275,20 @@ static void BadInput(void)
 int main(void)
 {
     Encode();
+    EncodeSize();
+    EncodeChunks();
     Decode();
     RoundTrip();
     BadInput();
     return (fails == 0) ? 0 : 1;
 }
+
+#else
+
+int main(void)
+{
+    printf("base64 tests: skipped, no MBEDTLS_BASE64_C\n");
+    return 0;
+}
+
+#endif /* MBEDTLS_BASE64_C */

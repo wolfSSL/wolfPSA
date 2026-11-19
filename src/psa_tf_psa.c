@@ -53,11 +53,11 @@
     #error "MBEDTLS_FS_IO must be defined exactly when NO_FILESYSTEM is not"
 #endif /* defined(MBEDTLS_FS_IO) == defined(NO_FILESYSTEM) */
 
-#if defined(MBEDTLS_BASE64_C) && (defined(NO_CODING) || \
-        !defined(WOLFSSL_BASE64_DECODE) || !defined(WOLFSSL_BASE64_ENCODE))
-    #error "MBEDTLS_BASE64_C needs wolfCrypt's Base64 encoding and decoding"
-#endif /* MBEDTLS_BASE64_C && (NO_CODING || !WOLFSSL_BASE64_DECODE ||
-        * !WOLFSSL_BASE64_ENCODE) */
+#if defined(MBEDTLS_BASE64_C) != (!defined(NO_CODING) && \
+        defined(WOLFSSL_BASE64_DECODE) && defined(WOLFSSL_BASE64_ENCODE))
+    #error "MBEDTLS_BASE64_C does not match wolfCrypt's Base64 encoding"
+#endif /* MBEDTLS_BASE64_C != (!NO_CODING && WOLFSSL_BASE64_DECODE &&
+        * WOLFSSL_BASE64_ENCODE) */
 
 /* MBEDTLS_THREADING_C promises a key store safe to use from any thread */
 #if defined(MBEDTLS_THREADING_C) && \
@@ -594,39 +594,7 @@ int mbedtls_pk_parse_public_keyfile(mbedtls_pk_context* ctx, const char* path)
 }
 #endif /* MBEDTLS_FS_IO */
 
-#if defined(MBEDTLS_BASE64_C)
-int mbedtls_base64_encode(unsigned char* dst, size_t dlen, size_t* olen,
-    const unsigned char* src, size_t slen)
-{
-    word32 outLen;
-    size_t n;
-
-    if (olen == NULL || (src == NULL && slen > 0)) {
-        return PSA_ERROR_INVALID_ARGUMENT;
-    }
-    if (slen == 0) {
-        *olen = 0;
-        return 0;
-    }
-    /* wolfCrypt's limit, reported as Mbed TLS reports a size_t overflow */
-    if (slen >= WOLFSSL_MAX_32BIT / 4) {
-        *olen = SIZE_MAX;
-        return MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
-    }
-    n = (slen + 2) / 3 * 4;
-    if (dst == NULL || dlen <= n) {
-        *olen = n + 1;
-        return MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
-    }
-    /* Room for the NUL, which wolfCrypt then writes */
-    outLen = (word32)(n + 1);
-    if (Base64_Encode_NoNl(src, (word32)slen, dst, &outLen) != 0) {
-        return PSA_ERROR_CORRUPTION_DETECTED;
-    }
-    *olen = outLen;
-    return 0;
-}
-
+#if defined(MBEDTLS_BASE64_C) || defined(MBEDTLS_PEM_PARSE_C)
 /* Decodes as Mbed TLS, one block of 4 at a time. With dst NULL, checks only */
 static int Base64DecodeBlocks(const unsigned char* src, size_t slen,
     unsigned char* dst, size_t* olen)
@@ -689,7 +657,7 @@ static int Base64DecodeBlocks(const unsigned char* src, size_t slen,
     return ret;
 }
 
-int mbedtls_base64_decode(unsigned char* dst, size_t dlen, size_t* olen,
+int wolfPSA_MbedBase64Decode(unsigned char* dst, size_t dlen, size_t* olen,
     const unsigned char* src, size_t slen)
 {
     size_t n;
@@ -710,6 +678,61 @@ int mbedtls_base64_decode(unsigned char* dst, size_t dlen, size_t* olen,
         ret = Base64DecodeBlocks(src, slen, dst, &n);
     }
     return ret;
+}
+#endif /* MBEDTLS_BASE64_C || MBEDTLS_PEM_PARSE_C */
+
+#if defined(MBEDTLS_BASE64_C)
+/* Input per wolfCrypt call, a multiple of 3 so only the last block pads */
+enum {
+    BASE64_CHUNK = 3 * 1024
+};
+
+int mbedtls_base64_encode(unsigned char* dst, size_t dlen, size_t* olen,
+    const unsigned char* src, size_t slen)
+{
+    word32 inLen;
+    word32 outLen;
+    size_t n;
+    size_t i;
+    int ret = 0;
+
+    if (olen == NULL || (src == NULL && slen > 0)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (slen == 0) {
+        *olen = 0;
+        return 0;
+    }
+    n = slen / 3 + (slen % 3 != 0);
+    if (n > (SIZE_MAX - 1) / 4) {
+        *olen = SIZE_MAX;
+        return MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
+    }
+    n *= 4;
+    if (dst == NULL || dlen <= n) {
+        *olen = n + 1;
+        return MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
+    }
+    n = 0;
+    for (i = 0; ret == 0 && i < slen; i += inLen) {
+        inLen = (slen - i < BASE64_CHUNK) ? (word32)(slen - i) : BASE64_CHUNK;
+        outLen = (inLen + 2) / 3 * 4;
+        if (Base64_Encode_NoNl(src + i, inLen, dst + n, &outLen) != 0) {
+            ret = PSA_ERROR_CORRUPTION_DETECTED;
+        }
+        n += outLen;
+    }
+    if (ret == 0) {
+        dst[n] = '\0';
+        *olen = n;
+    }
+    return ret;
+}
+
+int mbedtls_base64_decode(unsigned char* dst, size_t dlen, size_t* olen,
+    const unsigned char* src, size_t slen)
+{
+    return wolfPSA_MbedBase64Decode(dst, dlen, olen, src, slen);
 }
 #endif /* MBEDTLS_BASE64_C */
 

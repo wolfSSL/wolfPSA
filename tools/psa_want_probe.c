@@ -276,18 +276,20 @@ __WPSA_EMIT__MBEDTLS_FS_IO
 __WPSA_EMIT__MBEDTLS_ENTROPY_C
 __WPSA_EMIT__MBEDTLS_CTR_DRBG_C
 #endif
-/* WOLFSSL_BASE64_ENCODE must be in the settings: no coding.h here */
+/* Base64 encoding as wolfCrypt's coding.h enables it */
 #if !defined(NO_CODING) && defined(WOLFSSL_BASE64_DECODE) && \
-    defined(WOLFSSL_BASE64_ENCODE)
+    (defined(WOLFSSL_BASE64_ENCODE) || defined(OPENSSL_EXTRA) || \
+    defined(SESSION_CERTS) || defined(WOLFSSL_KEY_GEN) || \
+    defined(WOLFSSL_CERT_GEN) || defined(HAVE_WEBSERVER) || !defined(NO_DSA))
 __WPSA_EMIT__MBEDTLS_BASE64_C
-#define WPSA_BASE64
-#endif /* !NO_CODING && WOLFSSL_BASE64_DECODE && WOLFSSL_BASE64_ENCODE */
+#endif /* !NO_CODING && WOLFSSL_BASE64_DECODE && Base64 encoding */
 
 /* ----- Mbed TLS options, MBEDTLS_COMPAT=1 ----- */
 #if defined(WOLFPSA_MBEDTLS_COMPAT)
 __WPSA_EMIT__MBEDTLS_ERROR_C
 #endif /* WOLFPSA_MBEDTLS_COMPAT */
-#if defined(WOLFPSA_MBEDTLS_COMPAT) && defined(WPSA_BASE64)
+#if defined(WOLFPSA_MBEDTLS_COMPAT) && !defined(NO_CODING) && \
+    defined(WOLFSSL_BASE64_DECODE)
 __WPSA_EMIT__MBEDTLS_PEM_PARSE_C
 #endif
 #if defined(WOLFPSA_MBEDTLS_COMPAT) && !defined(NO_ASN) && !defined(NO_CERTS)

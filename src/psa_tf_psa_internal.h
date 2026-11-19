@@ -38,4 +38,10 @@ WOLFSSL_LOCAL int wolfPSA_MbedLoadFile(const char* path, unsigned char** buf,
 WOLFSSL_LOCAL void wolfPSA_MbedFreeFile(unsigned char* buf, size_t len);
 #endif /* MBEDTLS_FS_IO */
 
+#if defined(MBEDTLS_BASE64_C) || defined(MBEDTLS_PEM_PARSE_C)
+/* mbedtls_base64_decode(), also for PEM without MBEDTLS_BASE64_C */
+WOLFSSL_LOCAL int wolfPSA_MbedBase64Decode(unsigned char* dst, size_t dlen,
+    size_t* olen, const unsigned char* src, size_t slen);
+#endif /* MBEDTLS_BASE64_C || MBEDTLS_PEM_PARSE_C */
+
 #endif /* WOLFPSA_TF_PSA_INTERNAL_H */
