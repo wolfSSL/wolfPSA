@@ -28,6 +28,17 @@
 #include "psa_config.h"
 #include "psa_want_gate.h"
 
+/* PBKDF2 needs HAVE_PBKDF2, as tools/psa_want_probe.c advertises it */
+#if defined(HAVE_PBKDF2) && !defined(NO_HMAC)
+    #define WOLFPSA_PBKDF2_HMAC
+#endif
+#if defined(HAVE_PBKDF2) && defined(WOLFSSL_CMAC) && !defined(NO_AES)
+    #define WOLFPSA_PBKDF2_CMAC
+#endif
+#if defined(WOLFPSA_PBKDF2_HMAC) || defined(WOLFPSA_PBKDF2_CMAC)
+    #define WOLFPSA_PBKDF2
+#endif
+
 #if defined(WOLFSSL_PSA_ENGINE)
 
 #include <psa/crypto.h>
@@ -202,6 +213,7 @@ static psa_status_t wolfpsa_kdf_append(uint8_t **buf, size_t *len,
     return PSA_SUCCESS;
 }
 
+#ifdef WOLFPSA_PBKDF2
 static const uint8_t* wolfpsa_kdf_input_ptr(const uint8_t *buf, size_t len)
 {
     static const uint8_t empty[1] = {0};
@@ -212,6 +224,7 @@ static const uint8_t* wolfpsa_kdf_input_ptr(const uint8_t *buf, size_t len)
 
     return buf;
 }
+#endif
 
 static int wolfpsa_hash_type_from_alg(psa_algorithm_t alg)
 {
@@ -447,6 +460,7 @@ static psa_status_t wolfpsa_kdf_validate_step(wolfpsa_kdf_ctx_t *ctx,
         }
         return PSA_SUCCESS;
     }
+#ifdef WOLFPSA_PBKDF2
     else if (PSA_ALG_IS_PBKDF2(ctx->alg)) {
         if (step != PSA_KEY_DERIVATION_INPUT_PASSWORD &&
             step != PSA_KEY_DERIVATION_INPUT_SALT) {
@@ -454,6 +468,8 @@ static psa_status_t wolfpsa_kdf_validate_step(wolfpsa_kdf_ctx_t *ctx,
         }
         return PSA_SUCCESS;
     }
+#endif
+#if defined(WOLFPSA_SP800_108_HMAC) || defined(WOLFPSA_SP800_108_CMAC)
     else if (PSA_ALG_IS_SP800_108_COUNTER_HMAC(ctx->alg) ||
                ctx->alg == PSA_ALG_SP800_108_COUNTER_CMAC) {
         /* Allowed steps: SECRET (mandatory), LABEL (optional), CONTEXT
@@ -465,6 +481,7 @@ static psa_status_t wolfpsa_kdf_validate_step(wolfpsa_kdf_ctx_t *ctx,
         }
         return PSA_SUCCESS;
     }
+#endif
 
     return PSA_ERROR_NOT_SUPPORTED;
 }
@@ -560,7 +577,7 @@ psa_status_t psa_key_derivation_setup(psa_key_derivation_operation_t *operation,
         return PSA_ERROR_NOT_SUPPORTED;
     }
 #endif
-#if !defined(HAVE_PBKDF2) || defined(NO_HMAC)
+#ifndef WOLFPSA_PBKDF2_HMAC
     if (PSA_ALG_IS_PBKDF2_HMAC(kdf_alg)) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
@@ -575,7 +592,7 @@ psa_status_t psa_key_derivation_setup(psa_key_derivation_operation_t *operation,
         return PSA_ERROR_NOT_SUPPORTED;
     }
 #endif
-#if !defined(WOLFSSL_CMAC) || defined(NO_AES)
+#ifndef WOLFPSA_PBKDF2_CMAC
     if (kdf_alg == PSA_ALG_PBKDF2_AES_CMAC_PRF_128) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
@@ -837,6 +854,10 @@ static psa_status_t wolfpsa_kdf_input_integer(psa_key_derivation_operation_t *
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
+#ifndef WOLFPSA_PBKDF2
+    (void)value;
+    return PSA_ERROR_INVALID_ARGUMENT;
+#else
     if (!PSA_ALG_IS_PBKDF2(ctx->alg)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
@@ -860,6 +881,7 @@ static psa_status_t wolfpsa_kdf_input_integer(psa_key_derivation_operation_t *
     ctx->cost = (uint32_t)value;
     ctx->steps_set |= WOLFPSA_KDF_STEP_COST;
     return PSA_SUCCESS;
+#endif
 }
 
 psa_status_t psa_key_derivation_input_integer(psa_key_derivation_operation_t *
@@ -1418,6 +1440,7 @@ static psa_status_t wolfpsa_kdf_tls12_psk_to_ms(wolfpsa_kdf_ctx_t *ctx,
 #endif
 }
 
+#ifdef WOLFPSA_PBKDF2
 static psa_status_t wolfpsa_kdf_pbkdf2(wolfpsa_kdf_ctx_t *ctx,
                                        uint8_t *output,
                                        size_t output_length)
@@ -1427,7 +1450,7 @@ static psa_status_t wolfpsa_kdf_pbkdf2(wolfpsa_kdf_ctx_t *ctx,
     const uint8_t *salt = wolfpsa_kdf_input_ptr(ctx->salt, ctx->salt_length);
 
     if (PSA_ALG_IS_PBKDF2_HMAC(ctx->alg)) {
-#if !defined(HAVE_PBKDF2) || defined(NO_HMAC)
+#ifndef WOLFPSA_PBKDF2_HMAC
         (void)output;
         (void)output_length;
         (void)password;
@@ -1458,7 +1481,7 @@ static psa_status_t wolfpsa_kdf_pbkdf2(wolfpsa_kdf_ctx_t *ctx,
     }
 
     if (ctx->alg == PSA_ALG_PBKDF2_AES_CMAC_PRF_128) {
-#if defined(WOLFSSL_CMAC) && !defined(NO_AES)
+#ifdef WOLFPSA_PBKDF2_CMAC
         uint8_t prf_key[WC_AES_BLOCK_SIZE];
         uint8_t u_block[WC_AES_BLOCK_SIZE];
         uint8_t t_block[WC_AES_BLOCK_SIZE];
@@ -1619,6 +1642,7 @@ cleanup:
 
     return PSA_ERROR_NOT_SUPPORTED;
 }
+#endif /* WOLFPSA_PBKDF2 */
 
 #ifdef WOLFPSA_SP800_108_HMAC
 /*
@@ -1969,9 +1993,11 @@ static psa_status_t wolfpsa_kdf_compute_output(wolfpsa_kdf_ctx_t *ctx,
     if (PSA_ALG_IS_TLS12_PSK_TO_MS(ctx->alg)) {
         return wolfpsa_kdf_tls12_psk_to_ms(ctx, output, output_length);
     }
+#ifdef WOLFPSA_PBKDF2
     if (PSA_ALG_IS_PBKDF2(ctx->alg)) {
         return wolfpsa_kdf_pbkdf2(ctx, output, output_length);
     }
+#endif
 #ifdef WOLFPSA_SP800_108_HMAC
     if (PSA_ALG_IS_SP800_108_COUNTER_HMAC(ctx->alg)) {
         return wolfpsa_kdf_sp800_108_hmac(ctx, output, output_length);
@@ -2039,6 +2065,7 @@ static psa_status_t wolfpsa_kdf_output_bytes(psa_key_derivation_operation_t *
             return PSA_ERROR_BAD_STATE;
         }
     }
+#ifdef WOLFPSA_PBKDF2
     else if (PSA_ALG_IS_PBKDF2(ctx->alg)) {
         if ((ctx->steps_set & WOLFPSA_KDF_STEP_PASSWORD) == 0 ||
             (ctx->steps_set & WOLFPSA_KDF_STEP_SALT) == 0 ||
@@ -2046,6 +2073,8 @@ static psa_status_t wolfpsa_kdf_output_bytes(psa_key_derivation_operation_t *
             return PSA_ERROR_BAD_STATE;
         }
     }
+#endif
+#if defined(WOLFPSA_SP800_108_HMAC) || defined(WOLFPSA_SP800_108_CMAC)
     else if (PSA_ALG_IS_SP800_108_COUNTER_HMAC(ctx->alg) ||
                ctx->alg == PSA_ALG_SP800_108_COUNTER_CMAC) {
         if ((ctx->steps_set & WOLFPSA_KDF_STEP_SECRET) == 0) {
@@ -2067,6 +2096,7 @@ static psa_status_t wolfpsa_kdf_output_bytes(psa_key_derivation_operation_t *
             ctx->sp800_108_L_bytes = ctx->capacity;
         }
     }
+#endif
 
     status = wolfpsa_kdf_require_output(ctx, output_length);
     if (status != PSA_SUCCESS) {

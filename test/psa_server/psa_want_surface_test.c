@@ -170,12 +170,46 @@ static psa_status_t run_kdf(psa_algorithm_t alg)
     return status;
 }
 
+static psa_status_t run_pbkdf2(psa_algorithm_t alg)
+{
+    psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
+    uint8_t salt[8];
+    uint8_t password[8];
+    uint8_t out[16];
+    psa_status_t status;
+
+    memset(salt, 0x2B, sizeof(salt));
+    memset(password, 0x6D, sizeof(password));
+    status = psa_key_derivation_setup(&op, alg);
+    if (status == PSA_SUCCESS) {
+        status = psa_key_derivation_input_integer(&op,
+            PSA_KEY_DERIVATION_INPUT_COST, 2);
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_key_derivation_input_bytes(&op,
+            PSA_KEY_DERIVATION_INPUT_SALT, salt, sizeof(salt));
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_key_derivation_input_bytes(&op,
+            PSA_KEY_DERIVATION_INPUT_PASSWORD, password, sizeof(password));
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_key_derivation_output_bytes(&op, out, sizeof(out));
+    }
+    (void)psa_key_derivation_abort(&op);
+    return status;
+}
+
 static psa_status_t run_case(const struct want_case* c)
 {
     psa_key_attributes_t attr = psa_key_attributes_init();
     psa_key_id_t key = PSA_KEY_ID_NULL;
     psa_status_t status;
 
+    if (PSA_ALG_IS_PBKDF2_HMAC(c->alg) ||
+            c->alg == PSA_ALG_PBKDF2_AES_CMAC_PRF_128) {
+        return run_pbkdf2(c->alg);
+    }
     if (PSA_ALG_IS_KEY_DERIVATION(c->alg)) {
         return run_kdf(c->alg);
     }
@@ -323,6 +357,10 @@ int main(void)
         { "AES-128 CCM* without a tag", PSA_KEY_TYPE_AES, 128,
             PSA_ALG_CCM_STAR_NO_TAG,
             aes && IS_DEFINED(PSA_WANT_ALG_CCM_STAR_NO_TAG), NOT_CHECKED },
+        { "PBKDF2-HMAC-SHA-256", 0, 0, PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256),
+            sha256 && IS_DEFINED(PSA_WANT_ALG_PBKDF2_HMAC), NOT_CHECKED },
+        { "PBKDF2-AES-CMAC-PRF-128", 0, 0, PSA_ALG_PBKDF2_AES_CMAC_PRF_128,
+            IS_DEFINED(PSA_WANT_ALG_PBKDF2_AES_CMAC_PRF_128), NOT_CHECKED },
         { "SP800-108 counter HMAC-SHA-256", 0, 0,
             PSA_ALG_SP800_108_COUNTER_HMAC(PSA_ALG_SHA_256),
             sha256 && IS_DEFINED(PSA_WANT_ALG_SP800_108_COUNTER_HMAC),
