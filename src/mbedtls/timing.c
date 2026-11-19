@@ -51,6 +51,7 @@
 #ifdef USE_WINDOWS_API
     #include <windows.h>
 #else
+    #include <time.h>
     /* As in Mbed TLS, on Linux the clock counts time suspended too */
     #if defined(__linux__) && defined(CLOCK_BOOTTIME)
         #define MBED_TIMING_CLOCK CLOCK_BOOTTIME
