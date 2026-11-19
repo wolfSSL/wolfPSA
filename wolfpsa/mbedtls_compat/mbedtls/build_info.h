@@ -47,9 +47,5 @@
     #define MBEDTLS_KEY_EXCHANGE_ECDHE_ECDSA_ENABLED
 #endif /* PSA_HAVE_ALG_ECDSA_SIGN */
 #endif /* MBEDTLS_SSL_PROTO_TLS1_2 && PSA_WANT_ALG_ECDH */
-/* No mbedtls_x509_crt_info() and friends yet */
-#ifndef MBEDTLS_X509_REMOVE_INFO
-    #define MBEDTLS_X509_REMOVE_INFO
-#endif /* !MBEDTLS_X509_REMOVE_INFO */
 
 #endif /* MBEDTLS_BUILD_INFO_H */

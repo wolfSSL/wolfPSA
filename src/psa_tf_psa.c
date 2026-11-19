@@ -90,15 +90,6 @@ size_t mbedtls_pk_get_bitlen(const mbedtls_pk_context* ctx)
     return (ctx == NULL) ? 0 : ctx->bits;
 }
 
-enum {
-    PK_TYPE_NONE = 0,
-    PK_TYPE_RSA = 1,
-    PK_TYPE_ECC = 2,
-    PK_TYPE_RSA_PUBLIC = 3,
-    PK_TYPE_ECC_PUBLIC = 4,
-    PK_TYPE_MONTGOMERY_PUBLIC = 5
-};
-
 int wolfPSA_MbedRet(int wcRet, int err)
 {
     if (wcRet == 0) {

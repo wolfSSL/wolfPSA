@@ -106,6 +106,16 @@ typedef mbedtls_asn1_buf mbedtls_x509_buf;
 #define MBEDTLS_X509_EXT_FRESHEST_CRL              (1 << 14)
 #define MBEDTLS_X509_EXT_NS_CERT_TYPE              (1 << 16)
 
+#define MBEDTLS_X509_SAN_OTHER_NAME                   0
+#define MBEDTLS_X509_SAN_RFC822_NAME                  1
+#define MBEDTLS_X509_SAN_DNS_NAME                     2
+#define MBEDTLS_X509_SAN_X400_ADDRESS_NAME            3
+#define MBEDTLS_X509_SAN_DIRECTORY_NAME               4
+#define MBEDTLS_X509_SAN_EDI_PARTY_NAME               5
+#define MBEDTLS_X509_SAN_UNIFORM_RESOURCE_IDENTIFIER  6
+#define MBEDTLS_X509_SAN_IP_ADDRESS                   7
+#define MBEDTLS_X509_SAN_REGISTERED_ID                8
+
 #define MBEDTLS_X509_MAX_DN_NAME_SIZE 256
 
 typedef mbedtls_asn1_named_data mbedtls_x509_name;

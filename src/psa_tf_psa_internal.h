@@ -27,6 +27,16 @@
 #include <wolfssl/wolfcrypt/types.h>
 #include <mbedtls/pk.h>
 
+/* mbedtls_pk_context's type */
+enum {
+    PK_TYPE_NONE = 0,
+    PK_TYPE_RSA = 1,
+    PK_TYPE_ECC = 2,
+    PK_TYPE_RSA_PUBLIC = 3,
+    PK_TYPE_ECC_PUBLIC = 4,
+    PK_TYPE_MONTGOMERY_PUBLIC = 5
+};
+
 /* MEMORY_E becomes PSA_ERROR_INSUFFICIENT_MEMORY, other errors become err */
 WOLFSSL_LOCAL int wolfPSA_MbedRet(int wcRet, int err);
 
