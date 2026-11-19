@@ -144,7 +144,8 @@ PSA_REGRESSION_TESTS = psa_aead_multipart_test \
 BINARIES += $(PSA_REGRESSION_TESTS)
 
 # TF-PSA-Crypto extension tests, built with the default link recipe.
-PSA_TF_PSA_TESTS = psa_tf_psa_extra_test psa_tf_psa_pk_test
+PSA_TF_PSA_TESTS = psa_tf_psa_extra_test psa_tf_psa_pk_test \
+	psa_tf_psa_base64_test
 BINARIES += $(PSA_TF_PSA_TESTS)
 
 # The pk test reads wolfSSL's test keys

@@ -58,6 +58,8 @@
 #define HAVE_SP_ECC
 #define RSA_MIN_SIZE 1024
 #define WOLFSSL_KEY_GEN
+/* mbedtls/base64.h */
+#define WOLFSSL_BASE64_ENCODE
 /* Side-channel hardening: enable constant-time and blinding protection for
  * RSA/ECC private-key operations dispatched through the PSA engine. */
 #define TFM_TIMING_RESISTANT

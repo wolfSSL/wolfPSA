@@ -51,6 +51,11 @@ TLS12="-p 11111 -d -v 3"
 GOT="tls_get() returned"
 P=programs/ssl
 X=programs/x509
+U=programs/util
+# pem2der writes server5.crt as DER, compared with Mbed TLS's
+DER=$BUILD_DIR/server5.crt.der
+PEM2DER="filename=$DATA/server5.crt output_file=$DER"
+rm -f "$DER"
 ROOTS="$DATA/test-ca.crt $DATA/test-ca2.crt $DATA/test-ca-sha256.crt"
 # mini_client's built-in CA, test-ca2 from 2013, encodes its name as only the
 # older server5 certs do, and wolfSSL compares encoded names
@@ -107,12 +112,19 @@ IP address host|$C|-S $LO $LO|$TLS13||0|$GOT 0
 wrong IP address host, VERIFY_FAILED|$C|-S 127.0.0.2 $LO|$TLS13||1|$GOT -9984
 IPv6 address host, VERIFY_FAILED|$C|-S ::1 $LO|$TLS13||1|$GOT -9984
 load_roots|$X/load_roots|iterations=10 $ROOTS|||0|10 iterations ->
+pem2der|$U/pem2der|$PEM2DER|||0|DER file ... ok
 mini_client|$P/mini_client||$SERVER5|$CA2_DATE|0|
 mini_client, expired CA, ssl_handshake_failed|$P/mini_client||$SERVER5||7|
 ssl_client1|$P/ssl_client1||$SERVER2||0|$VERIFY ok
 ssl_client1, untrusted, OPTIONAL|$P/ssl_client1||$SERVER_WOLF||0|$VERIFY failed
 CASES
 rm -f "$READY"
+if cmp -s "$DER" "$DATA/server5.crt.der"; then
+    echo "PASS: pem2der output"
+else
+    echo "FAIL: pem2der output differs from server5.crt.der"
+    FAILS=$((FAILS + 1))
+fi
 
 # The server programs listen on port 4433 until stopped. The exit code of a
 # server is not checked, only its log for sanitizer reports.

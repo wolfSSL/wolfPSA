@@ -59,7 +59,8 @@ PROGRAMS := $(addprefix $(BUILD_DIR)/programs/ssl/,mini_client ssl_client1 \
 ifeq ($(MBEDTLS_THREADING_C),1)
 PROGRAMS += $(BUILD_DIR)/programs/ssl/ssl_pthread_server
 endif
-PROGRAMS += $(BUILD_DIR)/programs/x509/load_roots
+PROGRAMS += $(BUILD_DIR)/programs/x509/load_roots \
+	$(BUILD_DIR)/programs/util/pem2der
 # strerror, run on each error code in the headers
 PROGRAMS += $(BUILD_DIR)/programs/util/strerror
 # Mbed TLS test certificates, data only. certs.c and the generated

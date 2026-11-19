@@ -30,13 +30,16 @@
 #if defined(WOLFSSL_PSA_ENGINE)
 
 #include <limits.h>
+#include <stdint.h>
 
 #include <psa/crypto.h>
+#include <mbedtls/base64.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/platform_util.h>
 #include <mbedtls/threading.h>
 #include <wolfssl/wolfcrypt/memory.h>
 #include <wolfssl/wolfcrypt/asn.h>
+#include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/curve25519.h>
@@ -49,6 +52,12 @@
 #if defined(MBEDTLS_FS_IO) == defined(NO_FILESYSTEM)
     #error "MBEDTLS_FS_IO must be defined exactly when NO_FILESYSTEM is not"
 #endif /* defined(MBEDTLS_FS_IO) == defined(NO_FILESYSTEM) */
+
+#if defined(MBEDTLS_BASE64_C) && (defined(NO_CODING) || \
+        !defined(WOLFSSL_BASE64_DECODE) || !defined(WOLFSSL_BASE64_ENCODE))
+    #error "MBEDTLS_BASE64_C needs wolfCrypt's Base64 encoding and decoding"
+#endif /* MBEDTLS_BASE64_C && (NO_CODING || !WOLFSSL_BASE64_DECODE ||
+        * !WOLFSSL_BASE64_ENCODE) */
 
 /* MBEDTLS_THREADING_C promises a key store safe to use from any thread */
 #if defined(MBEDTLS_THREADING_C) && \
@@ -584,6 +593,125 @@ int mbedtls_pk_parse_public_keyfile(mbedtls_pk_context* ctx, const char* path)
     return ret;
 }
 #endif /* MBEDTLS_FS_IO */
+
+#if defined(MBEDTLS_BASE64_C)
+int mbedtls_base64_encode(unsigned char* dst, size_t dlen, size_t* olen,
+    const unsigned char* src, size_t slen)
+{
+    word32 outLen;
+    size_t n;
+
+    if (olen == NULL || (src == NULL && slen > 0)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (slen == 0) {
+        *olen = 0;
+        return 0;
+    }
+    /* wolfCrypt's limit, reported as Mbed TLS reports a size_t overflow */
+    if (slen >= WOLFSSL_MAX_32BIT / 4) {
+        *olen = SIZE_MAX;
+        return MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
+    }
+    n = (slen + 2) / 3 * 4;
+    if (dst == NULL || dlen <= n) {
+        *olen = n + 1;
+        return MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
+    }
+    /* Room for the NUL, which wolfCrypt then writes */
+    outLen = (word32)(n + 1);
+    if (Base64_Encode_NoNl(src, (word32)slen, dst, &outLen) != 0) {
+        return PSA_ERROR_CORRUPTION_DETECTED;
+    }
+    *olen = outLen;
+    return 0;
+}
+
+/* Decodes as Mbed TLS, one block of 4 at a time. With dst NULL, checks only */
+static int Base64DecodeBlocks(const unsigned char* src, size_t slen,
+    unsigned char* dst, size_t* olen)
+{
+    byte block[4];
+    byte out[3];
+    word32 blockLen = 0;
+    word32 equals = 0;
+    word32 outLen;
+    size_t n = 0;
+    size_t i = 0;
+    int spaces;
+    int ret = 0;
+
+    while (ret == 0 && i < slen) {
+        spaces = 0;
+        while (i < slen && src[i] == ' ') {
+            spaces = 1;
+            i++;
+        }
+        if (i == slen) {
+            break;
+        }
+        if (src[i] == '\n') {
+            i++;
+            continue;
+        }
+        if (src[i] == '\r' && i + 1 < slen && src[i + 1] == '\n') {
+            i += 2;
+            continue;
+        }
+        if (spaces || (equals > 0 && src[i] != '=') ||
+                (src[i] == '=' && ++equals > 2)) {
+            ret = MBEDTLS_ERR_BASE64_INVALID_CHARACTER;
+            break;
+        }
+        block[blockLen++] = src[i++];
+        if (blockLen < sizeof(block)) {
+            continue;
+        }
+        /* Any '=' is in this block, the last one */
+        outLen = sizeof(out) - equals;
+        if (Base64_Decode(block, blockLen, out, &outLen) != 0 ||
+                outLen != sizeof(out) - equals) {
+            ret = MBEDTLS_ERR_BASE64_INVALID_CHARACTER;
+            break;
+        }
+        if (dst != NULL) {
+            XMEMCPY(dst + n, out, outLen);
+        }
+        n += outLen;
+        blockLen = 0;
+    }
+    if (ret == 0 && blockLen != 0) {
+        ret = MBEDTLS_ERR_BASE64_INVALID_CHARACTER;
+    }
+    wc_ForceZero(block, sizeof(block));
+    wc_ForceZero(out, sizeof(out));
+    *olen = n;
+    return ret;
+}
+
+int mbedtls_base64_decode(unsigned char* dst, size_t dlen, size_t* olen,
+    const unsigned char* src, size_t slen)
+{
+    size_t n;
+    int ret;
+
+    if (olen == NULL || (src == NULL && slen > 0)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    ret = Base64DecodeBlocks(src, slen, NULL, &n);
+    if (ret == 0) {
+        *olen = n;
+        /* As in Mbed TLS, an empty result needs no buffer */
+        if ((n != 0 && dst == NULL) || dlen < n) {
+            ret = MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
+        }
+    }
+    if (ret == 0 && n != 0) {
+        ret = Base64DecodeBlocks(src, slen, dst, &n);
+    }
+    return ret;
+}
+#endif /* MBEDTLS_BASE64_C */
 
 #if defined(MBEDTLS_THREADING_PTHREAD)
 static int ThreadingRet(int posixRet)

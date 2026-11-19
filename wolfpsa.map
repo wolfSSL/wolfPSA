@@ -1,5 +1,6 @@
 WOLFPSA_1.0 {
     global:
+        mbedtls_base64_*;
         mbedtls_condition_variable_*;
         mbedtls_mutex_*;
         mbedtls_pk_*;
