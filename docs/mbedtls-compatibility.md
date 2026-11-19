@@ -32,8 +32,8 @@ TF-PSA-Crypto parts that every build has. See
 - TLS needs the X.509 API and wolfSSL's TLS with `HAVE_SNI`: without them,
   for example with `WOLFCRYPT_ONLY`, `MBEDTLS_SSL_TLS_C` is not defined.
   `MBEDTLS_NET_C` needs TLS and wolfSSL's socket I/O (no `WOLFSSL_USER_IO`).
-  `MBEDTLS_PEM_PARSE_C` needs wolfCrypt's Base64 decoding (no `NO_CODING`).
-  `MBEDTLS_BASE64_C` needs its encoding too, which `WOLFSSL_KEY_GEN` enables.
+  `MBEDTLS_PEM_PARSE_C` needs `MBEDTLS_BASE64_C`, which `NO_CODING` turns
+  off.
 - The verify callbacks need `WOLFSSL_ALWAYS_VERIFY_CB`, which wolfPSA's
   `user_settings.h` defines. A build with its own `USER_SETTINGS_PATH`
   defines it too.
@@ -249,7 +249,6 @@ Other:
   as `MBEDTLS_ERR_SSL_BAD_INPUT_DATA`, are unknown.
 - `mbedtls_pem_read_buffer` returns `MBEDTLS_ERR_PEM_FEATURE_UNAVAILABLE`
   for encrypted PEM. No `mbedtls_pem_write_buffer`.
-- `mbedtls_base64_encode` is not constant time.
 - `mbedtls_pk_parse_key` and `mbedtls_pk_parse_public_key` do not take
   encrypted keys or EC keys with a compressed public key.
 - No global mutexes such as `mbedtls_threading_gmtime_mutex`.

@@ -34,14 +34,11 @@
 #include <wolfpsa/psa_engine.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/pem.h>
-#include "psa_tf_psa_internal.h"
 
-/* The generated config has MBEDTLS_PEM_PARSE_C with wolfCrypt's Base64
- * decoding */
-#if defined(MBEDTLS_PEM_PARSE_C) != \
-        (!defined(NO_CODING) && defined(WOLFSSL_BASE64_DECODE))
-    #error "MBEDTLS_PEM_PARSE_C does not match wolfCrypt's Base64 decoding"
-#endif /* MBEDTLS_PEM_PARSE_C != (!NO_CODING && WOLFSSL_BASE64_DECODE) */
+/* As in Mbed TLS, PEM needs Base64. The generated config has both. */
+#if defined(MBEDTLS_PEM_PARSE_C) != defined(MBEDTLS_BASE64_C)
+    #error "MBEDTLS_PEM_PARSE_C must be defined exactly with MBEDTLS_BASE64_C"
+#endif /* defined(MBEDTLS_PEM_PARSE_C) != defined(MBEDTLS_BASE64_C) */
 
 #if defined(MBEDTLS_PEM_PARSE_C)
 
@@ -114,7 +111,7 @@ int mbedtls_pem_read_buffer(mbedtls_pem_context* ctx, const char* header,
     }
 
     bodyLen = (size_t)(s2 - s1);
-    ret = wolfPSA_MbedBase64Decode(NULL, 0, &len, (const unsigned char*)s1,
+    ret = mbedtls_base64_decode(NULL, 0, &len, (const unsigned char*)s1,
         bodyLen);
     if (ret == MBEDTLS_ERR_BASE64_INVALID_CHARACTER) {
         return MBEDTLS_ERR_PEM_INVALID_DATA + ret;
@@ -126,7 +123,7 @@ int mbedtls_pem_read_buffer(mbedtls_pem_context* ctx, const char* header,
     if (buf == NULL) {
         return MBEDTLS_ERR_PEM_ALLOC_FAILED;
     }
-    ret = wolfPSA_MbedBase64Decode(buf, len, &len, (const unsigned char*)s1,
+    ret = mbedtls_base64_decode(buf, len, &len, (const unsigned char*)s1,
         bodyLen);
     if (ret != 0) {
         wc_ForceZero(buf, len);

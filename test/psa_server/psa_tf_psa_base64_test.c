@@ -128,7 +128,7 @@ static void Encode(void)
     }
 }
 
-/* Sizes past wolfCrypt's per-call limit. src is not read when sizing. */
+/* Size queries, up to overflow. src is not read when sizing. */
 static void EncodeSize(void)
 {
     static const unsigned char src[] = "foo";
@@ -149,8 +149,8 @@ static void EncodeSize(void)
         len == SIZE_MAX, "encode size overflow");
 }
 
-/* Longer than one 3 KiB wolfCrypt call */
-static void EncodeChunks(void)
+/* Longer than a few KiB, with padding at the end */
+static void EncodeLong(void)
 {
     static unsigned char src[3 * 1100 + 1];
     static unsigned char dst[4 * 1101 + 1];
@@ -167,7 +167,44 @@ static void EncodeChunks(void)
     for (i = 0; ok && i + 4 < len; i += 4) {
         ok = memcmp(dst + i, "Zm9v", 4) == 0;
     }
-    Check(ok && memcmp(dst + i, "Zg==", 5) == 0, "encode chunks");
+    Check(ok && memcmp(dst + i, "Zg==", 5) == 0, "encode long input");
+}
+
+/* Every digit both ways, and every other byte value rejected */
+static void Digits(void)
+{
+    static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz0123456789+/";
+    unsigned char src[4] = { 0, 'A', 'A', 'A' };
+    unsigned char raw[3] = { 0, 0, 0 };
+    unsigned char out[5];
+    const char* p;
+    size_t len;
+    int c;
+    int ret;
+    int ok = 1;
+
+    for (c = 0; ok && c < 256; c++) {
+        src[0] = (unsigned char)c;
+        p = (c != 0) ? strchr(digits, c) : NULL;
+        len = 0;
+        ret = mbedtls_base64_decode(out, sizeof(out), &len, src, sizeof(src));
+        if (p == NULL) {
+            ok = ret == INVALID;
+        }
+        else {
+            ok = ret == 0 && len == 3 && out[0] == ((p - digits) << 2) &&
+                out[1] == 0 && out[2] == 0;
+        }
+    }
+    for (c = 0; ok && c < 64; c++) {
+        raw[0] = (unsigned char)(c << 2);
+        len = 0;
+        ok = mbedtls_base64_encode(out, sizeof(out), &len, raw,
+            sizeof(raw)) == 0 && len == 4 && out[0] == digits[c] &&
+            memcmp(out + 1, "AAA", 3) == 0;
+    }
+    Check(ok, "every digit");
 }
 
 /* As the suite: the exact size, one byte less, and no buffer */
@@ -276,7 +313,8 @@ int main(void)
 {
     Encode();
     EncodeSize();
-    EncodeChunks();
+    EncodeLong();
+    Digits();
     Decode();
     RoundTrip();
     BadInput();
