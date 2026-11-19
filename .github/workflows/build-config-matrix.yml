@@ -37,6 +37,10 @@ jobs:
             modifiers: "-HAVE_AESGCM -WOLFSSL_AESGCM_STREAM"
           - name: aes-ccm
             modifiers: "-HAVE_AESCCM"
+          - name: aes-cbc
+            modifiers: "+NO_AES_CBC"
+          - name: no-cbc
+            modifiers: "+NO_AES_CBC -WOLFSSL_DES3 -WOLFSSL_DES_ECB +NO_DES3"
           - name: aes-ecb
             modifiers: "-HAVE_AES_ECB +WOLFPSA_NO_AES_BITSLICED +WOLFSSL_AES_TOUCH_LINES"
           - name: aes-fast

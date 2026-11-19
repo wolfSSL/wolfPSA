@@ -47,6 +47,10 @@
 
 #define WOLFPSA_CHACHA20_IV_BYTES 12
 
+#if !defined(NO_AES_CBC) || !defined(NO_DES3)
+    #define WOLFPSA_CBC
+#endif
+
 typedef struct wolfpsa_cipher_ctx {
     psa_algorithm_t alg;
     psa_key_type_t key_type;
@@ -87,6 +91,37 @@ static psa_status_t wolfpsa_cipher_fail(psa_cipher_operation_t *operation,
     return status;
 }
 
+#ifdef WOLFPSA_CBC
+/* Runs CBC over whole blocks in the direction the operation was set up for */
+static int wolfpsa_cipher_cbc(wolfpsa_cipher_ctx_t *ctx, uint8_t *out,
+                              const uint8_t *in, size_t len)
+{
+    int ret = NOT_COMPILED_IN;
+
+    if (ctx->is_des3) {
+#ifndef NO_DES3
+        if (ctx->direction == AES_ENCRYPTION) {
+            ret = wc_Des3_CbcEncrypt(&ctx->des3, out, in, (word32)len);
+        }
+        else {
+            ret = wc_Des3_CbcDecrypt(&ctx->des3, out, in, (word32)len);
+        }
+#endif
+    }
+    else {
+#ifndef NO_AES_CBC
+        if (ctx->direction == AES_ENCRYPTION) {
+            ret = wc_AesCbcEncrypt(&ctx->aes, out, in, (word32)len);
+        }
+        else {
+            ret = wc_AesCbcDecrypt(&ctx->aes, out, in, (word32)len);
+        }
+#endif
+    }
+    return ret;
+}
+#endif /* WOLFPSA_CBC */
+
 static psa_status_t wolfpsa_cipher_check_alg(psa_algorithm_t alg)
 {
     if (!PSA_ALG_IS_CIPHER(alg)) {
@@ -94,9 +129,11 @@ static psa_status_t wolfpsa_cipher_check_alg(psa_algorithm_t alg)
     }
 
     switch (alg) {
+#ifdef WOLFPSA_CBC
         case PSA_ALG_CBC_NO_PADDING:
         case PSA_ALG_CBC_PKCS7:
             return PSA_SUCCESS;
+#endif
 #if defined(HAVE_AES_ECB) || defined(WOLFSSL_DES_ECB)
         case PSA_ALG_ECB_NO_PADDING:
             return PSA_SUCCESS;
@@ -218,6 +255,14 @@ static psa_status_t wolfpsa_cipher_check_key(
             return PSA_ERROR_NOT_SUPPORTED;
 #endif
         }
+#ifdef NO_AES_CBC
+        if (alg == PSA_ALG_CBC_NO_PADDING || alg == PSA_ALG_CBC_PKCS7) {
+            wolfpsa_forcezero_free_key_data(*key_data, *key_data_length);
+            *key_data = NULL;
+            *key_data_length = 0;
+            return PSA_ERROR_NOT_SUPPORTED;
+        }
+#endif
     }
 
     key_usage = psa_get_key_usage_flags(attributes);
@@ -789,6 +834,7 @@ psa_status_t psa_cipher_update(psa_cipher_operation_t *operation,
         return PSA_SUCCESS;
     }
 
+#ifdef WOLFPSA_CBC
     if (ctx->alg == PSA_ALG_CBC_NO_PADDING) {
         if (!ctx->iv_set) {
             return wolfpsa_cipher_fail(operation, PSA_ERROR_BAD_STATE);
@@ -822,31 +868,7 @@ psa_status_t psa_cipher_update(psa_cipher_operation_t *operation,
                 XMEMCPY(block, ctx->partial, ctx->partial_len);
                 XMEMCPY(block + ctx->partial_len, input, needed);
 
-                if (ctx->is_des3) {
-#ifndef NO_DES3
-                    if (ctx->direction == AES_ENCRYPTION) {
-                        ret = wc_Des3_CbcEncrypt(&ctx->des3, output, block,
-                                                (word32)block_size);
-                    }
-                    else {
-                        ret = wc_Des3_CbcDecrypt(&ctx->des3, output, block,
-                                                (word32)block_size);
-                    }
-#else
-                    status = PSA_ERROR_NOT_SUPPORTED;
-                    goto cbc_nopad_partial_done;
-#endif
-                }
-                else {
-                    if (ctx->direction == AES_ENCRYPTION) {
-                        ret = wc_AesCbcEncrypt(&ctx->aes, output, block,
-                                               (word32)block_size);
-                    }
-                    else {
-                        ret = wc_AesCbcDecrypt(&ctx->aes, output, block,
-                                               (word32)block_size);
-                    }
-                }
+                ret = wolfpsa_cipher_cbc(ctx, output, block, block_size);
                 if (ret != 0) {
                     status = wc_error_to_psa_status(ret);
                     goto cbc_nopad_partial_done;
@@ -867,39 +889,8 @@ cbc_nopad_partial_done:
                 size_t full_blocks = (remaining / block_size) * block_size;
 
                 if (full_blocks > 0) {
-                    if (ctx->is_des3) {
-#ifndef NO_DES3
-                        if (ctx->direction == AES_ENCRYPTION) {
-                            ret = wc_Des3_CbcEncrypt(&ctx->des3,
-                                                    output + output_offset,
-                                                    input + input_offset,
-                                                    (word32)full_blocks);
-                        }
-                        else {
-                            ret = wc_Des3_CbcDecrypt(&ctx->des3,
-                                                    output + output_offset,
-                                                    input + input_offset,
-                                                    (word32)full_blocks);
-                        }
-#else
-                        return wolfpsa_cipher_fail(operation,
-                                                   PSA_ERROR_NOT_SUPPORTED);
-#endif
-                    }
-                    else {
-                        if (ctx->direction == AES_ENCRYPTION) {
-                            ret = wc_AesCbcEncrypt(&ctx->aes,
-                                                   output + output_offset,
-                                                   input + input_offset,
-                                                   (word32)full_blocks);
-                        }
-                        else {
-                            ret = wc_AesCbcDecrypt(&ctx->aes,
-                                                   output + output_offset,
-                                                   input + input_offset,
-                                                   (word32)full_blocks);
-                        }
-                    }
+                    ret = wolfpsa_cipher_cbc(ctx, output + output_offset,
+                                             input + input_offset, full_blocks);
                     if (ret != 0) {
                         return wolfpsa_cipher_fail(operation,
                                                    wc_error_to_psa_status(ret));
@@ -953,19 +944,7 @@ cbc_nopad_partial_done:
                     XMEMCPY(block, ctx->partial, ctx->partial_len);
                     XMEMCPY(block + ctx->partial_len, input, needed);
 
-                    if (ctx->is_des3) {
-#ifndef NO_DES3
-                        ret = wc_Des3_CbcEncrypt(&ctx->des3, output, block,
-                                                (word32)block_size);
-#else
-                        status = PSA_ERROR_NOT_SUPPORTED;
-                        goto pkcs7_enc_partial_done;
-#endif
-                    }
-                    else {
-                        ret = wc_AesCbcEncrypt(&ctx->aes, output, block,
-                                               (word32)block_size);
-                    }
+                    ret = wolfpsa_cipher_cbc(ctx, output, block, block_size);
                     if (ret != 0) {
                         status = wc_error_to_psa_status(ret);
                         goto pkcs7_enc_partial_done;
@@ -986,23 +965,9 @@ pkcs7_enc_partial_done:
                     size_t full_blocks_len = (remaining / block_size) * block_size;
 
                     if (full_blocks_len > 0) {
-                        if (ctx->is_des3) {
-#ifndef NO_DES3
-                            ret = wc_Des3_CbcEncrypt(&ctx->des3,
-                                                    output + output_offset,
-                                                    input + input_offset,
-                                                    (word32)full_blocks_len);
-#else
-                            return wolfpsa_cipher_fail(operation,
-                                                       PSA_ERROR_NOT_SUPPORTED);
-#endif
-                        }
-                        else {
-                            ret = wc_AesCbcEncrypt(&ctx->aes,
-                                                   output + output_offset,
-                                                   input + input_offset,
-                                                   (word32)full_blocks_len);
-                        }
+                        ret = wolfpsa_cipher_cbc(ctx, output + output_offset,
+                                                 input + input_offset,
+                                                 full_blocks_len);
                         if (ret != 0) {
                             return wolfpsa_cipher_fail(operation,
                                                        wc_error_to_psa_status(ret));
@@ -1053,19 +1018,7 @@ pkcs7_enc_partial_done:
                     XMEMCPY(block, ctx->partial, ctx->partial_len);
                     XMEMCPY(block + ctx->partial_len, input, needed);
 
-                    if (ctx->is_des3) {
-#ifndef NO_DES3
-                        ret = wc_Des3_CbcDecrypt(&ctx->des3, output, block,
-                                                (word32)block_size);
-#else
-                        status = PSA_ERROR_NOT_SUPPORTED;
-                        goto pkcs7_dec_partial_done;
-#endif
-                    }
-                    else {
-                        ret = wc_AesCbcDecrypt(&ctx->aes, output, block,
-                                               (word32)block_size);
-                    }
+                    ret = wolfpsa_cipher_cbc(ctx, output, block, block_size);
                     if (ret != 0) {
                         status = wc_error_to_psa_status(ret);
                         goto pkcs7_dec_partial_done;
@@ -1083,23 +1036,9 @@ pkcs7_dec_partial_done:
 
                 full_blocks_len = process_len - output_offset;
                 if (full_blocks_len > 0) {
-                    if (ctx->is_des3) {
-#ifndef NO_DES3
-                        ret = wc_Des3_CbcDecrypt(&ctx->des3,
-                                                output + output_offset,
-                                                input + input_offset,
-                                                (word32)full_blocks_len);
-#else
-                        return wolfpsa_cipher_fail(operation,
-                                                   PSA_ERROR_NOT_SUPPORTED);
-#endif
-                    }
-                    else {
-                        ret = wc_AesCbcDecrypt(&ctx->aes,
-                                               output + output_offset,
-                                               input + input_offset,
-                                               (word32)full_blocks_len);
-                    }
+                    ret = wolfpsa_cipher_cbc(ctx, output + output_offset,
+                                             input + input_offset,
+                                             full_blocks_len);
                     if (ret != 0) {
                         return wolfpsa_cipher_fail(operation,
                                                    wc_error_to_psa_status(ret));
@@ -1123,7 +1062,9 @@ pkcs7_dec_partial_done:
             }
         }
     }
-    else if (ctx->alg == PSA_ALG_CCM_STAR_NO_TAG) {
+    else
+#endif /* WOLFPSA_CBC */
+    if (ctx->alg == PSA_ALG_CCM_STAR_NO_TAG) {
 #ifdef WOLFSSL_AES_COUNTER
         if (!ctx->iv_set) {
             return wolfpsa_cipher_fail(operation, PSA_ERROR_BAD_STATE);
@@ -1379,7 +1320,9 @@ psa_status_t psa_cipher_finish(psa_cipher_operation_t *operation,
                               size_t *output_length)
 {
     wolfpsa_cipher_ctx_t *ctx = wolfpsa_cipher_get_ctx(operation);
+#ifdef WOLFPSA_CBC
     int ret = 0;
+#endif
 
     wolfpsa_clear_length(output_length);
     if (operation == NULL || output_length == NULL) {
@@ -1392,6 +1335,7 @@ psa_status_t psa_cipher_finish(psa_cipher_operation_t *operation,
         return wolfpsa_cipher_fail(operation, PSA_ERROR_INVALID_ARGUMENT);
     }
 
+#ifdef WOLFPSA_CBC
     if (ctx->alg == PSA_ALG_CBC_PKCS7) {
         size_t block_size = ctx->block_size;
         if (!ctx->iv_set) {
@@ -1418,19 +1362,7 @@ psa_status_t psa_cipher_finish(psa_cipher_operation_t *operation,
             }
             XMEMSET(block + ctx->partial_len, (byte)pad_len, pad_len);
 
-            if (ctx->is_des3) {
-#ifndef NO_DES3
-                ret = wc_Des3_CbcEncrypt(&ctx->des3, output, block,
-                                        (word32)block_size);
-#else
-                status = PSA_ERROR_NOT_SUPPORTED;
-                goto cbc_pkcs7_encrypt_done;
-#endif
-            }
-            else {
-                ret = wc_AesCbcEncrypt(&ctx->aes, output, block,
-                                       (word32)block_size);
-            }
+            ret = wolfpsa_cipher_cbc(ctx, output, block, block_size);
             if (ret != 0) {
                 status = wc_error_to_psa_status(ret);
                 goto cbc_pkcs7_encrypt_done;
@@ -1457,18 +1389,7 @@ cbc_pkcs7_encrypt_done:
                 return wolfpsa_cipher_fail(operation, PSA_ERROR_INVALID_PADDING);
             }
 
-            if (ctx->is_des3) {
-#ifndef NO_DES3
-                ret = wc_Des3_CbcDecrypt(&ctx->des3, block, ctx->partial,
-                                        (word32)block_size);
-#else
-                return wolfpsa_cipher_fail(operation, PSA_ERROR_NOT_SUPPORTED);
-#endif
-            }
-            else {
-                ret = wc_AesCbcDecrypt(&ctx->aes, block, ctx->partial,
-                                       (word32)block_size);
-            }
+            ret = wolfpsa_cipher_cbc(ctx, block, ctx->partial, block_size);
             if (ret != 0) {
                 wc_ForceZero(block, sizeof(block));
                 return wolfpsa_cipher_fail(operation, wc_error_to_psa_status(ret));
@@ -1507,6 +1428,7 @@ cbc_pkcs7_decrypt_done:
             return status;
         }
     }
+#endif /* WOLFPSA_CBC */
 
     if ((ctx->alg == PSA_ALG_CBC_NO_PADDING ||
          ctx->alg == PSA_ALG_ECB_NO_PADDING) &&
