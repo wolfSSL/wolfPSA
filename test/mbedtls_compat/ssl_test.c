@@ -461,6 +461,24 @@ static int VerifyUntrusted(void)
         MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, MBEDTLS_X509_BADCERT_NOT_TRUSTED);
 }
 
+/* The client trusts a CA below the top, as with a cross-signed root */
+static int VerifyToIntermediate(void)
+{
+    const mbedtls_x509_crt* crt;
+    mbedtls_x509_crt mid;
+    const Certs certs = { &mid, &chain, &leafKey };
+    int ok = 1;
+
+    for (crt = chain.next; ok && crt != NULL; crt = crt->next) {
+        mbedtls_x509_crt_init(&mid);
+        ok = mbedtls_x509_crt_parse_der(&mid, crt->raw.p, crt->raw.len) ==
+                0 &&
+            ClientVerify(&certs, HOST_NAME, 0, 0);
+        mbedtls_x509_crt_free(&mid);
+    }
+    return ok;
+}
+
 /* IP address host names, matched against the IP address SANs */
 static int IpSan(void)
 {
@@ -737,7 +755,7 @@ static int VerifyTopDown(void)
     return ok;
 }
 
-/* The flags of the untrusted top of the chain, cleared */
+/* An untrusted chain's NOT_TRUSTED, on the peer's certificate, cleared */
 static int VerifyClear(void)
 {
     Verify v;
@@ -752,8 +770,8 @@ static int VerifyClear(void)
     ok = VerifyPeers(MBEDTLS_SSL_VERIFY_REQUIRED, &untrustedCerts, HOST_NAME,
             &v) &&
         Handshake(&s) == 0 && s == 0 && TopDown(&v, 3) && v.same &&
-        v.flags[0] == MBEDTLS_X509_BADCERT_NOT_TRUSTED &&
-        (v.flags[1] | v.flags[2]) == 0 &&
+        (v.flags[0] | v.flags[1]) == 0 &&
+        v.flags[2] == MBEDTLS_X509_BADCERT_NOT_TRUSTED &&
         mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
     PeerFree(&cli);
     PeerFree(&srv);
@@ -2269,6 +2287,7 @@ static const struct {
     { "host name set after the handshake", HostAfterHandshake },
     { "chain with intermediate CAs", VerifyChain },
     { "untrusted chain", VerifyUntrusted },
+    { "chain ends at a trusted intermediate CA", VerifyToIntermediate },
     { "IP address SANs", IpSan },
     { "wrong IP address or DNS name", IpSanWrong },
     { "host name without a dot", SingleLabel },
