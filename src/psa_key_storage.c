@@ -250,111 +250,65 @@ static psa_status_t wolfpsa_store_open_status(int ret)
     return PSA_ERROR_STORAGE_FAILURE;
 }
 
+typedef struct {
+    psa_key_bits_t bits;
+    psa_ecc_family_t family;
+    uint8_t length;
+} wolfpsa_ecc_size_t;
+
+/* Coordinate (public) or scalar (private) size in bytes per curve; each pair
+ * is unique within its family. Montgomery is the raw x-coordinate and
+ * twisted Edwards the full point encoding (RFC 7748 s.5, RFC 8032 s.5.2.5). */
+static const wolfpsa_ecc_size_t wolfpsa_ecc_sizes[] = {
+    { 192, PSA_ECC_FAMILY_SECP_R1, 24 },
+    { 224, PSA_ECC_FAMILY_SECP_R1, 28 },
+    { 256, PSA_ECC_FAMILY_SECP_R1, 32 },
+    { 384, PSA_ECC_FAMILY_SECP_R1, 48 },
+    { 521, PSA_ECC_FAMILY_SECP_R1, 66 },
+    { 192, PSA_ECC_FAMILY_SECP_K1, 24 },
+    { 224, PSA_ECC_FAMILY_SECP_K1, 28 },
+    { 256, PSA_ECC_FAMILY_SECP_K1, 32 },
+    { 256, PSA_ECC_FAMILY_BRAINPOOL_P_R1, 32 },
+    { 384, PSA_ECC_FAMILY_BRAINPOOL_P_R1, 48 },
+    { 512, PSA_ECC_FAMILY_BRAINPOOL_P_R1, 64 },
+    { 255, PSA_ECC_FAMILY_MONTGOMERY, 32 },
+    { 448, PSA_ECC_FAMILY_MONTGOMERY, 56 },
+    { 255, PSA_ECC_FAMILY_TWISTED_EDWARDS, 32 },
+    { 448, PSA_ECC_FAMILY_TWISTED_EDWARDS, 57 }
+};
+
 static psa_key_bits_t wolfpsa_ecc_bits_from_length(psa_ecc_family_t family,
                                                    size_t length_bytes)
 {
-    switch (family) {
-    case PSA_ECC_FAMILY_SECP_R1:
-        switch (length_bytes) {
-        case 24: return 192;
-        case 28: return 224;
-        case 32: return 256;
-        case 48: return 384;
-        case 66: return 521;
-        default: return 0;
-        }
+    size_t i;
 
-    case PSA_ECC_FAMILY_SECP_K1:
-        switch (length_bytes) {
-        case 24: return 192;
-        case 28: return 224;
-        case 32: return 256;
-        default: return 0;
+    for (i = 0; i < sizeof(wolfpsa_ecc_sizes) / sizeof(wolfpsa_ecc_sizes[0]);
+         i++) {
+        if (wolfpsa_ecc_sizes[i].family == family &&
+            wolfpsa_ecc_sizes[i].length == length_bytes) {
+            return wolfpsa_ecc_sizes[i].bits;
         }
-
-    case PSA_ECC_FAMILY_BRAINPOOL_P_R1:
-        switch (length_bytes) {
-        case 32: return 256;
-        case 48: return 384;
-        case 64: return 512;
-        default: return 0;
-        }
-
-    case PSA_ECC_FAMILY_MONTGOMERY:
-        /* Raw x-coordinate only: Curve25519 is 32 bytes, X448 is 56 bytes
-         * (RFC 7748 s.5). */
-        switch (length_bytes) {
-        case 32: return 255;
-        case 56: return 448;
-        default: return 0;
-        }
-
-    case PSA_ECC_FAMILY_TWISTED_EDWARDS:
-        /* Full point encoding: Ed25519 is 32 bytes, Ed448 is 57 bytes
-         * (RFC 8032 s.5.2.5/s.5.2.6). The 57th byte carries the sign of x. */
-        switch (length_bytes) {
-        case 32: return 255;
-        case 57: return 448;
-        default: return 0;
-        }
-
-    default:
-        return 0;
     }
+    return 0;
 }
 
-/* The coordinate (public) or scalar (private) size in bytes for a curve, or 0
- * when wolfPSA has no entry for this family/size pair. The inverse of
- * wolfpsa_ecc_bits_from_length(): import needs it to tell "this curve is not
+/* The inverse of wolfpsa_ecc_bits_from_length(), or 0 when wolfPSA has no
+ * entry for this family/size pair. Import needs it to tell "this curve is not
  * supported" (PSA_ERROR_NOT_SUPPORTED) from "the data does not match the
  * curve you declared" (PSA_ERROR_INVALID_ARGUMENT). */
 static size_t wolfpsa_ecc_length_from_bits(psa_ecc_family_t family,
                                            psa_key_bits_t bits)
 {
-    switch (family) {
-    case PSA_ECC_FAMILY_SECP_R1:
-        switch (bits) {
-        case 192: return 24;
-        case 224: return 28;
-        case 256: return 32;
-        case 384: return 48;
-        case 521: return 66;
-        default: return 0;
-        }
+    size_t i;
 
-    case PSA_ECC_FAMILY_SECP_K1:
-        switch (bits) {
-        case 192: return 24;
-        case 224: return 28;
-        case 256: return 32;
-        default: return 0;
+    for (i = 0; i < sizeof(wolfpsa_ecc_sizes) / sizeof(wolfpsa_ecc_sizes[0]);
+         i++) {
+        if (wolfpsa_ecc_sizes[i].family == family &&
+            wolfpsa_ecc_sizes[i].bits == bits) {
+            return wolfpsa_ecc_sizes[i].length;
         }
-
-    case PSA_ECC_FAMILY_BRAINPOOL_P_R1:
-        switch (bits) {
-        case 256: return 32;
-        case 384: return 48;
-        case 512: return 64;
-        default: return 0;
-        }
-
-    case PSA_ECC_FAMILY_MONTGOMERY:
-        switch (bits) {
-        case 255: return 32;
-        case 448: return 56;
-        default: return 0;
-        }
-
-    case PSA_ECC_FAMILY_TWISTED_EDWARDS:
-        switch (bits) {
-        case 255: return 32;
-        case 448: return 57;
-        default: return 0;
-        }
-
-    default:
-        return 0;
     }
+    return 0;
 }
 
 static int wolfpsa_usage_flags_valid(psa_key_usage_t usage)
