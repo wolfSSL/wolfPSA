@@ -277,7 +277,9 @@ static int MbedSeqParse(unsigned char* der, word32 idx, word32 end,
     int ret = 0;
 
     while (ret == 0 && idx < end) {
-        ret = MbedDerItem(der, &idx, end, &item);
+        if (MbedDerItem(der, &idx, end, &item) != 0) {
+            ret = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
+        }
         next = idx + (word32)item.len;
         if (ret == 0 && (flags & MBED_SEQ_POLICY) != 0) {
             ret = item.tag == (ASN_SEQUENCE | ASN_CONSTRUCTED) ?

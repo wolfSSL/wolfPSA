@@ -243,6 +243,8 @@ X.509:
   own.
 - wolfSSL parses some certificates differently. For example, it rejects a
   pathlen above `WOLFSSL_MAX_PATH_LEN` and accepts spaces in PEM.
+- An empty authority key identifier is accepted, as in Mbed TLS releases
+  after 4.2.0.
 
 Other:
 

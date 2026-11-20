@@ -722,6 +722,11 @@ static int Extensions(void)
         { "data after the policy qualifiers",
             "30140603551D20040D300B300906032A030430000500",
             MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "policy longer than the policies", "300D0603551D200406300430050600",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "authority cert issuer name longer than the issuer",
+            "30110603551D23040A3008A103820561820101",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
         { "data after the authority key identifier",
             "300E0603551D23040730038001010500",
             MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
@@ -751,6 +756,16 @@ static int Extensions(void)
         fails++;
     }
     mbedtls_x509_crt_free(&crt);
+
+    /* Refused by Mbed TLS 4.2.0, accepted by later releases */
+    mbedtls_x509_crt_init(&crt);
+    ret = ParseExts(&crt, "30090603551D2304023000");
+    if (ret == 0 && !mbedtls_x509_crt_has_ext_type(&crt,
+            MBEDTLS_X509_EXT_AUTHORITY_KEY_IDENTIFIER)) {
+        ret = -1;
+    }
+    mbedtls_x509_crt_free(&crt);
+    fails += Expect("empty authority key identifier", ret, 0);
 
     mbedtls_x509_crt_init(&crt);
     if (mbedtls_x509_crt_parse_file(&crt, IN "multiple_san.crt") == 0) {
