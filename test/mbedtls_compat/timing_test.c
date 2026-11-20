@@ -19,12 +19,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-/* Mbed TLS 4.x timers. The first two cases are from test_suite_timing. */
+/* Mbed TLS 4.x timers and mbedtls_ms_time(). The first two cases are from
+ * test_suite_timing, the last two from test_suite_platform. */
 
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
+#include <mbedtls/platform_time.h>
 #include <mbedtls/timing.h>
 
 #define INT_MS 100
@@ -34,12 +36,12 @@
 /* Sleep between reads of the timer */
 #define NAP_MS 2
 
-static void Nap(void)
+static void Nap(long ms)
 {
     struct timespec ts;
 
-    ts.tv_sec = 0;
-    ts.tv_nsec = NAP_MS * 1000000L;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (ms % 1000) * 1000000L;
     (void)nanosleep(&ts, NULL);
 }
 
@@ -74,7 +76,7 @@ static int FollowsTime(void)
 
     (void)mbedtls_timing_get_timer(&t, 1);
     do {
-        Nap();
+        Nap(NAP_MS);
         ms = mbedtls_timing_get_timer(&t, 0);
         now = time(NULL);
     } while (ms < 1100 && now - start < MAX_WAIT_MS / 1000);
@@ -96,7 +98,7 @@ static int Delays(void)
     last = mbedtls_timing_get_delay(&ctx);
     ok = last == 0 && mbedtls_timing_get_final_delay(&ctx) == FIN_MS;
     while (ok && last != 2) {
-        Nap();
+        Nap(NAP_MS);
         now = mbedtls_timing_get_delay(&ctx);
         elapsed = mbedtls_timing_get_timer(&t, 0);
         ok = now >= last && elapsed < MAX_WAIT_MS &&
@@ -126,6 +128,25 @@ static int NullArgs(void)
         mbedtls_timing_get_final_delay(NULL) == 0;
 }
 
+/* In ms, not s or us: at least the time slept, and not far over it */
+static int DelayMs(void)
+{
+    mbedtls_ms_time_t start = mbedtls_ms_time();
+    mbedtls_ms_time_t elapsed;
+
+    Nap(INT_MS);
+    elapsed = mbedtls_ms_time() - start;
+    return elapsed >= INT_MS && elapsed < INT_MS + MAX_WAIT_MS;
+}
+
+static int Seconds(void)
+{
+    mbedtls_time_t t = 0;
+    mbedtls_time_t now = mbedtls_time(&t);
+
+    return now != (mbedtls_time_t)-1 && now == t;
+}
+
 static const struct {
     const char* name;
     int (*test)(void);
@@ -135,7 +156,9 @@ static const struct {
     { "milliseconds", FollowsTime },
     { "delays", Delays },
     { "cancel", Cancel },
-    { "NULL arguments", NullArgs }
+    { "NULL arguments", NullArgs },
+    { "delay milliseconds", DelayMs },
+    { "get seconds", Seconds }
 };
 
 int main(void)

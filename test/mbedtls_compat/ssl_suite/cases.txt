@@ -21,7 +21,6 @@
 #   renegotiation  DTLS renegotiation
 #   context        mbedtls_ssl_context_save and _load, DTLS
 #   defaults       a config without mbedtls_ssl_config_defaults
-#   timing         MBEDTLS_HAVE_TIME
 #   cid            DTLS connection ID
 # Why, for notrun:
 #   ccm            TLS-ECDHE-ECDSA-WITH-AES-256-CCM: not in wolfSSL
@@ -244,7 +243,7 @@ api    notrun tls13-off     conf_version                              Version co
 api    notrun tls13-off     conf_version                              Version config: unsupported server hybrid DTLS 1.2/3, no TLS 1.3
 api    fail   defaults      conf_version                              Version config: invalid minimum version
 api    fail   defaults      conf_version                              Version config: invalid maximum version
-api    fail   timing        timing_final_delay_accessor               Test accessor into timing_delay_context
+api    pass   -             timing_final_delay_accessor               Test accessor into timing_delay_context
 api    fail   cid           cid_sanity                                Sanity test cid functions
 api    notrun internal      elliptic_curve_get_properties             Test Elliptic curves' info parsing
 target pass   -             ssl_tls_exporter_consistent_result        TLS 1.2 Keying Material Exporter: Consistent results, no context

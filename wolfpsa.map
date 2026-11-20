@@ -133,13 +133,13 @@ WOLFPSA_1.0 {
         psa_sign_message;
         psa_verify_hash;
         psa_verify_message;
-        wolfpsa_free_key_data;
         wolfpsa_get_key_data;
         wolfpsa_test_get_next_key_id;
         wolfpsa_test_set_next_key_id;
         wolfPSA_SetDefaultDevID;
         wolfPSA_GetDefaultDevID;
         /* Mbed TLS compatibility layer, MBEDTLS_COMPAT=1 */
+        mbedtls_ms_time*;
         mbedtls_net_*;
         mbedtls_pem_*;
         mbedtls_ssl_*;

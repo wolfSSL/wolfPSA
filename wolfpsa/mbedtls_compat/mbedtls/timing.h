@@ -26,12 +26,20 @@
 
 #include <stdint.h>
 
+#if defined(MBEDTLS_HAVE_TIME)
+    #include "mbedtls/platform_time.h"
+#endif /* MBEDTLS_HAVE_TIME */
+
 #ifdef __cplusplus
     extern "C" {
 #endif /* __cplusplus */
 
 struct mbedtls_timing_hr_time {
-    int64_t ms;
+#if defined(MBEDTLS_HAVE_TIME)
+    mbedtls_ms_time_t ms;
+#else
+    unsigned unused; /* as Mbed TLS: the timers are declared, not built */
+#endif /* MBEDTLS_HAVE_TIME */
 };
 
 typedef struct mbedtls_timing_delay_context {

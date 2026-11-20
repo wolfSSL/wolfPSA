@@ -78,8 +78,11 @@ Other:
 - `mbedtls_net_*`: init, connect, bind, accept, close, free, recv, send,
   usleep
 - `mbedtls_pem_*`: init, read_buffer, get_buffer, free
-- `mbedtls_timing_*`: get_timer, set_delay, get_delay, get_final_delay, on
-  a monotonic clock. `MBEDTLS_TIMING_C` needs Windows or a Unix-like system.
+- `mbedtls_timing_*`: get_timer, set_delay, get_delay, get_final_delay
+- `mbedtls_ms_time` and `mbedtls_time`
+- The timers and `mbedtls_ms_time` use a monotonic clock.
+  `MBEDTLS_TIMING_C` and `MBEDTLS_HAVE_TIME` need Windows or a Unix-like
+  system.
 
 TF-PSA-Crypto, in every build:
 
@@ -262,7 +265,7 @@ runs these against `libwolfpsa.a`. Each is also a target of its own;
   `mbedtls_strerror`. `x509_crt_test.c`, `pk_test.c` and `pem_test.c` parse
   Mbed TLS's test certificates and keys. `ssl_test.c` checks return codes,
   verify results and the verify callbacks, client and server in one
-  process. `timing_test.c` checks the timers.
+  process. `timing_test.c` checks the timers and `mbedtls_ms_time`.
 - `mbedtls-compat-programs`: the Mbed TLS migration guide client
   (`test/mbedtls_compat/client-tls-mbedtls.c`) and Mbed TLS's sample
   programs, built unchanged. The clients run against the wolfSSL example
