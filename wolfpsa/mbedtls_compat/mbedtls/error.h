@@ -19,8 +19,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-/* No mbedtls_strerror() yet. */
-
 #ifndef MBEDTLS_ERROR_H
 #define MBEDTLS_ERROR_H
 
@@ -29,5 +27,17 @@
 
 #define MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED  PSA_ERROR_HARDWARE_FAILURE
 #define MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED PSA_ERROR_CORRUPTION_DETECTED
+
+#include <stddef.h>
+
+#ifdef __cplusplus
+    extern "C" {
+#endif /* __cplusplus */
+
+void mbedtls_strerror(int errnum, char* buffer, size_t buflen);
+
+#ifdef __cplusplus
+    } /* extern "C" */
+#endif /* __cplusplus */
 
 #endif /* MBEDTLS_ERROR_H */

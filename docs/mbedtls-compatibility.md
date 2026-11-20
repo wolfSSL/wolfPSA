@@ -70,6 +70,7 @@ X.509:
 
 Other:
 
+- `mbedtls_strerror`
 - `mbedtls_net_*`: init, connect, bind, accept, close, free, recv, send,
   usleep
 - `mbedtls_pem_*`: init, read_buffer, get_buffer, free
@@ -109,7 +110,6 @@ X.509:
 
 Other:
 
-- Error strings (`mbedtls_strerror`)
 - The rest of `mbedtls/pk.h`: key writing, sign and verify, PSA key
   wrapping
 - `mbedtls/base64.h`, `mbedtls/md.h`, `mbedtls/asn1.h`,
@@ -223,6 +223,10 @@ Other:
   call, such as `MBEDTLS_ERR_SSL_INTERNAL_ERROR`. wolfSSL's own codes are not
   returned: some Mbed TLS 4.x codes are PSA values (-128 to -160), which
   overlap wolfCrypt codes.
+- `mbedtls_strerror` also describes the codes of TF-PSA-Crypto's modules,
+  such as `MBEDTLS_ERR_PK_FILE_IO_ERROR`, which Mbed TLS 4.x reports as
+  unknown. As in Mbed TLS, PSA codes, and the codes that are PSA values such
+  as `MBEDTLS_ERR_SSL_BAD_INPUT_DATA`, are unknown.
 - `mbedtls_pem_read_buffer` returns `MBEDTLS_ERR_PEM_FEATURE_UNAVAILABLE`
   for encrypted PEM. No `mbedtls_pem_write_buffer`.
 - `mbedtls_pk_parse_key` and `mbedtls_pk_parse_public_key` do not take
@@ -238,11 +242,11 @@ make MBEDTLS_COMPAT=1 mbedtls-compat-test
 runs these against `libwolfpsa.a`. Each is also a target of its own;
 `make help` lists them all.
 
-- `mbedtls-compat-unit`: `test/mbedtls_compat/x509_crt_test.c`,
-  `pk_test.c` and `pem_test.c` parse Mbed TLS's test certificates and keys.
-  `ssl_test.c` checks return codes, verify results and the verify
-  callbacks, client and server in one process. `timing_test.c` checks the
-  timers.
+- `mbedtls-compat-unit`: `test/mbedtls_compat/error_test.c` checks
+  `mbedtls_strerror`. `x509_crt_test.c`, `pk_test.c` and `pem_test.c` parse
+  Mbed TLS's test certificates and keys. `ssl_test.c` checks return codes,
+  verify results and the verify callbacks, client and server in one
+  process. `timing_test.c` checks the timers.
 - `mbedtls-compat-programs`: the Mbed TLS migration guide client
   (`test/mbedtls_compat/client-tls-mbedtls.c`) and Mbed TLS's sample
   programs, built unchanged. The clients run against the wolfSSL example

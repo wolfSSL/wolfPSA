@@ -7,11 +7,11 @@
 # output fails the case, and a case can require a line of output. A case
 # whose wrapper, such as faketime, is not installed is skipped. Then Mbed
 # TLS's server programs, against the wolfSSL example client and ssl_client1.
-# WRAP prefixes the programs. Run by the Makefile in this directory, which
-# sets the paths.
+# Then strerror, on each error code in wolfPSA's headers. WRAP prefixes the
+# programs. Run by the Makefile in this directory, which sets the paths.
 
 : "${BUILD_DIR:?}" "${WOLFSSL_PATH:?}" "${WOLFSSL_SERVER:?}" \
-    "${WOLFSSL_CLIENT:?}" "${MBEDTLS_PATH:?}"
+    "${WOLFSSL_CLIENT:?}" "${MBEDTLS_PATH:?}" "${WOLFPSA_PATH:?}"
 
 DATA=$MBEDTLS_PATH/framework/data_files
 READY=$BUILD_DIR/server-ready
@@ -216,6 +216,33 @@ ssl_fork_server, TLS 1.3 and 1.2|$P/ssl_fork_server|-v 4;-v 3
 $THREADED
 CASES
 rm -f "$LOG"
+
+# Run strerror on each numeric error code in the headers. It prints a
+# description and exits with the code, so the exit status is its low byte.
+codes=$(sed -n 's/^#define MBEDTLS_ERR_[^-]*\(-0x[0-9A-Fa-f]*\).*/\1/p' \
+    "$WOLFPSA_PATH"/wolfpsa/mbedtls/*.h \
+    "$WOLFPSA_PATH"/wolfpsa/mbedtls_compat/mbedtls/*.h)
+DESCRIBED="^Last error was: -0x[0-9a-f]* - ."
+out=
+n=0
+for code in $codes; do
+    n=$((n + 1))
+    line=$($WRAP "$BUILD_DIR/programs/util/strerror" "$code" 2>&1)
+    rc=$?
+    if [ $rc -ne $((code & 255)) ] ||
+            ! printf '%s\n' "$line" | grep -q "$DESCRIBED" ||
+            printf '%s\n' "$line" |
+                grep -q -e "UNKNOWN ERROR CODE" -e "$SANITIZER"; then
+        out="$out
+$code: exit $rc: $line"
+    fi
+done
+if [ $n -gt 0 ] && [ -z "$out" ]; then
+    echo "PASS: strerror, $n error codes"
+else
+    echo "FAIL: strerror:$out"
+    FAILS=$((FAILS + 1))
+fi
 
 if [ $FAILS -ne 0 ]; then
     echo "$FAILS failed"

@@ -143,6 +143,7 @@ WOLFPSA_1.0 {
         mbedtls_net_*;
         mbedtls_pem_*;
         mbedtls_ssl_*;
+        mbedtls_strerror*;
         mbedtls_timing_*;
         mbedtls_x509_*;
         /* The wolfCrypt objects a devId selects live inside this library,
