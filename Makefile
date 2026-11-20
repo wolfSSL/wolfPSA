@@ -184,7 +184,8 @@ PYTHON ?= python3
 
 $(PSA_CONFIG): FORCE
 	@mkdir -p $(dir $@)
-	$(PYTHON) tools/gen-crypto-config.py $@ "$(CC)" \
+	$(PYTHON) tools/gen-crypto-config.py \
+		$(foreach w,$(PSA_WANT_WITHOUT),--without $(w)) $@ "$(CC)" \
 		tools/psa_want_probe.c $(CPPFLAGS) $(CFLAGS)
 
 $(OBJ) $(OBJ_PIC) $(WOLFCRYPT_OBJ) $(WOLFCRYPT_OBJ_PIC) $(WOLFSSL_TLS_OBJ) \

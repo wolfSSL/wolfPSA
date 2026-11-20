@@ -26,6 +26,14 @@ This directory contains standalone tests and demos for wolfPSA integration.
     build never reuses uninstrumented objects.
   - Source: `psa_server/psa_devid_cryptocb_test.c`
 
+- `psa_secure_set_test`
+  - Builds its own library from `test/secure-set/user_settings.h` (NO_ASN, no
+    RSA, ChaCha20, DES or PQC, `WOLFPSA_AEAD_BORROW`) and checks raw r||s
+    ECDSA including the RFC 6979 vector, refused imports of the compiled-out
+    key families, GCM/CCM with overlapping buffers, and streamed HKDF against
+    wolfCrypt. Build it by name: `make -C test psa_secure_set_test`.
+  - Source: `psa_server/psa_secure_set_test.c`
+
 - `psa_tls_server` + `psa_tls_client`
   - TLS server built with wolfPSA, and a static client built from wolfSSL
     sources (`psa_server/tls_client`).

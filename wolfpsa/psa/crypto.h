@@ -38,20 +38,6 @@
 #include "crypto_extra.h"
 
 
-/* Types */
-
-typedef struct psa_hash_operation_s psa_hash_operation_t;
-typedef struct psa_mac_operation_s psa_mac_operation_t;
-typedef struct psa_cipher_operation_s psa_cipher_operation_t;
-typedef struct psa_aead_operation_s psa_aead_operation_t;
-typedef struct psa_xof_operation_s psa_xof_operation_t;
-typedef struct psa_key_derivation_s psa_key_derivation_operation_t;
-typedef struct psa_sign_hash_interruptible_operation_s psa_sign_hash_interruptible_operation_t;
-typedef struct psa_verify_hash_interruptible_operation_s psa_verify_hash_interruptible_operation_t;
-typedef struct psa_key_agreement_iop_s psa_key_agreement_iop_t;
-typedef struct psa_generate_key_iop_s psa_generate_key_iop_t;
-typedef struct psa_export_public_key_iop_s psa_export_public_key_iop_t;
-
 /* Constants */
 #define PSA_KEY_DERIVATION_UNLIMITED_CAPACITY ((size_t) (-1))
 

@@ -93,12 +93,42 @@ default), using python3. Set `PYTHON` to use another interpreter. Code that
 includes `<psa/crypto.h>` needs that directory on its include path next to
 `wolfpsa/`, and builds only after `make` has generated the header.
 
+`PSA_WANT_WITHOUT` removes an algorithm from the PSA surface while wolfCrypt
+keeps its primitive, for example when the application seals with one-shot
+AES-GCM but should not offer GCM through PSA:
+`make PSA_WANT_WITHOUT=PSA_WANT_ALG_GCM`. It takes `PSA_WANT_ALG_GCM`,
+`PSA_WANT_ALG_CCM`, `PSA_WANT_ALG_CHACHA20_POLY1305`,
+`PSA_WANT_ALG_SP800_108_COUNTER_HMAC` and `PSA_WANT_ALG_SP800_108_COUNTER_CMAC`,
+and that algorithm then returns `PSA_ERROR_NOT_SUPPORTED`. Every other algorithm follows the wolfCrypt
+build, so turn it off there.
+
+`WOLFPSA_ECC_SP_DIRECT` runs P-256 ECDSA (randomized only), ECDH, key
+generation and key import straight on wolfCrypt's SP code, so `ecc.c` and the
+multi-precision math leave a P-256-only build. It keeps `ecc.c`'s checks: the
+private key is in [1, n-1], public points are on the curve with coordinates
+below p, and r and s are in [1, n-1]. It needs `WOLFSSL_HAVE_SP_ECC` and
+`ECC_USER_CURVES` with every other curve off; `test/ecc-direct` is an example
+configuration, and `wolfpsa/psa_p256.h` declares the same primitives for
+code built into the same image.
+
 ## Repository layout
 
 - `src/` : wolfPSA implementation sources.
 - `wolfpsa/` : public headers.
 - `user_settings.h` : configuration header.
 - `Makefile` : build for `libwolfpsa.a`.
+
+`WOLFPSA_AEAD_BORROW` lets one-shot GCM and CCM read the caller's AAD and
+message in place instead of copying them, which saves a message-sized buffer.
+Define it only when nothing else can change those buffers during the call,
+for example a Secure service whose inputs sit in its own memory. Outputs that
+partly overlap the input or overlap the AAD still take the copying path.
+
+`WOLFPSA_AEAD_STREAM_AAD` feeds multipart GCM and ChaCha20-Poly1305 AAD into
+the cipher as `psa_aead_update_ad()` receives it, so the operation holds no
+copy of the AAD however long it is. `psa_aead_update()` then needs an output
+buffer, as the PSA Crypto API requires: the buffered mode that takes a NULL
+output and emits everything from `psa_aead_finish()` is refused.
 
 ## Testing (PSA Architecture Test Suite)
 

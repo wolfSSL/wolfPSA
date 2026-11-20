@@ -113,3 +113,35 @@ jobs:
           rm -f test/psa_tf_psa_pk_test test/psa_server/psa_tf_psa_pk_test.o
           make -C test psa_tf_psa_pk_test ASAN=1
           ./test/psa_tf_psa_pk_test
+
+      # NO_ASN raw ECDSA, refused imports of compiled-out key families,
+      # borrowed AEAD with overlapping buffers and streamed HKDF.
+      - name: Run the small Secure-set test
+        run: |
+          make -C test psa_secure_set_test
+          rm -rf test/.store
+          ./test/psa_secure_set_test
+          make -C test psa_secure_set_test ASAN=1
+          rm -rf test/.store
+          ./test/psa_secure_set_test
+
+      # GCM stays in wolfCrypt but PSA_WANT_WITHOUT drops it from the PSA surface
+      - name: Run the PSA_WANT gating test
+        run: |
+          make -C test psa_want_gated_test
+          rm -rf test/.store
+          ./test/psa_want_gated_test
+          make -C test psa_want_gated_test ASAN=1
+          rm -rf test/.store
+          ./test/psa_want_gated_test
+
+      # The same P-256 checks on the direct SP path and on ecc.c
+      - name: Run the P-256 direct path test
+        run: |
+          for t in psa_ecc_direct_test psa_ecc_generic_test; do
+            for a in "" ASAN=1; do
+              rm -rf test/.store test/$t
+              make -C test $t $a
+              ./test/$t
+            done
+          done

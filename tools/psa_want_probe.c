@@ -109,6 +109,9 @@ __WPSA_EMIT__PSA_WANT_ALG_GCM
 #endif
 #if defined(HAVE_AESCCM)
 __WPSA_EMIT__PSA_WANT_ALG_CCM
+#endif
+/* CCM* without a tag is a CTR cipher in psa_cipher.c, with no CCM code */
+#if defined(WOLFSSL_AES_COUNTER)
 __WPSA_EMIT__PSA_WANT_ALG_CCM_STAR_NO_TAG
 #endif
 #endif /* !NO_AES */
@@ -236,6 +239,12 @@ __WPSA_EMIT__PSA_WANT_ALG_PBKDF2_HMAC
 #endif
 #if defined(HAVE_PBKDF2) && defined(WOLFSSL_CMAC)
 __WPSA_EMIT__PSA_WANT_ALG_PBKDF2_AES_CMAC_PRF_128
+#endif
+#if !defined(NO_HMAC)
+__WPSA_EMIT__PSA_WANT_ALG_SP800_108_COUNTER_HMAC
+#endif
+#if defined(WOLFSSL_CMAC) && !defined(NO_AES)
+__WPSA_EMIT__PSA_WANT_ALG_SP800_108_COUNTER_CMAC
 #endif
 #if defined(WOLFSSL_HAVE_PRF)
 __WPSA_EMIT__PSA_WANT_ALG_TLS12_PRF
