@@ -1029,16 +1029,43 @@ static psa_status_t psa_key_attributes_deserialize(
     return PSA_SUCCESS;
 }
 
+#define WOLFPSA_KEY_ATTR_LEN \
+    (sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) + \
+     sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) + \
+     sizeof(psa_key_lifetime_t))
+#define WOLFPSA_KEY_HEADER_LEN (WOLFPSA_KEY_ATTR_LEN + sizeof(size_t))
+
+/* Open a persistent key record and read its header; on success the caller
+ * owns *store and must close it. */
+static psa_status_t wolfpsa_open_key_record(psa_key_id_t key_id, void** store,
+                                            uint8_t* header)
+{
+    int ret;
+
+    ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0, 1,
+                             store);
+    if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
+        return PSA_ERROR_INVALID_HANDLE;
+    }
+    if (ret != 0) {
+        return wolfpsa_store_open_status(ret);
+    }
+    ret = wolfPSA_Store_Read(*store, header, (int)WOLFPSA_KEY_HEADER_LEN);
+    if (ret != (int)WOLFPSA_KEY_HEADER_LEN) {
+        wolfPSA_Store_Close(*store);
+        *store = NULL;
+        return PSA_ERROR_STORAGE_FAILURE;
+    }
+    return PSA_SUCCESS;
+}
+
 psa_status_t wolfpsa_get_key_data(psa_key_id_t key_id,
                                   psa_key_attributes_t* attributes,
                                   uint8_t** key_data,
                                   size_t* key_data_length)
 {
     psa_status_t status;
-    uint8_t header[sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                   sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                   sizeof(psa_key_lifetime_t) + sizeof(size_t)];
-    size_t attr_length;
+    uint8_t header[WOLFPSA_KEY_HEADER_LEN];
     int ret;
     void* store = NULL;
 
@@ -1064,26 +1091,13 @@ psa_status_t wolfpsa_get_key_data(psa_key_id_t key_id,
         return status;
     }
 
-    attr_length = sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                  sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                  sizeof(psa_key_lifetime_t);
-    ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0, 1,
-                             &store);
-    if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
-        return PSA_ERROR_INVALID_HANDLE;
-    }
-    if (ret != 0) {
-        return wolfpsa_store_open_status(ret);
-    }
-    ret = wolfPSA_Store_Read(store, header,
-                             (int)(attr_length + sizeof(size_t)));
-    if (ret != (int)(attr_length + sizeof(size_t))) {
-        wolfPSA_Store_Close(store);
-        return PSA_ERROR_STORAGE_FAILURE;
+    status = wolfpsa_open_key_record(key_id, &store, header);
+    if (status != PSA_SUCCESS) {
+        return status;
     }
 
     if (attributes != NULL) {
-        status = psa_key_attributes_deserialize(header, attr_length,
+        status = psa_key_attributes_deserialize(header, WOLFPSA_KEY_ATTR_LEN,
                                                 attributes);
         if (status != PSA_SUCCESS) {
             wolfPSA_Store_Close(store);
@@ -1091,7 +1105,7 @@ psa_status_t wolfpsa_get_key_data(psa_key_id_t key_id,
         }
     }
 
-    XMEMCPY(key_data_length, header + attr_length, sizeof(size_t));
+    XMEMCPY(key_data_length, header + WOLFPSA_KEY_ATTR_LEN, sizeof(size_t));
     status = wolfpsa_validate_stored_key_data_length(*key_data_length);
     if (status != PSA_SUCCESS) {
         wolfPSA_Store_Close(store);
@@ -1562,6 +1576,15 @@ psa_status_t psa_import_key(
         }
     }
 
+    /* A volatile key is stored from the caller's data, not a record */
+    if (PSA_KEY_LIFETIME_IS_VOLATILE(attr.lifetime)) {
+        status = wolfpsa_volatile_store(*key_id, &attr, data, data_length);
+        if (status != PSA_SUCCESS) {
+            *key_id = PSA_KEY_ID_NULL;
+        }
+        return status;
+    }
+
     /* Allocate buffer for key data and attributes */
     buffer_size = data_length + sizeof(psa_key_type_t) + sizeof(psa_key_bits_t)
                   +
@@ -1586,68 +1609,60 @@ psa_status_t psa_import_key(
     /* Store key data */
     XMEMCPY(buffer + attr_length + sizeof(size_t), data, data_length);
 
-    if (PSA_KEY_LIFETIME_IS_VOLATILE(attr.lifetime)) {
-        status = wolfpsa_volatile_store(*key_id, &attr, data, data_length);
-        if (status == PSA_SUCCESS) {
-            ret = (int)(attr_length + sizeof(size_t) + data_length);
-        }
-    }
-    else {
-        /* The PSA Crypto API requires psa_import_key() to fail with
-         * PSA_ERROR_ALREADY_EXISTS when a persistent key already exists with
-         * the requested id. Hold the key-store lock across the existence probe
-         * and the write so two concurrent imports of the same id serialize: the
-         * loser observes the winner's record and returns ALREADY_EXISTS instead
-         * of both probing absent and both writing. Each store call is atomic on
-         * its own; the lock adds the cross-thread atomicity the check-then-write
-         * needs. Probing before the write handle also stops the atomic rename in
-         * wolfPSA_Store_Close() from silently destroying the previous record. */
-        WOLFPSA_LOCK();
+    /* The PSA Crypto API requires psa_import_key() to fail with
+     * PSA_ERROR_ALREADY_EXISTS when a persistent key already exists with
+     * the requested id. Hold the key-store lock across the existence probe
+     * and the write so two concurrent imports of the same id serialize: the
+     * loser observes the winner's record and returns ALREADY_EXISTS instead
+     * of both probing absent and both writing. Each store call is atomic on
+     * its own; the lock adds the cross-thread atomicity the check-then-write
+     * needs. Probing before the write handle also stops the atomic rename in
+     * wolfPSA_Store_Close() from silently destroying the previous record. */
+    WOLFPSA_LOCK();
 
-        ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)*key_id, 0,
-                                 1, &store);
-        if (ret == 0) {
-            wolfPSA_Store_Close(store);
-            store = NULL;
-            WOLFPSA_UNLOCK();
-            wc_ForceZero(buffer, buffer_size);
-            XFREE(buffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            *key_id = PSA_KEY_ID_NULL;
-            return PSA_ERROR_ALREADY_EXISTS;
-        }
-        if (ret != WOLFPSA_STORE_NOT_AVAILABLE) {
-            /* The probe failed for a reason other than "not found" (an I/O
-             * error, or a failed context allocation): do not proceed to the
-             * write path, which would overwrite a record we could not
-             * inspect. */
-            WOLFPSA_UNLOCK();
-            wc_ForceZero(buffer, buffer_size);
-            XFREE(buffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            *key_id = PSA_KEY_ID_NULL;
-            return wolfpsa_store_open_status(ret);
-        }
-
-        /* Open and write key to persistent storage */
-        ret = wolfPSA_Store_OpenSz(WOLFPSA_STORE_KEY, (unsigned long)*key_id, 0,
-                                   0, (int)data_length, &store);
-        if (ret == 0) {
-            int closeRet;
-
-            ret = wolfPSA_Store_Write(store, buffer,
-                                      (int)(attr_length + sizeof(size_t) +
-                                            data_length));
-            closeRet = wolfPSA_Store_Close(store);
-            store = NULL;
-            /* A successful write returns the byte count, not zero: report a
-             * failed commit only when the write itself did not already
-             * fail. */
-            if (ret >= 0 && closeRet != WOLFPSA_STORE_OK) {
-                ret = closeRet;
-            }
-        }
-
+    ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)*key_id, 0,
+                             1, &store);
+    if (ret == 0) {
+        wolfPSA_Store_Close(store);
+        store = NULL;
         WOLFPSA_UNLOCK();
+        wc_ForceZero(buffer, buffer_size);
+        XFREE(buffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        *key_id = PSA_KEY_ID_NULL;
+        return PSA_ERROR_ALREADY_EXISTS;
     }
+    if (ret != WOLFPSA_STORE_NOT_AVAILABLE) {
+        /* The probe failed for a reason other than "not found" (an I/O
+         * error, or a failed context allocation): do not proceed to the
+         * write path, which would overwrite a record we could not
+         * inspect. */
+        WOLFPSA_UNLOCK();
+        wc_ForceZero(buffer, buffer_size);
+        XFREE(buffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        *key_id = PSA_KEY_ID_NULL;
+        return wolfpsa_store_open_status(ret);
+    }
+
+    /* Open and write key to persistent storage */
+    ret = wolfPSA_Store_OpenSz(WOLFPSA_STORE_KEY, (unsigned long)*key_id, 0,
+                               0, (int)data_length, &store);
+    if (ret == 0) {
+        int closeRet;
+
+        ret = wolfPSA_Store_Write(store, buffer,
+                                  (int)(attr_length + sizeof(size_t) +
+                                        data_length));
+        closeRet = wolfPSA_Store_Close(store);
+        store = NULL;
+        /* A successful write returns the byte count, not zero: report a
+         * failed commit only when the write itself did not already
+         * fail. */
+        if (ret >= 0 && closeRet != WOLFPSA_STORE_OK) {
+            ret = closeRet;
+        }
+    }
+
+    WOLFPSA_UNLOCK();
 
     wc_ForceZero(buffer, buffer_size);
     XFREE(buffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -1986,11 +2001,8 @@ psa_status_t psa_export_key(
     size_t* data_length)
 {
     psa_status_t status;
-    uint8_t header[sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                   sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                   sizeof(psa_key_lifetime_t) + sizeof(size_t)];
+    uint8_t header[WOLFPSA_KEY_HEADER_LEN];
     size_t key_data_length;
-    size_t attr_length;
     psa_key_usage_t usage;
     int ret;
     void* store = NULL;
@@ -2037,23 +2049,9 @@ psa_status_t psa_export_key(
         return status;
     }
 
-    /* Calculate attribute length */
-    attr_length = sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                  sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                  sizeof(psa_key_lifetime_t);
-    ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0, 1,
-                             &store);
-    if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
-        return PSA_ERROR_INVALID_HANDLE;
-    }
-    if (ret != 0) {
-        return wolfpsa_store_open_status(ret);
-    }
-    ret = wolfPSA_Store_Read(store, header,
-                             (int)(attr_length + sizeof(size_t)));
-    if (ret != (int)(attr_length + sizeof(size_t))) {
-        wolfPSA_Store_Close(store);
-        return PSA_ERROR_STORAGE_FAILURE;
+    status = wolfpsa_open_key_record(key_id, &store, header);
+    if (status != PSA_SUCCESS) {
+        return status;
     }
 
     /* Authorize the export from the same open handle as the data read below,
@@ -2067,7 +2065,7 @@ psa_status_t psa_export_key(
     }
 
     /* Get key data length */
-    XMEMCPY(&key_data_length, header + attr_length, sizeof(size_t));
+    XMEMCPY(&key_data_length, header + WOLFPSA_KEY_ATTR_LEN, sizeof(size_t));
     status = wolfpsa_validate_stored_key_data_length(key_data_length);
     if (status != PSA_SUCCESS) {
         wolfPSA_Store_Close(store);
@@ -2104,16 +2102,9 @@ psa_status_t psa_export_public_key(
 {
     wolfpsa_trace("psa_export_public_key(key=%u)", (unsigned)key_id);
     psa_status_t status;
-    uint8_t header[sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                   sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                   sizeof(psa_key_lifetime_t) + sizeof(size_t)];
-    psa_key_attributes_t attributes;
-    size_t key_data_length;
-    size_t attr_length;
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    size_t key_data_length = 0;
     uint8_t* key_data = NULL;
-    int ret;
-    void* store = NULL;
-    int use_volatile = 0;
 
     wolfpsa_clear_length(data_length);
     /* A NULL data pointer is only an error when the caller declared a
@@ -2122,30 +2113,10 @@ psa_status_t psa_export_public_key(
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    status = psa_key_storage_check_init();
+    status = wolfpsa_get_key_data(key_id, &attributes, &key_data,
+                                  &key_data_length);
     if (status != PSA_SUCCESS) {
         return status;
-    }
-
-    {
-        psa_key_attributes_t vol_attr = PSA_KEY_ATTRIBUTES_INIT;
-        size_t vol_len = 0;
-
-        status = wolfpsa_volatile_get(key_id, &vol_attr, &key_data, &vol_len);
-        if (status == PSA_SUCCESS) {
-            attributes = vol_attr;
-            key_data_length = vol_len;
-            use_volatile = 1;
-        }
-        else if (status != PSA_ERROR_INVALID_HANDLE) {
-            return status;
-        }
-        else {
-            status = psa_get_key_attributes(key_id, &attributes);
-            if (status != PSA_SUCCESS) {
-                return status;
-            }
-        }
     }
 
     if (!PSA_KEY_TYPE_IS_RSA(attributes.type) &&
@@ -2156,53 +2127,8 @@ psa_status_t psa_export_public_key(
         attributes.type != PSA_KEY_TYPE_HSS_PUBLIC_KEY &&
         attributes.type != PSA_KEY_TYPE_XMSS_PUBLIC_KEY &&
         attributes.type != PSA_KEY_TYPE_XMSS_MT_PUBLIC_KEY) {
-        if (use_volatile) {
-            wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-        }
+        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_INVALID_ARGUMENT;
-    }
-
-    if (!use_volatile) {
-        attr_length = sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                      sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                      sizeof(psa_key_lifetime_t);
-
-        ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0, 1,
-                                 &store);
-        if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
-            return PSA_ERROR_INVALID_HANDLE;
-        }
-        if (ret != 0) {
-            return wolfpsa_store_open_status(ret);
-        }
-
-        ret = wolfPSA_Store_Read(store, header,
-                                 (int)(attr_length + sizeof(size_t)));
-        if (ret != (int)(attr_length + sizeof(size_t))) {
-            wolfPSA_Store_Close(store);
-            return PSA_ERROR_STORAGE_FAILURE;
-        }
-
-        XMEMCPY(&key_data_length, header + attr_length, sizeof(size_t));
-        status = wolfpsa_validate_stored_key_data_length(key_data_length);
-        if (status != PSA_SUCCESS) {
-            wolfPSA_Store_Close(store);
-            return status;
-        }
-        key_data = (uint8_t*)XMALLOC(key_data_length, NULL,
-                                     DYNAMIC_TYPE_TMP_BUFFER);
-        if (key_data == NULL) {
-            wolfPSA_Store_Close(store);
-            return PSA_ERROR_INSUFFICIENT_MEMORY;
-        }
-
-        ret = wolfPSA_Store_Read(store, key_data, (int)key_data_length);
-        wolfPSA_Store_Close(store);
-        store = NULL;
-        if (ret != (int)key_data_length) {
-            wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-            return PSA_ERROR_STORAGE_FAILURE;
-        }
     }
 
     if (PSA_KEY_TYPE_IS_RSA(attributes.type)) {
@@ -2219,6 +2145,7 @@ psa_status_t psa_export_public_key(
         }
         else {
             RsaKey* rsa = NULL;
+            int ret;
             word32 idx = 0;
             word32 n_sz = 0;
             word32 e_sz = 0;
@@ -2466,11 +2393,7 @@ psa_status_t psa_get_key_attributes(
     psa_key_attributes_t* attributes)
 {
     psa_status_t status;
-    uint8_t buffer[sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                   sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                   sizeof(psa_key_lifetime_t) + sizeof(size_t)];
-    size_t attr_length;
-    int ret;
+    uint8_t buffer[WOLFPSA_KEY_HEADER_LEN];
     void* store = NULL;
 
     /* Check parameters */
@@ -2488,27 +2411,13 @@ psa_status_t psa_get_key_attributes(
     status = wolfpsa_volatile_get_attributes(key_id, attributes);
     if (status != PSA_SUCCESS) {
         /* Not a volatile key: load the attributes from the persistent store. */
-        attr_length = sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                      sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                      sizeof(psa_key_lifetime_t);
-
-        ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)key_id, 0, 1,
-                                 &store);
-        if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
-            return PSA_ERROR_INVALID_HANDLE;
+        status = wolfpsa_open_key_record(key_id, &store, buffer);
+        if (status != PSA_SUCCESS) {
+            return status;
         }
-        if (ret != 0) {
-            return wolfpsa_store_open_status(ret);
-        }
-
-        ret = wolfPSA_Store_Read(store, buffer,
-                                 (int)(attr_length + sizeof(size_t)));
         wolfPSA_Store_Close(store);
         store = NULL;
-        if (ret != (int)(attr_length + sizeof(size_t))) {
-            return PSA_ERROR_STORAGE_FAILURE;
-        }
-        status = psa_key_attributes_deserialize(buffer, attr_length,
+        status = psa_key_attributes_deserialize(buffer, WOLFPSA_KEY_ATTR_LEN,
                                                 attributes);
         if (status != PSA_SUCCESS) {
             return status;
@@ -2688,184 +2597,68 @@ static int wolfpsa_alg2_intersect(psa_algorithm_t src_alg,
 }
 
 /* Copy a key in the PSA key storage */
+/* Check a copy request against the source key and build the target's
+ * attributes: usage and algorithms narrow to what both permit. */
+static psa_status_t wolfpsa_copy_attributes(const psa_key_attributes_t* src,
+                                            const psa_key_attributes_t* req,
+                                            psa_key_attributes_t* dst)
+{
+    psa_algorithm_t copy_alg = PSA_ALG_NONE;
+    psa_algorithm_t copy_alg2 = PSA_ALG_NONE;
+
+    if ((psa_get_key_usage_flags(src) & PSA_KEY_USAGE_COPY) == 0) {
+        return PSA_ERROR_NOT_PERMITTED;
+    }
+    if ((req->type != 0 && req->type != src->type) ||
+        (req->bits != 0 && req->bits != src->bits)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (!wolfpsa_alg_intersect(psa_get_key_algorithm(src), req->policy.alg,
+                               &copy_alg) ||
+        !wolfpsa_alg2_intersect(src->policy.alg2, req->policy.alg2,
+                                &copy_alg2)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (req->lifetime != src->lifetime) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+
+    *dst = *req;
+    dst->type = (dst->type == 0) ? src->type : dst->type;
+    dst->bits = (dst->bits == 0) ? src->bits : dst->bits;
+    dst->policy.usage = psa_get_key_usage_flags(src) &
+                        psa_get_key_usage_flags(req);
+    dst->policy.alg = copy_alg;
+    dst->policy.alg2 = copy_alg2;
+    return PSA_SUCCESS;
+}
+
 psa_status_t psa_copy_key(
     psa_key_id_t source_key,
     const psa_key_attributes_t* attributes,
     psa_key_id_t* target_key)
 {
     psa_status_t status;
-    uint8_t header[sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                   sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                   sizeof(psa_key_lifetime_t) + sizeof(size_t)];
-    uint8_t* buffer = NULL;
-    size_t key_data_length;
-    size_t attr_length;
-    int ret;
-    void* store = NULL;
+    uint8_t* key_data = NULL;
+    size_t key_data_length = 0;
     psa_key_attributes_t src_attr = PSA_KEY_ATTRIBUTES_INIT;
     psa_key_attributes_t dst_attr;
-    psa_algorithm_t copy_alg = PSA_ALG_NONE;
-    psa_algorithm_t copy_alg2 = PSA_ALG_NONE;
 
     wolfpsa_clear_key_id(target_key);
-    /* Check parameters */
     if (attributes == NULL || target_key == NULL) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    /* Check if the key storage is initialized */
-    status = psa_key_storage_check_init();
-    if (status != PSA_SUCCESS) {
-        return status;
-    }
-
-    {
-        psa_key_attributes_t vol_attr = PSA_KEY_ATTRIBUTES_INIT;
-        uint8_t* key_data = NULL;
-        key_data_length = 0;
-
-        status = wolfpsa_volatile_get(source_key, &vol_attr,
-                                      &key_data, &key_data_length);
+    status = wolfpsa_get_key_data(source_key, &src_attr, &key_data,
+                                  &key_data_length);
+    if (status == PSA_SUCCESS) {
+        status = wolfpsa_copy_attributes(&src_attr, attributes, &dst_attr);
         if (status == PSA_SUCCESS) {
-            dst_attr = *attributes;
-
-            if ((psa_get_key_usage_flags(&vol_attr) &
-                 PSA_KEY_USAGE_COPY) == 0) {
-                wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-                return PSA_ERROR_NOT_PERMITTED;
-            }
-
-            if (attributes->type != 0 && attributes->type != vol_attr.type) {
-                wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-                return PSA_ERROR_INVALID_ARGUMENT;
-            }
-
-            if (attributes->bits != 0 && attributes->bits != vol_attr.bits) {
-                wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-                return PSA_ERROR_INVALID_ARGUMENT;
-            }
-
-            if (!wolfpsa_alg_intersect(psa_get_key_algorithm(&vol_attr),
-                                       attributes->policy.alg, &copy_alg) ||
-                !wolfpsa_alg2_intersect(vol_attr.policy.alg2,
-                                        attributes->policy.alg2,
-                                        &copy_alg2)) {
-                wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-                return PSA_ERROR_INVALID_ARGUMENT;
-            }
-
-            if (attributes->lifetime != vol_attr.lifetime) {
-                wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-                return PSA_ERROR_INVALID_ARGUMENT;
-            }
-            dst_attr.type = (dst_attr.type == 0) ? vol_attr.type
-                                                 : dst_attr.type;
-            dst_attr.bits = (
-                dst_attr.bits == 0) ? vol_attr.bits : dst_attr.bits;
-            dst_attr.policy.usage = psa_get_key_usage_flags(&vol_attr) &
-                                    psa_get_key_usage_flags(&dst_attr);
-            dst_attr.policy.alg = copy_alg;
-            dst_attr.policy.alg2 = copy_alg2;
-
-            status = psa_import_key(&dst_attr, key_data,
-                                    key_data_length, target_key);
-            wolfpsa_forcezero_free_key_data(key_data, key_data_length);
-            return status;
+            status = psa_import_key(&dst_attr, key_data, key_data_length,
+                                    target_key);
         }
+        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
     }
-    if (status != PSA_ERROR_INVALID_HANDLE) {
-        /* A volatile lookup failure must be reported, not masked by the
-         * persistent-store probe below. */
-        return status;
-    }
-
-    /* Calculate attribute length */
-    attr_length = sizeof(psa_key_type_t) + sizeof(psa_key_bits_t) +
-                  sizeof(psa_key_usage_t) + sizeof(psa_algorithm_t) +
-                  sizeof(psa_key_lifetime_t);
-
-    ret = wolfPSA_Store_Open(WOLFPSA_STORE_KEY, (unsigned long)source_key, 0, 1,
-                             &store);
-    if (ret == WOLFPSA_STORE_NOT_AVAILABLE) {
-        return PSA_ERROR_INVALID_HANDLE;
-    }
-    if (ret != 0) {
-        return wolfpsa_store_open_status(ret);
-    }
-    ret = wolfPSA_Store_Read(store, header,
-                             (int)(attr_length + sizeof(size_t)));
-    if (ret != (int)(attr_length + sizeof(size_t))) {
-        wolfPSA_Store_Close(store);
-        return PSA_ERROR_STORAGE_FAILURE;
-    }
-
-    status = psa_key_attributes_deserialize(header, attr_length, &src_attr);
-    if (status != PSA_SUCCESS) {
-        wolfPSA_Store_Close(store);
-        return status;
-    }
-
-    if ((psa_get_key_usage_flags(&src_attr) & PSA_KEY_USAGE_COPY) == 0) {
-        wolfPSA_Store_Close(store);
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-
-    if (attributes->type != 0 && attributes->type != src_attr.type) {
-        wolfPSA_Store_Close(store);
-        return PSA_ERROR_INVALID_ARGUMENT;
-    }
-
-    if (attributes->bits != 0 && attributes->bits != src_attr.bits) {
-        wolfPSA_Store_Close(store);
-        return PSA_ERROR_INVALID_ARGUMENT;
-    }
-
-    if (!wolfpsa_alg_intersect(psa_get_key_algorithm(&src_attr),
-                               attributes->policy.alg, &copy_alg) ||
-        !wolfpsa_alg2_intersect(src_attr.policy.alg2, attributes->policy.alg2,
-                                &copy_alg2)) {
-        wolfPSA_Store_Close(store);
-        return PSA_ERROR_INVALID_ARGUMENT;
-    }
-
-    if (attributes->lifetime != src_attr.lifetime) {
-        wolfPSA_Store_Close(store);
-        return PSA_ERROR_INVALID_ARGUMENT;
-    }
-
-    dst_attr = *attributes;
-    dst_attr.type = (dst_attr.type == 0) ? src_attr.type : dst_attr.type;
-    dst_attr.bits = (dst_attr.bits == 0) ? src_attr.bits : dst_attr.bits;
-    dst_attr.policy.usage = psa_get_key_usage_flags(&src_attr) &
-                            psa_get_key_usage_flags(&dst_attr);
-    dst_attr.policy.alg = copy_alg;
-    dst_attr.policy.alg2 = copy_alg2;
-
-    XMEMCPY(&key_data_length, header + attr_length, sizeof(size_t));
-    status = wolfpsa_validate_stored_key_data_length(key_data_length);
-    if (status != PSA_SUCCESS) {
-        wolfPSA_Store_Close(store);
-        return status;
-    }
-    buffer = (uint8_t*)XMALLOC(key_data_length, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    if (buffer == NULL) {
-        wolfPSA_Store_Close(store);
-        return PSA_ERROR_INSUFFICIENT_MEMORY;
-    }
-
-    ret = wolfPSA_Store_Read(store, buffer, (int)key_data_length);
-    wolfPSA_Store_Close(store);
-    store = NULL;
-    if (ret != (int)key_data_length) {
-        wolfpsa_forcezero_free_key_data(buffer, key_data_length);
-        return PSA_ERROR_STORAGE_FAILURE;
-    }
-
-    /* Import the key with new attributes */
-    status = psa_import_key(&dst_attr, buffer, key_data_length, target_key);
-
-    wolfpsa_forcezero_free_key_data(buffer, key_data_length);
-
     return status;
 }
 
