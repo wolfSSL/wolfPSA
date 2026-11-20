@@ -109,6 +109,17 @@ static int MbedDerRaw(unsigned char* der, word32* idx, word32 end,
     return ret;
 }
 
+/* As MbedDerItem, for the tag tag, ending at end if last, else err */
+static int MbedDerTag(unsigned char* der, word32* idx, word32 end, byte tag,
+    int last, int err, mbedtls_x509_buf* buf)
+{
+    if (MbedDerItem(der, idx, end, buf) != 0 || buf->tag != tag ||
+            (last && *idx + buf->len != end)) {
+        return err;
+    }
+    return 0;
+}
+
 static void* MbedEntryNew(size_t size)
 {
     void* entry = XMALLOC(size, NULL, DYNAMIC_TYPE_X509);
@@ -161,6 +172,7 @@ static void MbedSeqFree(mbedtls_x509_sequence* seq)
 static void MbedCertFreeFields(mbedtls_x509_crt* crt)
 {
     XFREE(crt->raw.p, NULL, DYNAMIC_TYPE_CERT);
+    mbedtls_pk_free(&crt->pk);
     MbedNameFree(&crt->issuer);
     MbedNameFree(&crt->subject);
     MbedSeqFree(&crt->subject_alt_names);
@@ -180,6 +192,7 @@ static const byte mbedNameTags[] = {
 static int MbedNameParse(unsigned char* der, word32* idx, word32 end,
     mbedtls_x509_buf* raw, mbedtls_x509_name* name)
 {
+    const int err = MBEDTLS_ERR_X509_INVALID_NAME;
     mbedtls_x509_name* cur = NULL;
     mbedtls_x509_buf item;
     word32 i = *idx;
@@ -196,7 +209,8 @@ static int MbedNameParse(unsigned char* der, word32* idx, word32 end,
     }
     while (ret == 0 && i < nameEnd) {
         if (i >= setEnd) {
-            ret = MbedDerItem(der, &i, nameEnd, &item);
+            ret = MbedDerTag(der, &i, nameEnd, ASN_SET | ASN_CONSTRUCTED, 0,
+                err, &item);
             setStart = i;
             setEnd = i + (word32)item.len;
         }
@@ -212,21 +226,22 @@ static int MbedNameParse(unsigned char* der, word32* idx, word32 end,
             }
         }
         if (ret == 0) {
-            ret = MbedDerItem(der, &i, setEnd, &item);
+            ret = MbedDerTag(der, &i, setEnd, ASN_SEQUENCE | ASN_CONSTRUCTED, 0,
+                err, &item);
             attrEnd = i + (word32)item.len;
         }
         if (ret == 0) {
-            ret = MbedDerItem(der, &i, attrEnd, &cur->oid);
+            ret = MbedDerTag(der, &i, attrEnd, ASN_OBJECT_ID, 0, err,
+                &cur->oid);
             i += (word32)cur->oid.len;
         }
-        if (ret == 0) {
-            ret = MbedDerItem(der, &i, attrEnd, &cur->val);
-            i = attrEnd;
+        if (ret == 0 && (MbedDerItem(der, &i, attrEnd, &cur->val) != 0 ||
+                i + (word32)cur->val.len != attrEnd ||
+                !MbedByteIn((byte)cur->val.tag, mbedNameTags,
+                sizeof(mbedNameTags)))) {
+            ret = err;
         }
-        if (ret == 0 && !MbedByteIn((byte)cur->val.tag, mbedNameTags,
-                sizeof(mbedNameTags))) {
-            ret = MBEDTLS_ERR_X509_INVALID_NAME;
-        }
+        i = attrEnd;
     }
     return ret;
 }
@@ -313,6 +328,12 @@ static int MbedAuthKeyIdParse(unsigned char* der, word32 idx, word32 end,
 
 #define MBED_OID(s) (const byte*)(s), (word32)(sizeof(s) - 1)
 
+typedef struct {
+    const byte* oid;
+    word32 len;
+    const char* name;
+} MbedOidName;
+
 /* The extensions Mbed TLS reports in ext_types */
 static const struct {
     const byte* oid;
@@ -334,6 +355,143 @@ static int MbedOidIs(const mbedtls_x509_buf* oid, const byte* want,
     word32 len)
 {
     return oid->len == len && XMEMCMP(oid->p, want, len) == 0;
+}
+
+/* The name of oid in the n entries at names, or NULL */
+static const char* MbedOidFind(const MbedOidName* names, size_t n,
+    const mbedtls_x509_buf* oid)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        if (MbedOidIs(oid, names[i].oid, names[i].len)) {
+            return names[i].name;
+        }
+    }
+    return NULL;
+}
+
+#define MBED_OID_FIND(names, oid) MbedOidFind(names, XELEM_CNT(names), oid)
+
+/* A HardwareModuleName otherName, the only one Mbed TLS reads */
+static int MbedHwModuleName(const mbedtls_x509_buf* san,
+    mbedtls_x509_buf* hwType, mbedtls_x509_buf* hwSerial)
+{
+    const int err = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
+    unsigned char* der = san->p;
+    mbedtls_x509_buf item;
+    word32 idx = 0;
+    word32 end = (word32)san->len;
+    int ret;
+
+    ret = MbedDerTag(der, &idx, end, ASN_OBJECT_ID, 0, err, &item);
+    if (ret == 0 && !MbedOidIs(&item,
+            MBED_OID("\x2B\x06\x01\x05\x05\x07\x08\x04"))) {
+        ret = MBEDTLS_ERR_X509_FEATURE_UNAVAILABLE;
+    }
+    if (ret == 0) {
+        idx += (word32)item.len;
+        ret = MbedDerTag(der, &idx, end, ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED,
+            1, err, &item);
+    }
+    if (ret == 0) {
+        ret = MbedDerTag(der, &idx, end, ASN_SEQUENCE | ASN_CONSTRUCTED, 1,
+            err, &item);
+    }
+    if (ret == 0) {
+        ret = MbedDerTag(der, &idx, end, ASN_OBJECT_ID, 0, err, hwType);
+    }
+    if (ret == 0) {
+        idx += (word32)hwType->len;
+        ret = MbedDerTag(der, &idx, end, ASN_OCTET_STRING, 1, err, hwSerial);
+    }
+    return ret;
+}
+
+/* The Name in a directoryName. Free name with MbedNameFree(). */
+static int MbedSanName(const mbedtls_x509_buf* san, mbedtls_x509_name* name)
+{
+    mbedtls_x509_buf raw;
+    word32 idx = 0;
+    int ret = MBEDTLS_ERR_X509_INVALID_NAME;
+
+    if (san->len > 0 && san->p[0] == (ASN_SEQUENCE | ASN_CONSTRUCTED)) {
+        ret = MbedNameParse(san->p, &idx, (word32)san->len, &raw, name);
+    }
+    if ((ret == 0 && name->oid.p == NULL) ||
+            (ret != 0 && ret != MBEDTLS_ERR_X509_ALLOC_FAILED)) {
+        ret = MBEDTLS_ERR_X509_INVALID_NAME;
+    }
+    return ret;
+}
+
+/* The GeneralName tag number, or -1 if not context specific */
+static int MbedSanType(const mbedtls_x509_buf* san)
+{
+    if ((san->tag & MBEDTLS_ASN1_TAG_CLASS_MASK) !=
+            MBEDTLS_ASN1_CONTEXT_SPECIFIC) {
+        return -1;
+    }
+    return san->tag & MBEDTLS_ASN1_TAG_VALUE_MASK;
+}
+
+/* Reads a SAN as Mbed TLS does, FEATURE_UNAVAILABLE for types it skips */
+static int MbedSanParse(const mbedtls_x509_buf* san, mbedtls_x509_buf* hwType,
+    mbedtls_x509_buf* hwSerial, mbedtls_x509_name* name)
+{
+    int ret = 0;
+
+    XMEMSET(hwType, 0, sizeof(*hwType));
+    XMEMSET(hwSerial, 0, sizeof(*hwSerial));
+    XMEMSET(name, 0, sizeof(*name));
+    switch (MbedSanType(san)) {
+        case MBEDTLS_X509_SAN_OTHER_NAME:
+            ret = MbedHwModuleName(san, hwType, hwSerial);
+            break;
+        case MBEDTLS_X509_SAN_IP_ADDRESS:
+            if (san->len != 4 && san->len != 16) {
+                ret = MBEDTLS_ERR_X509_BAD_INPUT_DATA;
+            }
+            break;
+        case MBEDTLS_X509_SAN_DIRECTORY_NAME:
+            ret = MbedSanName(san, name);
+            break;
+        case MBEDTLS_X509_SAN_RFC822_NAME:
+        case MBEDTLS_X509_SAN_DNS_NAME:
+        case MBEDTLS_X509_SAN_UNIFORM_RESOURCE_IDENTIFIER:
+            break;
+        default:
+            ret = MBEDTLS_ERR_X509_FEATURE_UNAVAILABLE;
+            break;
+    }
+    return ret;
+}
+
+/* Subject alternative names at idx, checked as Mbed TLS checks them */
+static int MbedSanSeqParse(mbedtls_x509_crt* crt, unsigned char* der,
+    word32 idx, word32 end)
+{
+    const mbedtls_x509_sequence* cur;
+    mbedtls_x509_buf hwType;
+    mbedtls_x509_buf hwSerial;
+    mbedtls_x509_name name;
+    int ret;
+
+    ret = MbedSeqParse(der, idx, end, &crt->subject_alt_names, 0);
+    for (cur = &crt->subject_alt_names; ret == 0 && cur != NULL &&
+            cur->buf.p != NULL; cur = cur->next) {
+        if (MbedSanType(&cur->buf) < 0) {
+            ret = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
+        }
+        else {
+            ret = MbedSanParse(&cur->buf, &hwType, &hwSerial, &name);
+            MbedNameFree(&name);
+        }
+        if (ret == MBEDTLS_ERR_X509_FEATURE_UNAVAILABLE) {
+            ret = 0;
+        }
+    }
+    return ret;
 }
 
 /* Extensions at idx. Scalar values come from wolfCrypt's decode. */
@@ -374,7 +532,7 @@ static int MbedExtParse(mbedtls_x509_crt* crt, unsigned char* der,
             ret = MBEDTLS_ERR_X509_INVALID_EXTENSIONS;
         }
         else if (type == MBEDTLS_X509_EXT_SUBJECT_ALT_NAME) {
-            ret = MbedSeqParse(der, idx, extEnd, &crt->subject_alt_names, 0);
+            ret = MbedSanSeqParse(crt, der, idx, extEnd);
         }
         else if (type == MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE) {
             ret = MbedSeqParse(der, idx, extEnd, &crt->ext_key_usage,
@@ -536,6 +694,16 @@ static int MbedCertFields(mbedtls_x509_crt* crt, const DecodedCert* cert)
     }
     if (ret == 0) {
         ret = MbedDerRaw(der, &idx, end, &crt->pk_raw);
+    }
+    if (ret == 0) {
+        ret = mbedtls_pk_parse_public_key(&crt->pk, crt->pk_raw.p,
+            crt->pk_raw.len);
+        /* A key pk cannot hold, such as Ed25519, leaves pk empty */
+        if (ret == MBEDTLS_ERR_PK_KEY_INVALID_FORMAT ||
+                ret == MBEDTLS_ERR_PK_UNKNOWN_PK_ALG ||
+                ret == MBEDTLS_ERR_PK_UNKNOWN_NAMED_CURVE) {
+            ret = 0;
+        }
     }
     while (ret == 0 && idx < end) {
         ret = MbedDerItem(der, &idx, end, &item);
@@ -844,11 +1012,7 @@ static int MbedAdvance(int ret, char** p, size_t* n)
 }
 
 /* The attributes Mbed TLS prints by short name */
-static const struct {
-    const byte* oid;
-    word32 len;
-    const char* name;
-} mbedAttrs[] = {
+static const MbedOidName mbedAttrs[] = {
     { MBED_OID("\x55\x04\x03"), "CN" },
     { MBED_OID("\x55\x04\x06"), "C" },
     { MBED_OID("\x55\x04\x07"), "L" },
@@ -870,18 +1034,6 @@ static const struct {
     { MBED_OID("\x09\x92\x26\x89\x93\xF2\x2C\x64\x01\x19"), "DC" },
     { MBED_OID("\x55\x04\x2D"), "uniqueIdentifier" }
 };
-
-static const char* MbedAttrName(const mbedtls_x509_buf* oid)
-{
-    size_t i;
-
-    for (i = 0; i < sizeof(mbedAttrs) / sizeof(mbedAttrs[0]); i++) {
-        if (MbedOidIs(oid, mbedAttrs[i].oid, mbedAttrs[i].len)) {
-            return mbedAttrs[i].name;
-        }
-    }
-    return NULL;
-}
 
 /* Appends oid in dotted decimal form. Nothing is appended on error. */
 static int MbedOidPrint(char** p, size_t* n, const mbedtls_x509_buf* oid)
@@ -1018,7 +1170,7 @@ int mbedtls_x509_dn_gets(char* buf, size_t size, const mbedtls_x509_name* dn)
         hex = name->val.tag != MBEDTLS_ASN1_UTF8_STRING &&
             name->val.tag != MBEDTLS_ASN1_PRINTABLE_STRING &&
             name->val.tag != MBEDTLS_ASN1_IA5_STRING;
-        shortName = MbedAttrName(&name->oid);
+        shortName = MBED_OID_FIND(mbedAttrs, &name->oid);
         if (ret == 0 && shortName != NULL) {
             ret = MbedAdvance(XSNPRINTF(p, n, "%s=", shortName), &p, &n);
         }
@@ -1174,6 +1326,376 @@ int mbedtls_x509_crt_check_extended_key_usage(const mbedtls_x509_crt* crt,
     }
     return MBEDTLS_ERR_X509_BAD_INPUT_DATA;
 }
+
+#if !defined(MBEDTLS_X509_REMOVE_INFO)
+/* The signature algorithms Mbed TLS names */
+static const MbedOidName mbedSigAlgs[] = {
+    { MBED_OID("\x2A\x86\x48\x86\xF7\x0D\x01\x01\x04"), "RSA with MD5" },
+    { MBED_OID("\x2A\x86\x48\x86\xF7\x0D\x01\x01\x05"), "RSA with SHA1" },
+    { MBED_OID("\x2A\x86\x48\x86\xF7\x0D\x01\x01\x0E"), "RSA with SHA-224" },
+    { MBED_OID("\x2A\x86\x48\x86\xF7\x0D\x01\x01\x0B"), "RSA with SHA-256" },
+    { MBED_OID("\x2A\x86\x48\x86\xF7\x0D\x01\x01\x0C"), "RSA with SHA-384" },
+    { MBED_OID("\x2A\x86\x48\x86\xF7\x0D\x01\x01\x0D"), "RSA with SHA-512" },
+    { MBED_OID("\x2B\x0E\x03\x02\x1D"), "RSA with SHA1" },
+    { MBED_OID("\x2A\x86\x48\xCE\x3D\x04\x01"), "ECDSA with SHA1" },
+    { MBED_OID("\x2A\x86\x48\xCE\x3D\x04\x03\x01"), "ECDSA with SHA224" },
+    { MBED_OID("\x2A\x86\x48\xCE\x3D\x04\x03\x02"), "ECDSA with SHA256" },
+    { MBED_OID("\x2A\x86\x48\xCE\x3D\x04\x03\x03"), "ECDSA with SHA384" },
+    { MBED_OID("\x2A\x86\x48\xCE\x3D\x04\x03\x04"), "ECDSA with SHA512" },
+    { MBED_OID("\x2A\x86\x48\x86\xF7\x0D\x01\x01\x0A"), "RSASSA-PSS" }
+};
+
+static const MbedOidName mbedExtKeyUsages[] = {
+    { MBED_OID("\x2B\x06\x01\x05\x05\x07\x03\x01"),
+        "TLS Web Server Authentication" },
+    { MBED_OID("\x2B\x06\x01\x05\x05\x07\x03\x02"),
+        "TLS Web Client Authentication" },
+    { MBED_OID("\x2B\x06\x01\x05\x05\x07\x03\x03"), "Code Signing" },
+    { MBED_OID("\x2B\x06\x01\x05\x05\x07\x03\x04"), "E-mail Protection" },
+    { MBED_OID("\x2B\x06\x01\x05\x05\x07\x03\x08"), "Time Stamping" },
+    { MBED_OID("\x2B\x06\x01\x05\x05\x07\x03\x09"), "OCSP Signing" },
+    { MBED_OID("\x2B\x06\x01\x04\x01\x82\xE4\x25\x01"),
+        "Wi-SUN Alliance Field Area Network (FAN)" }
+};
+
+static const MbedOidName mbedPolicies[] = {
+    { MBED_OID("\x55\x1D\x20\x00"), "Any Policy" }
+};
+
+typedef struct {
+    word32 flag;
+    const char* name;
+} MbedFlagName;
+
+static const MbedFlagName mbedCertTypes[] = {
+    { MBEDTLS_X509_NS_CERT_TYPE_SSL_CLIENT, "SSL Client" },
+    { MBEDTLS_X509_NS_CERT_TYPE_SSL_SERVER, "SSL Server" },
+    { MBEDTLS_X509_NS_CERT_TYPE_EMAIL, "Email" },
+    { MBEDTLS_X509_NS_CERT_TYPE_OBJECT_SIGNING, "Object Signing" },
+    { MBEDTLS_X509_NS_CERT_TYPE_RESERVED, "Reserved" },
+    { MBEDTLS_X509_NS_CERT_TYPE_SSL_CA, "SSL CA" },
+    { MBEDTLS_X509_NS_CERT_TYPE_EMAIL_CA, "Email CA" },
+    { MBEDTLS_X509_NS_CERT_TYPE_OBJECT_SIGNING_CA, "Object Signing CA" }
+};
+
+static const MbedFlagName mbedKeyUsages[] = {
+    { MBEDTLS_X509_KU_DIGITAL_SIGNATURE, "Digital Signature" },
+    { MBEDTLS_X509_KU_NON_REPUDIATION, "Non Repudiation" },
+    { MBEDTLS_X509_KU_KEY_ENCIPHERMENT, "Key Encipherment" },
+    { MBEDTLS_X509_KU_DATA_ENCIPHERMENT, "Data Encipherment" },
+    { MBEDTLS_X509_KU_KEY_AGREEMENT, "Key Agreement" },
+    { MBEDTLS_X509_KU_KEY_CERT_SIGN, "Key Cert Sign" },
+    { MBEDTLS_X509_KU_CRL_SIGN, "CRL Sign" },
+    { MBEDTLS_X509_KU_ENCIPHER_ONLY, "Encipher Only" },
+    { MBEDTLS_X509_KU_DECIPHER_ONLY, "Decipher Only" }
+};
+
+#define X509_CRT_ERROR_INFO(code, name, text) { (code), (text) },
+static const MbedFlagName mbedVerifyInfo[] = {
+    MBEDTLS_X509_CRT_ERROR_INFO_LIST
+};
+#undef X509_CRT_ERROR_INFO
+
+/* The names of the flags set, comma separated */
+static int MbedInfoFlags(char** p, size_t* n, word32 flags,
+    const MbedFlagName* names, size_t count)
+{
+    const char* sep = "";
+    size_t i;
+    int ret = 0;
+
+    for (i = 0; ret == 0 && i < count; i++) {
+        if ((flags & names[i].flag) != 0) {
+            ret = MbedAdvance(XSNPRINTF(*p, *n, "%s%s", sep, names[i].name),
+                p, n);
+            sep = ", ";
+        }
+    }
+    return ret;
+}
+
+/* The names of the OIDs in seq, comma separated, "???" when unknown */
+static int MbedInfoOids(char** p, size_t* n, const mbedtls_x509_sequence* seq,
+    const MbedOidName* names, size_t count)
+{
+    const char* sep = "";
+    const char* name;
+    int ret = 0;
+
+    for (; ret == 0 && seq != NULL; seq = seq->next) {
+        name = MbedOidFind(names, count, &seq->buf);
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "%s%s", sep,
+            (name != NULL) ? name : "???"), p, n);
+        sep = ", ";
+    }
+    return ret;
+}
+
+static int MbedInfoHwModuleName(char** p, size_t* n, const char* prefix,
+    const mbedtls_x509_buf* hwType, const mbedtls_x509_buf* hwSerial)
+{
+    size_t i;
+    int ret;
+
+    ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%s        hardware module name :"
+        "\n%s            hardware type          : ", prefix, prefix), p, n);
+    if (ret == 0 && MbedOidPrint(p, n, hwType) != 0) {
+        ret = MBEDTLS_ERR_X509_BUFFER_TOO_SMALL;
+    }
+    if (ret == 0) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n,
+            "\n%s            hardware serial number : ", prefix), p, n);
+    }
+    for (i = 0; ret == 0 && i < hwSerial->len; i++) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "%02X",
+            (unsigned int)hwSerial->p[i]), p, n);
+    }
+    return ret;
+}
+
+/* IPv4 in dotted decimal, IPv6 as eight hex groups without leading zeros */
+static int MbedInfoIp(char** p, size_t* n, const mbedtls_x509_buf* ip)
+{
+    size_t i;
+    int ret = 0;
+
+    for (i = 0; ret == 0 && i < ip->len; i++) {
+        if (ip->len == 4) {
+            ret = MbedAdvance(XSNPRINTF(*p, *n, "%s%u", (i > 0) ? "." : "",
+                (unsigned int)ip->p[i]), p, n);
+        }
+        else if (i % 2 == 0) {
+            ret = MbedAdvance(XSNPRINTF(*p, *n, "%s%X", (i > 0) ? ":" : "",
+                ((unsigned int)ip->p[i] << 8) | ip->p[i + 1]), p, n);
+        }
+    }
+    return ret;
+}
+
+/* The names Mbed TLS prints, by GeneralName tag */
+static const char* const mbedSanNames[] = {
+    "otherName", "rfc822Name", "dNSName", NULL, "directoryName", NULL,
+    "uniformResourceIdentifier", "iPAddress"
+};
+
+/* One subject alternative name, as Mbed TLS prints it */
+static int MbedInfoSan(char** p, size_t* n, const char* prefix,
+    const mbedtls_x509_buf* san)
+{
+    mbedtls_x509_buf hwType;
+    mbedtls_x509_buf hwSerial;
+    mbedtls_x509_name name;
+    int type = MbedSanType(san);
+    int ret;
+
+    ret = MbedSanParse(san, &hwType, &hwSerial, &name);
+    if (ret == MBEDTLS_ERR_X509_FEATURE_UNAVAILABLE) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%s    <unsupported>", prefix),
+            p, n);
+    }
+    else if (ret != 0 && ret != MBEDTLS_ERR_X509_ALLOC_FAILED) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%s    <malformed>", prefix),
+            p, n);
+    }
+    else if (ret == 0) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%s    %s :%s", prefix,
+            mbedSanNames[type],
+            (type == MBEDTLS_X509_SAN_OTHER_NAME) ? "" : " "), p, n);
+        if (ret == 0 && type == MBEDTLS_X509_SAN_OTHER_NAME) {
+            ret = MbedInfoHwModuleName(p, n, prefix, &hwType, &hwSerial);
+        }
+        else if (ret == 0 && type == MBEDTLS_X509_SAN_IP_ADDRESS) {
+            ret = MbedInfoIp(p, n, san);
+        }
+        else if (ret == 0 && type == MBEDTLS_X509_SAN_DIRECTORY_NAME) {
+            /* As Mbed TLS, an error from mbedtls_x509_dn_gets() as is */
+            ret = mbedtls_x509_dn_gets(*p, *n, &name);
+            if (ret >= 0) {
+                ret = MbedAdvance(ret, p, n);
+            }
+        }
+        else if (ret == 0 && san->len >= *n) {
+            ret = MBEDTLS_ERR_X509_BUFFER_TOO_SMALL;
+        }
+        else if (ret == 0) {
+            /* The bytes as they are, as Mbed TLS */
+            XMEMCPY(*p, san->p, san->len);
+            *p += san->len;
+            *n -= san->len;
+        }
+    }
+    MbedNameFree(&name);
+    return ret;
+}
+
+/* As Mbed TLS's mbedtls_x509_pk_type_as_string() */
+static const char* MbedPkTypeName(const mbedtls_pk_context* pk)
+{
+    switch (pk->type) {
+        case PK_TYPE_RSA:
+        case PK_TYPE_RSA_PUBLIC:
+            return "RSA";
+        case PK_TYPE_ECC:
+        case PK_TYPE_ECC_PUBLIC:
+        case PK_TYPE_MONTGOMERY_PUBLIC:
+            return "EC";
+        default:
+            return "NONE";
+    }
+}
+
+static int MbedInfoTime(char** p, size_t* n, const char* prefix,
+    const char* label, const mbedtls_x509_time* t)
+{
+    return MbedAdvance(XSNPRINTF(*p, *n,
+        "\n%s%s: %04d-%02d-%02d %02d:%02d:%02d", prefix, label, t->year,
+        t->mon, t->day, t->hour, t->min, t->sec), p, n);
+}
+
+/* Mbed TLS pads the key size label to this width */
+#define MBED_INFO_KEY_WIDTH 18
+
+static int MbedInfoCert(char** p, size_t* n, const char* prefix,
+    const mbedtls_x509_crt* crt)
+{
+    const char* sigAlg = MBED_OID_FIND(mbedSigAlgs, &crt->sig_oid);
+    const mbedtls_x509_sequence* san;
+    char keySize[MBED_INFO_KEY_WIDTH];
+    int ret;
+
+    ret = MbedAdvance(XSNPRINTF(*p, *n, "%scert. version     : %d\n"
+        "%sserial number     : ", prefix, crt->version, prefix), p, n);
+    if (ret == 0) {
+        ret = MbedAdvance(mbedtls_x509_serial_gets(*p, *n, &crt->serial), p,
+            n);
+    }
+    if (ret == 0) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%sissuer name       : ",
+            prefix), p, n);
+    }
+    if (ret == 0) {
+        ret = MbedAdvance(mbedtls_x509_dn_gets(*p, *n, &crt->issuer), p, n);
+    }
+    if (ret == 0) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%ssubject name      : ",
+            prefix), p, n);
+    }
+    if (ret == 0) {
+        ret = MbedAdvance(mbedtls_x509_dn_gets(*p, *n, &crt->subject), p, n);
+    }
+    if (ret == 0) {
+        ret = MbedInfoTime(p, n, prefix, "issued  on        ",
+            &crt->valid_from);
+    }
+    if (ret == 0) {
+        ret = MbedInfoTime(p, n, prefix, "expires on        ",
+            &crt->valid_to);
+    }
+    if (ret == 0) {
+        (void)XSNPRINTF(keySize, sizeof(keySize), "%s key size",
+            MbedPkTypeName(&crt->pk));
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%ssigned using      : %s"
+            "\n%s%-*s: %d bits", prefix, (sigAlg != NULL) ? sigAlg : "???",
+            prefix, MBED_INFO_KEY_WIDTH, keySize,
+            (int)mbedtls_pk_get_bitlen(&crt->pk)), p, n);
+    }
+    if (ret == 0 && (crt->ext_types & MBEDTLS_X509_EXT_BASIC_CONSTRAINTS)) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%sbasic constraints : CA=%s",
+            prefix, crt->ca_istrue ? "true" : "false"), p, n);
+        if (ret == 0 && crt->max_pathlen > 0) {
+            ret = MbedAdvance(XSNPRINTF(*p, *n, ", max_pathlen=%d",
+                crt->max_pathlen - 1), p, n);
+        }
+    }
+    if (ret == 0 && (crt->ext_types & MBEDTLS_X509_EXT_SUBJECT_ALT_NAME)) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%ssubject alt name  :",
+            prefix), p, n);
+        for (san = &crt->subject_alt_names; ret == 0 && san != NULL;
+                san = san->next) {
+            ret = MbedInfoSan(p, n, prefix, &san->buf);
+        }
+    }
+    if (ret == 0 && (crt->ext_types & MBEDTLS_X509_EXT_NS_CERT_TYPE)) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%scert. type        : ",
+            prefix), p, n);
+        if (ret == 0) {
+            ret = MbedInfoFlags(p, n, crt->ns_cert_type, mbedCertTypes,
+                XELEM_CNT(mbedCertTypes));
+        }
+    }
+    if (ret == 0 && (crt->ext_types & MBEDTLS_X509_EXT_KEY_USAGE)) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%skey usage         : ",
+            prefix), p, n);
+        if (ret == 0) {
+            ret = MbedInfoFlags(p, n, crt->key_usage, mbedKeyUsages,
+                XELEM_CNT(mbedKeyUsages));
+        }
+    }
+    if (ret == 0 && (crt->ext_types & MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE)) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%sext key usage     : ",
+            prefix), p, n);
+        if (ret == 0) {
+            ret = MbedInfoOids(p, n, &crt->ext_key_usage, mbedExtKeyUsages,
+                XELEM_CNT(mbedExtKeyUsages));
+        }
+    }
+    if (ret == 0 &&
+            (crt->ext_types & MBEDTLS_X509_EXT_CERTIFICATE_POLICIES)) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n%scertificate policies : ",
+            prefix), p, n);
+        if (ret == 0) {
+            ret = MbedInfoOids(p, n, &crt->certificate_policies,
+                mbedPolicies, XELEM_CNT(mbedPolicies));
+        }
+    }
+    if (ret == 0) {
+        ret = MbedAdvance(XSNPRINTF(*p, *n, "\n"), p, n);
+    }
+    return ret;
+}
+
+int mbedtls_x509_crt_info(char* buf, size_t size, const char* prefix,
+    const mbedtls_x509_crt* crt)
+{
+    char* p = buf;
+    size_t n = size;
+    int ret;
+
+    if (crt == NULL) {
+        ret = MbedAdvance(XSNPRINTF(p, n, "\nCertificate is uninitialised!\n"),
+            &p, &n);
+    }
+    else {
+        ret = MbedInfoCert(&p, &n, prefix, crt);
+    }
+    return (ret == 0) ? (int)(size - n) : ret;
+}
+
+int mbedtls_x509_crt_verify_info(char* buf, size_t size, const char* prefix,
+    uint32_t flags)
+{
+    char* p = buf;
+    size_t n = size;
+    size_t i;
+    int ret = 0;
+
+    if (size > 0) {
+        buf[0] = '\0';
+    }
+    for (i = 0; ret == 0 && i < XELEM_CNT(mbedVerifyInfo); i++) {
+        if ((flags & mbedVerifyInfo[i].flag) != 0) {
+            ret = MbedAdvance(XSNPRINTF(p, n, "%s%s\n", prefix,
+                mbedVerifyInfo[i].name), &p, &n);
+            flags &= ~(uint32_t)mbedVerifyInfo[i].flag;
+        }
+    }
+    if (ret == 0 && flags != 0) {
+        ret = MbedAdvance(XSNPRINTF(p, n,
+            "%sUnknown reason (this should not happen)\n", prefix), &p, &n);
+    }
+    return (ret == 0) ? (int)(size - n) : ret;
+}
+#endif /* !MBEDTLS_X509_REMOVE_INFO */
 
 /* Opaque, so applications cannot define their own. C needs a member. */
 struct mbedtls_x509_crt_profile {

@@ -26,6 +26,7 @@
 #include "mbedtls/x509.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
     extern "C" {
@@ -53,6 +54,7 @@ typedef struct mbedtls_x509_crt {
     mbedtls_x509_time valid_to;
 
     mbedtls_x509_buf pk_raw;
+    mbedtls_pk_context pk;
 
     mbedtls_x509_buf issuer_id;
     mbedtls_x509_buf subject_id;
@@ -73,6 +75,74 @@ typedef struct mbedtls_x509_crt {
 } mbedtls_x509_crt;
 
 typedef struct mbedtls_x509_crl mbedtls_x509_crl;
+
+/* X509_CRT_ERROR_INFO(code, name, text) for each verify flag */
+#define MBEDTLS_X509_CRT_ERROR_INFO_LIST \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_EXPIRED, \
+        "MBEDTLS_X509_BADCERT_EXPIRED", \
+        "The certificate validity has expired") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_REVOKED, \
+        "MBEDTLS_X509_BADCERT_REVOKED", \
+        "The certificate has been revoked (is on a CRL)") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_CN_MISMATCH, \
+        "MBEDTLS_X509_BADCERT_CN_MISMATCH", \
+        "The certificate Common Name (CN) does not match with the " \
+        "expected CN") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_NOT_TRUSTED, \
+        "MBEDTLS_X509_BADCERT_NOT_TRUSTED", \
+        "The certificate is not correctly signed by the trusted CA") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCRL_NOT_TRUSTED, \
+        "MBEDTLS_X509_BADCRL_NOT_TRUSTED", \
+        "The CRL is not correctly signed by the trusted CA") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCRL_EXPIRED, \
+        "MBEDTLS_X509_BADCRL_EXPIRED", \
+        "The CRL is expired") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_MISSING, \
+        "MBEDTLS_X509_BADCERT_MISSING", \
+        "Certificate was missing") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_SKIP_VERIFY, \
+        "MBEDTLS_X509_BADCERT_SKIP_VERIFY", \
+        "Certificate verification was skipped") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_OTHER, \
+        "MBEDTLS_X509_BADCERT_OTHER", \
+        "Other reason (can be used by verify callback)") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_FUTURE, \
+        "MBEDTLS_X509_BADCERT_FUTURE", \
+        "The certificate validity starts in the future") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCRL_FUTURE, \
+        "MBEDTLS_X509_BADCRL_FUTURE", \
+        "The CRL is from the future") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_KEY_USAGE, \
+        "MBEDTLS_X509_BADCERT_KEY_USAGE", \
+        "Usage does not match the keyUsage extension") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_EXT_KEY_USAGE, \
+        "MBEDTLS_X509_BADCERT_EXT_KEY_USAGE", \
+        "Usage does not match the extendedKeyUsage extension") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_NS_CERT_TYPE, \
+        "MBEDTLS_X509_BADCERT_NS_CERT_TYPE", \
+        "Usage does not match the nsCertType extension") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_BAD_MD, \
+        "MBEDTLS_X509_BADCERT_BAD_MD", \
+        "The certificate is signed with an unacceptable hash.") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_BAD_PK, \
+        "MBEDTLS_X509_BADCERT_BAD_PK", \
+        "The certificate is signed with an unacceptable PK alg (eg RSA " \
+        "vs ECDSA).") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCERT_BAD_KEY, \
+        "MBEDTLS_X509_BADCERT_BAD_KEY", \
+        "The certificate is signed with an unacceptable key (eg bad " \
+        "curve, RSA too short).") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCRL_BAD_MD, \
+        "MBEDTLS_X509_BADCRL_BAD_MD", \
+        "The CRL is signed with an unacceptable hash.") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCRL_BAD_PK, \
+        "MBEDTLS_X509_BADCRL_BAD_PK", \
+        "The CRL is signed with an unacceptable PK alg (eg RSA vs " \
+        "ECDSA).") \
+    X509_CRT_ERROR_INFO(MBEDTLS_X509_BADCRL_BAD_KEY, \
+        "MBEDTLS_X509_BADCRL_BAD_KEY", \
+        "The CRL is signed with an unacceptable key (eg bad curve, RSA " \
+        "too short).")
 
 /* Opaque, so no custom profiles. Not applied: wolfSSL's own limits hold. */
 typedef struct mbedtls_x509_crt_profile mbedtls_x509_crt_profile;
@@ -97,6 +167,12 @@ int mbedtls_x509_crt_check_key_usage(const mbedtls_x509_crt* crt,
     unsigned int usage);
 int mbedtls_x509_crt_check_extended_key_usage(const mbedtls_x509_crt* crt,
     const char* usage_oid, size_t usage_len);
+#if !defined(MBEDTLS_X509_REMOVE_INFO)
+int mbedtls_x509_crt_info(char* buf, size_t size, const char* prefix,
+    const mbedtls_x509_crt* crt);
+int mbedtls_x509_crt_verify_info(char* buf, size_t size, const char* prefix,
+    uint32_t flags);
+#endif /* !MBEDTLS_X509_REMOVE_INFO */
 #endif /* MBEDTLS_X509_CRT_PARSE_C */
 
 static inline int mbedtls_x509_crt_has_ext_type(const mbedtls_x509_crt* ctx,

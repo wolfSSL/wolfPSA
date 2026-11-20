@@ -67,8 +67,8 @@ TLS:
 X.509:
 
 - `mbedtls_x509_crt_*`: init, free, parse, parse_der, parse_file,
-  parse_path, get_ca_istrue, check_key_usage, check_extended_key_usage,
-  has_ext_type
+  parse_path, info, verify_info, get_ca_istrue, check_key_usage,
+  check_extended_key_usage, has_ext_type
 - `mbedtls_x509_*`: dn_gets, dn_get_next, serial_gets, time_is_past,
   time_is_future
 - `mbedtls_x509_crt_profile_default`, `_next` and `_suiteb`, as names only
@@ -113,7 +113,6 @@ TLS:
 
 X.509:
 
-- `mbedtls_x509_crt_info` and `mbedtls_x509_crt_verify_info`
 - `mbedtls_x509_crt_verify`
 - CRL and CSR parsing (`mbedtls/x509_crl.h`, `mbedtls/x509_csr.h`)
 
@@ -222,10 +221,19 @@ Certificate verification:
 
 X.509:
 
-- `mbedtls_x509_crt` has the parsed fields, but not `pk`. A certificate
-  that wolfCrypt rejects returns
-  `MBEDTLS_ERR_X509_INVALID_FORMAT`, where Mbed TLS often returns a more
-  specific error.
+- `mbedtls_x509_crt` has the public fields. A certificate whose key
+  `mbedtls_pk_parse_public_key` does not accept returns an empty `pk`,
+  where Mbed TLS rejects it. This includes Ed25519, Ed448, ML-DSA and
+  RSA-PSS keys, EC keys on a curve the PSA engine does not have, and RSA
+  or EC keys that pk does not decode. pk calls on it fail, and
+  `mbedtls_x509_crt_info` shows `NONE key size`. A certificate that
+  wolfCrypt rejects returns `MBEDTLS_ERR_X509_INVALID_FORMAT`, where
+  Mbed TLS often returns a more specific error.
+- `mbedtls_x509_crt_info` does not name the hash of an RSASSA-PSS
+  signature, as Mbed TLS without `MBEDTLS_X509_RSASSA_PSS_SUPPORT`.
+- `mbedtls_x509_crt_info` prints each IPv6 group as one 16-bit value, such
+  as `2001:DB8:0:0:0:0:0:1`. Mbed TLS prints the two bytes of a group
+  without padding, as `201:DB8:00:00:00:00:00:01`.
 - With `NO_ASN_TIME`, `mbedtls_x509_time_is_past` and
   `mbedtls_x509_time_is_future` return 0, as Mbed TLS does without
   `MBEDTLS_HAVE_TIME_DATE`.
@@ -264,9 +272,10 @@ runs these against `libwolfpsa.a`. Each is also a target of its own;
 
 - `mbedtls-compat-unit`: `test/mbedtls_compat/error_test.c` checks
   `mbedtls_strerror`. `x509_crt_test.c`, `pk_test.c` and `pem_test.c` parse
-  Mbed TLS's test certificates and keys. `ssl_test.c` checks return codes,
-  verify results and the verify callbacks, client and server in one
-  process. `timing_test.c` checks the timers and `mbedtls_ms_time`.
+  Mbed TLS's test certificates and keys. `x509_crt_test.c` also runs the
+  `x509_cert_info` cases of Mbed TLS's x509parse suite. `ssl_test.c` checks
+  return codes, verify results and the verify callbacks, client and server
+  in one process. `timing_test.c` checks the timers and `mbedtls_ms_time`.
 - `mbedtls-compat-programs`: the Mbed TLS migration guide client
   (`test/mbedtls_compat/client-tls-mbedtls.c`) and Mbed TLS's sample
   programs, built unchanged. The clients run against the wolfSSL example

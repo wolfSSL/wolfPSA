@@ -647,6 +647,7 @@ static int Extensions(void)
         const char* what;
         const char* exts;
         int ret;
+        int alt;    /* also accepted, when wolfCrypt refuses it first */
     } bad[] = {
         { "policies twice, the second shorter",
             "30170603551D200410300E300506032A0304300506032A0305"
@@ -662,7 +663,28 @@ static int Extensions(void)
             MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
         { "authority cert issuer twice",
             "30190603551D2304123010A106820161820162A106820163820164",
-            ASN_ORIGINAL_RET(MBEDTLS_ERR_X509_INVALID_EXTENSIONS) }
+            ASN_ORIGINAL_RET(MBEDTLS_ERR_X509_INVALID_EXTENSIONS) },
+        { "subject alt name not context specific",
+            "300C0603551D11040530030C0161",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "hardware module name with data after the serial number",
+            "30220603551D11041B3019A01706082B06010505070804A00B3009"
+            "06012A040131020100",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "empty directoryName", "300D0603551D1104063004A4023000",
+            MBEDTLS_ERR_X509_INVALID_NAME },
+        { "directoryName with an RDN not a SET",
+            "30190603551D1104123010A40E300C300A300806035504030C0161",
+            MBEDTLS_ERR_X509_INVALID_NAME },
+        { "directoryName with data after an attribute value",
+            "301B0603551D1104143012A410300E310C300A06035504030C01610500",
+            MBEDTLS_ERR_X509_INVALID_NAME },
+        { "otherName with a truncated OID",
+            "300E0603551D1104073005A00306052B",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS,
+            MBEDTLS_ERR_X509_INVALID_FORMAT },
+        { "5 byte iPAddress", "30100603551D110409300787050102030405",
+            MBEDTLS_ERR_X509_INVALID_FORMAT }
     };
     mbedtls_x509_crt crt;
     const mbedtls_x509_sequence* cur;
@@ -670,6 +692,7 @@ static int Extensions(void)
     size_t i;
     int fails = 0;
     int n = 0;
+    int ret;
 
     mbedtls_x509_crt_init(&crt);
     if (mbedtls_x509_crt_parse_file(&crt,
@@ -723,8 +746,11 @@ static int Extensions(void)
 
     for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
         mbedtls_x509_crt_init(&crt);
-        fails += Expect(bad[i].what, ParseExts(&crt, bad[i].exts),
-            bad[i].ret);
+        ret = ParseExts(&crt, bad[i].exts);
+        if (bad[i].alt != 0 && ret == bad[i].alt) {
+            ret = bad[i].ret;
+        }
+        fails += Expect(bad[i].what, ret, bad[i].ret);
         mbedtls_x509_crt_free(&crt);
     }
     return fails;
@@ -931,6 +957,319 @@ static int TimeThreads(void)
 }
 #endif /* MBEDTLS_THREADING_C && !NO_ASN_TIME */
 
+#if !defined(MBEDTLS_X509_REMOVE_INFO)
+/* Mbed TLS's test data, from framework/data_files */
+#define X509PARSE_DATA "../../tests/suites/test_suite_x509parse.data"
+#define CERT_INFO "x509_cert_info:\"../framework/data_files/"
+#define INFO_PREFIX "  | "
+
+/* Removes the .data escapes from s, in place */
+static void Unescape(char* s)
+{
+    char* out = s;
+
+    for (; *s != '\0'; s++) {
+        if (*s == '\\' && s[1] != '\0') {
+            s++;
+            *out++ = (*s == 'n') ? '\n' : *s;
+        }
+        else {
+            *out++ = *s;
+        }
+    }
+    *out = '\0';
+}
+
+/* want, with INFO_PREFIX starting each line but the empty last one */
+static void Prefixed(char* out, size_t size, const char* want)
+{
+    size_t j = 0;
+    size_t i;
+
+    for (i = 0; want[i] != '\0' && j + sizeof(INFO_PREFIX) < size; i++) {
+        if (i == 0 || want[i - 1] == '\n') {
+            memcpy(out + j, INFO_PREFIX, sizeof(INFO_PREFIX) - 1);
+            j += sizeof(INFO_PREFIX) - 1;
+        }
+        out[j++] = want[i];
+    }
+    out[j] = '\0';
+}
+
+/* Each size up to the text's fails, then the text fits */
+static int InfoSizes(const mbedtls_x509_crt* crt, const char* file,
+    size_t len)
+{
+    char* buf;
+    size_t size;
+    int ret = MBEDTLS_ERR_X509_BUFFER_TOO_SMALL;
+
+    for (size = 1; size <= len + 1 &&
+            ret == MBEDTLS_ERR_X509_BUFFER_TOO_SMALL; size++) {
+        buf = (char*)malloc(size);
+        if (buf == NULL) {
+            printf("FAIL: %s: malloc\n", file);
+            return 1;
+        }
+        ret = mbedtls_x509_crt_info(buf, size, "", crt);
+        free(buf);
+    }
+    if (size != len + 2 || ret != (int)len) {
+        printf("FAIL: %s: size %zu returned %d\n", file, size - 1, ret);
+        return 1;
+    }
+    return 0;
+}
+
+/* One x509_cert_info case, with no prefix, then a prefix and each size */
+static int CertInfoCase(char* line)
+{
+    char buf[2000];
+    char want[2400];
+    char* file = line + sizeof(CERT_INFO) - 1;
+    char* text = strstr(file, "\":\"");
+    char* end = strrchr(line, '"');
+    mbedtls_x509_crt crt;
+    int fails = 0;
+    int ret;
+
+    if (text == NULL || end < text + 2) {
+        printf("FAIL: cannot read %s", line);
+        return 1;
+    }
+    *text = '\0';
+    text += 3;
+    *end = '\0';
+    Unescape(text);
+
+    mbedtls_x509_crt_init(&crt);
+    ret = mbedtls_x509_crt_parse_file(&crt, file);
+    if (ret == 0) {
+        ret = mbedtls_x509_crt_info(buf, sizeof(buf), "", &crt);
+    }
+    else if (ret > 0) {
+        /* Some of the file's certificates did not parse */
+        ret = ERR;
+    }
+    if (ret < 0) {
+        printf("FAIL: %s: returned %d\n", file, ret);
+        fails++;
+    }
+    else {
+        fails += ExpectStr(file, buf, text);
+        fails += Expect(file, ret, (int)strlen(text));
+        Prefixed(want, sizeof(want), text);
+        ret = mbedtls_x509_crt_info(buf, sizeof(buf), INFO_PREFIX, &crt);
+        if (ret < 0) {
+            buf[0] = '\0';
+        }
+        fails += ExpectStr(file, buf, want);
+        fails += InfoSizes(&crt, file, strlen(text));
+    }
+    mbedtls_x509_crt_free(&crt);
+    return fails;
+}
+
+/* Mbed TLS's x509_cert_info cases, read from its test data */
+static int CertInfo(void)
+{
+    char line[4096];
+    char buf[64];
+    FILE* f;
+    int skip = 0;
+    int cases = 0;
+    int fails = 0;
+
+    f = fopen(X509PARSE_DATA, "r");
+    if (f == NULL) {
+        printf("FAIL: opening %s\n", X509PARSE_DATA);
+        return 1;
+    }
+    while (fgets(line, sizeof(line), f) != NULL) {
+        if (strncmp(line, "depends_on:", 11) == 0) {
+            /* Without it, no hash after RSASSA-PSS */
+            skip = strstr(line, "MBEDTLS_X509_RSASSA_PSS_SUPPORT") != NULL;
+        }
+        else {
+            if (!skip && strncmp(line, CERT_INFO, sizeof(CERT_INFO) - 1) == 0) {
+                fails += CertInfoCase(line);
+                cases++;
+            }
+            skip = 0;
+        }
+    }
+    (void)fclose(f);
+    if (cases == 0) {
+        printf("FAIL: no x509_cert_info cases in %s\n", X509PARSE_DATA);
+        fails++;
+    }
+    printf("%s: %d x509_cert_info cases\n", fails == 0 ? "PASS" : "FAIL",
+        cases);
+
+    if (mbedtls_x509_crt_info(buf, sizeof(buf), "", NULL) < 0) {
+        buf[0] = '\0';
+    }
+    fails += ExpectStr("no certificate", buf,
+        "\nCertificate is uninitialised!\n");
+    return fails;
+}
+
+/* Subject alternative names not in Mbed TLS's x509_cert_info cases */
+static int SanInfo(void)
+{
+    /* A hardware module name OID and no value */
+    static unsigned char hwNoValue[] = {
+        0x06, 0x08, 0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x08, 0x04
+    };
+    static const struct {
+        const char* what;
+        const char* exts;
+        unsigned char* other;   /* replaces the first name, as an otherName */
+        const char* want;
+    } sans[] = {
+        { "registeredID", "300D0603551D110406300488022A03", NULL,
+            "<unsupported>" },
+        { "otherName of another type",
+            "30180603551D110411300FA00D06032A0304A0060C0461626364", NULL,
+            "<unsupported>" },
+        { "malformed otherName, which parsing refuses",
+            "300D0603551D110406300482026162", hwNoValue, "<malformed>" },
+        { "IPv6 with a low byte under 0x10",
+            "301B0603551D11041430128710" "20010DB8000000000000000000000001",
+            NULL, "iPAddress : 2001:DB8:0:0:0:0:0:1" }
+    };
+    mbedtls_x509_buf* first;
+    mbedtls_x509_crt crt;
+    char buf[1000];
+    char want[64];
+    size_t i;
+    int fails = 0;
+    int ret;
+
+    for (i = 0; i < sizeof(sans) / sizeof(sans[0]); i++) {
+        mbedtls_x509_crt_init(&crt);
+        ret = ParseExts(&crt, sans[i].exts);
+        first = &crt.subject_alt_names.buf;
+        if (ret == 0 && sans[i].other != NULL) {
+            first->tag = 0xA0;
+            first->p = sans[i].other;
+            first->len = sizeof(hwNoValue);
+        }
+        if (ret == 0) {
+            ret = mbedtls_x509_crt_info(buf, sizeof(buf), "", &crt);
+        }
+        (void)snprintf(want, sizeof(want), "subject alt name  :\n    %s\n",
+            sans[i].want);
+        if (ret < 0 || strstr(buf, want) == NULL) {
+            printf("FAIL: %s: returned %d, no \"%s\"\n", sans[i].what, ret,
+                sans[i].want);
+            fails++;
+        }
+        mbedtls_x509_crt_free(&crt);
+    }
+    return fails;
+}
+
+/* From Mbed TLS's x509_verify_info cases */
+static int VerifyInfo(void)
+{
+    static const struct {
+        uint32_t flags;
+        const char* prefix;
+        const char* want;
+    } infos[] = {
+        { 0, "", "" },
+        { MBEDTLS_X509_BADCERT_MISSING, "", "Certificate was missing\n" },
+        { MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCRL_EXPIRED, "",
+            "The certificate validity has expired\nThe CRL is expired\n" },
+        { MBEDTLS_X509_BADCERT_OTHER | 0x80000000, "",
+            "Other reason (can be used by verify callback)\n"
+            "Unknown reason (this should not happen)\n" },
+        { 0, "  ! ", "" },
+        { MBEDTLS_X509_BADCERT_MISSING, "  ! ",
+            "  ! Certificate was missing\n" },
+        { MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCRL_EXPIRED, "  ! ",
+            "  ! The certificate validity has expired\n"
+            "  ! The CRL is expired\n" }
+    };
+    char buf[256];
+    size_t i;
+    int fails = 0;
+    int ret;
+
+    for (i = 0; i < sizeof(infos) / sizeof(infos[0]); i++) {
+        /* Old text, which no flags must also clear */
+        memset(buf, 'x', sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = '\0';
+        ret = mbedtls_x509_crt_verify_info(buf, sizeof(buf), infos[i].prefix,
+            infos[i].flags);
+        fails += ExpectStr("verify info", buf, infos[i].want);
+        fails += Expect("verify info length", ret,
+            (int)strlen(infos[i].want));
+    }
+    ret = mbedtls_x509_crt_verify_info(buf, strlen(infos[2].want),
+        "", infos[2].flags);
+    fails += Expect("verify info, short buffer", ret,
+        MBEDTLS_ERR_X509_BUFFER_TOO_SMALL);
+    return fails;
+}
+#endif /* !MBEDTLS_X509_REMOVE_INFO */
+
+/* wolfSSL's certificates with keys pk cannot hold parse with pk empty */
+static int OtherKeys(void)
+{
+    static const char* const files[] = {
+#ifdef HAVE_ED25519
+        WOLFSSL_CERTS_DIR "/ed25519/server-ed25519.der",
+#endif /* HAVE_ED25519 */
+#ifdef HAVE_ED448
+        WOLFSSL_CERTS_DIR "/ed448/server-ed448.der",
+#endif /* HAVE_ED448 */
+#ifdef WOLFSSL_HAVE_MLDSA
+        WOLFSSL_CERTS_DIR "/mldsa/mldsa44-cert.der",
+#endif /* WOLFSSL_HAVE_MLDSA */
+#ifdef WC_RSA_PSS
+        WOLFSSL_CERTS_DIR "/rsapss/server-rsapss.der",
+#endif /* WC_RSA_PSS */
+        NULL
+    };
+    static const psa_algorithm_t algs[] = {
+        PSA_ALG_ECDSA(PSA_ALG_SHA_256),
+        PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256),
+        PSA_ALG_RSA_PSS(PSA_ALG_SHA_256)
+    };
+    mbedtls_x509_crt crt;
+    size_t i;
+    size_t j;
+    int fails = 0;
+    int ret;
+#if !defined(MBEDTLS_X509_REMOVE_INFO)
+    char buf[2000];
+#endif /* !MBEDTLS_X509_REMOVE_INFO */
+
+    for (i = 0; files[i] != NULL; i++) {
+        mbedtls_x509_crt_init(&crt);
+        ret = mbedtls_x509_crt_parse_file(&crt, files[i]);
+        fails += Expect(files[i], ret, 0);
+        fails += Expect("bits", (int)mbedtls_pk_get_bitlen(&crt.pk), 0);
+        for (j = 0; j < sizeof(algs) / sizeof(algs[0]); j++) {
+            fails += Expect("can do", mbedtls_pk_can_do_psa(&crt.pk, algs[j],
+                PSA_KEY_USAGE_VERIFY_HASH), 0);
+        }
+#if !defined(MBEDTLS_X509_REMOVE_INFO)
+        if (ret == 0) {
+            ret = mbedtls_x509_crt_info(buf, sizeof(buf), "", &crt);
+        }
+        if (ret < 0 || strstr(buf, "\nNONE key size     : 0 bits\n") == NULL) {
+            printf("FAIL: %s: info\n", files[i]);
+            fails++;
+        }
+#endif /* !MBEDTLS_X509_REMOVE_INFO */
+        mbedtls_x509_crt_free(&crt);
+    }
+    return fails;
+}
+
 static int allocs;
 static int failAt;
 
@@ -967,6 +1306,10 @@ static int FailEachAlloc(void)
     }
     (void)wolfSSL_SetAllocators(mf, ff, rf);
     fails += Expect("each allocation fails", CountCerts(&crt), 2);
+    /* A failed allocation does not leave the key empty */
+    fails += Expect("each allocation fails, key",
+        (crt.next != NULL) ? (int)mbedtls_pk_get_bitlen(&crt.next->pk) : 0,
+        2048);
     mbedtls_x509_crt_free(&crt);
     return fails;
 }
@@ -1008,9 +1351,15 @@ int main(void)
     fails += Names();
     fails += Dates();
     fails += Times();
+#if !defined(MBEDTLS_X509_REMOVE_INFO)
+    fails += CertInfo();
+    fails += SanInfo();
+    fails += VerifyInfo();
+#endif /* !MBEDTLS_X509_REMOVE_INFO */
 #if defined(MBEDTLS_THREADING_C) && !defined(NO_ASN_TIME)
     fails += TimeThreads();
 #endif /* MBEDTLS_THREADING_C && !NO_ASN_TIME */
+    fails += OtherKeys();
     fails += FailEachAlloc();
     certs = CountCerts(&all);
     if (certs == total) {
