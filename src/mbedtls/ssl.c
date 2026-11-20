@@ -43,6 +43,11 @@
 #include <limits.h>
 #include <wolfssl/ssl.h>
 #include <wolfssl/internal.h>
+#include <wolfssl/wolfcrypt/misc.h>
+#ifndef NO_INLINE
+    #define WOLFSSL_MISC_INCLUDED
+    #include <wolfcrypt/src/misc.c>
+#endif /* !NO_INLINE */
 #include <wolfssl/wolfio.h>
 #include <wolfssl/error-ssl.h>
 #include <wolfssl/wolfcrypt/asn.h>
@@ -1508,23 +1513,33 @@ void mbedtls_ssl_session_free(mbedtls_ssl_session* session)
     }
 }
 
+/* As in Mbed TLS, get and set copy the session: wolfSSL shares it with the
+ * connection, which changes it */
 int mbedtls_ssl_get_session(const mbedtls_ssl_context* ssl,
     mbedtls_ssl_session* session)
 {
+    WOLFSSL_SESSION* live;
+
     WOLFSSL_ENTER("mbedtls_ssl_get_session");
 
     if (ssl == NULL || ssl->ssl == NULL || session == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
     mbedtls_ssl_session_free(session);
-    session->session = wolfSSL_get1_session(ssl->ssl);
+    live = wolfSSL_get1_session(ssl->ssl);
+    if (live == NULL) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    session->session = wolfSSL_SESSION_dup(live);
+    wolfSSL_SESSION_free(live);
     session->verify_result = mbedtls_ssl_get_verify_result(ssl);
-    return (session->session != NULL) ? 0 : MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    return (session->session != NULL) ? 0 : MBEDTLS_ERR_SSL_ALLOC_FAILED;
 }
 
 int mbedtls_ssl_set_session(mbedtls_ssl_context* ssl,
     const mbedtls_ssl_session* session)
 {
+    WOLFSSL_SESSION* copy;
     int ret;
 
     WOLFSSL_ENTER("mbedtls_ssl_set_session");
@@ -1533,8 +1548,13 @@ int mbedtls_ssl_set_session(mbedtls_ssl_context* ssl,
             session->session == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
-    ret = MbedRet(wolfSSL_set_session(ssl->ssl, session->session),
+    copy = wolfSSL_SESSION_dup(session->session);
+    if (copy == NULL) {
+        return MBEDTLS_ERR_SSL_ALLOC_FAILED;
+    }
+    ret = MbedRet(wolfSSL_set_session(ssl->ssl, copy),
         MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+    wolfSSL_SESSION_free(copy);
     if (ret == 0) {
         ssl->session_set = 1;
         ssl->session_verify = session->verify_result;
@@ -1542,30 +1562,179 @@ int mbedtls_ssl_set_session(mbedtls_ssl_context* ssl,
     return ret;
 }
 
-/* Serializing a session needs HAVE_EXT_CACHE */
+#ifdef HAVE_EXT_CACHE
+/* Saved session: 8-byte header, verify result, wolfSSL_i2d_SSL_SESSION() */
+#define MBED_SESSION_HDR_SZ   8
+#define MBED_SESSION_DATA_IDX (MBED_SESSION_HDR_SZ + OPAQUE32_LEN)
+/* Version of the layout around wolfSSL's data */
+#define MBED_SESSION_FORMAT   1
+
+/* The layout's version, wolfSSL's version, the wolfSSL options that change
+ * the data's format, and the sizes of its hash fields */
+static void MbedSessionHeader(byte* hdr)
+{
+    word16 opts = 0;
+
+#ifdef SESSION_CERTS
+    opts |= 0x0001;
+#endif /* SESSION_CERTS */
+#ifdef NO_RESUME_SUITE_CHECK
+    opts |= 0x0002;
+#endif /* NO_RESUME_SUITE_CHECK */
+#ifdef NO_CLIENT_CACHE
+    opts |= 0x0004;
+#endif /* NO_CLIENT_CACHE */
+#ifdef WOLFSSL_SESSION_ID_CTX
+    opts |= 0x0008;
+#endif /* WOLFSSL_SESSION_ID_CTX */
+#if defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL)
+    opts |= 0x0010;
+#endif /* OPENSSL_EXTRA || OPENSSL_EXTRA_X509_SMALL */
+#ifdef WOLFSSL_TLS13
+    opts |= 0x0020;
+#endif /* WOLFSSL_TLS13 */
+#ifdef NO_PSK
+    opts |= 0x0040;
+#endif /* NO_PSK */
+#ifdef WOLFSSL_32BIT_MILLI_TIME
+    opts |= 0x0080;
+#endif /* WOLFSSL_32BIT_MILLI_TIME */
+#ifdef WOLFSSL_EARLY_DATA
+    opts |= 0x0100;
+#endif /* WOLFSSL_EARLY_DATA */
+#ifdef HAVE_SESSION_TICKET
+    opts |= 0x0200;
+#endif /* HAVE_SESSION_TICKET */
+#ifdef HAVE_ALPN
+    opts |= 0x0400;
+#endif /* HAVE_ALPN */
+#ifdef NO_WOLFSSL_SERVER
+    opts |= 0x0800;
+#endif /* NO_WOLFSSL_SERVER */
+#ifdef HAVE_SECURE_RENEGOTIATION
+    opts |= 0x1000;
+#endif /* HAVE_SECURE_RENEGOTIATION */
+
+    hdr[0] = MBED_SESSION_FORMAT;
+    hdr[1] = (byte)(LIBWOLFSSL_VERSION_HEX >> 24);
+    hdr[2] = (byte)(LIBWOLFSSL_VERSION_HEX >> 12);
+    hdr[3] = (byte)LIBWOLFSSL_VERSION_HEX;
+    c16toa(opts, hdr + 4);
+    hdr[6] = (byte)KEYID_SIZE;
+    hdr[7] = (byte)TICKET_BINDING_HASH_SZ;
+}
+
+static int MbedSessionSave(const mbedtls_ssl_session* session,
+    unsigned char* buf, size_t buf_len, size_t* olen)
+{
+    unsigned char* p;
+    int sz;
+
+    /* Set up by a TLS 1.2 handshake or a TLS 1.3 ticket */
+    if (!wolfSSL_SessionIsSetup(session->session)) {
+        return MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+    }
+    sz = wolfSSL_i2d_SSL_SESSION(session->session, NULL);
+    if (sz <= 0) {
+        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    }
+    *olen = MBED_SESSION_DATA_IDX + (size_t)sz;
+    if (buf == NULL || buf_len < *olen) {
+        return MBEDTLS_ERR_SSL_BUFFER_TOO_SMALL;
+    }
+    MbedSessionHeader(buf);
+    c32toa(session->verify_result, buf + MBED_SESSION_HDR_SZ);
+    p = buf + MBED_SESSION_DATA_IDX;
+    return (wolfSSL_i2d_SSL_SESSION(session->session, &p) == sz) ? 0 :
+        MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+}
+
+static int MbedSessionLoad(mbedtls_ssl_session* session,
+    const unsigned char* buf, size_t len)
+{
+    byte hdr[MBED_SESSION_HDR_SZ];
+    const unsigned char* p;
+    word32 verify;
+
+    MbedSessionHeader(hdr);
+    if (len < sizeof(hdr)) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    if (XMEMCMP(buf, hdr, sizeof(hdr)) != 0) {
+        return MBEDTLS_ERR_SSL_VERSION_MISMATCH;
+    }
+    if (len < MBED_SESSION_DATA_IDX) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    ato32(buf + MBED_SESSION_HDR_SZ, &verify);
+    session->verify_result = verify;
+    p = buf + MBED_SESSION_DATA_IDX;
+    session->session = wolfSSL_d2i_SSL_SESSION(NULL, &p,
+        MbedIoLen(len - MBED_SESSION_DATA_IDX, INT_MAX));
+    /* As in Mbed TLS, nothing may follow the session */
+    return (session->session != NULL && p == buf + len) ? 0 :
+        MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+}
+#else
+/* wolfSSL saves and loads sessions only with HAVE_EXT_CACHE */
+static int MbedSessionSave(const mbedtls_ssl_session* session,
+    unsigned char* buf, size_t buf_len, size_t* olen)
+{
+    (void)session;
+    (void)buf;
+    (void)buf_len;
+    *olen = 0;
+    return MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+}
+
+static int MbedSessionLoad(mbedtls_ssl_session* session,
+    const unsigned char* buf, size_t len)
+{
+    (void)session;
+    (void)buf;
+    (void)len;
+    return MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+}
+#endif /* HAVE_EXT_CACHE */
+
 int mbedtls_ssl_session_save(const mbedtls_ssl_session* session,
     unsigned char* buf, size_t buf_len, size_t* olen)
 {
     WOLFSSL_ENTER("mbedtls_ssl_session_save");
 
-    (void)session;
-    (void)buf;
-    (void)buf_len;
-    if (olen != NULL) {
-        *olen = 0;
+    if (session == NULL || olen == NULL) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
-    return MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+    /* As in Mbed TLS, an empty session has nothing to save */
+    if (session->session == NULL) {
+        return MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+    }
+    return MbedSessionSave(session, buf, buf_len, olen);
 }
 
+/* As in Mbed TLS, a failed load leaves the session empty */
 int mbedtls_ssl_session_load(mbedtls_ssl_session* session,
     const unsigned char* buf, size_t len)
 {
+    int ret;
+
     WOLFSSL_ENTER("mbedtls_ssl_session_load");
 
-    (void)session;
-    (void)buf;
-    (void)len;
-    return MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
+    if (session == NULL) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    mbedtls_ssl_session_free(session);
+    if (buf == NULL) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    if (!wolfPSA_CryptoReady()) {
+        return PSA_ERROR_BAD_STATE;
+    }
+    ret = MbedSessionLoad(session, buf, len);
+    if (ret != 0) {
+        mbedtls_ssl_session_free(session);
+    }
+    return ret;
 }
 
 #endif /* MBEDTLS_SSL_TLS_C */

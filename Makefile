@@ -328,7 +328,7 @@ MBEDTLS_COMPAT_MAKE = $(MAKE) -C test/mbedtls_compat WOLFPSA_PATH=$(CURDIR) \
 	$(if $(MBEDTLS_PATH),MBEDTLS_PATH=$(abspath $(MBEDTLS_PATH))) \
 	BUILD_DIR=$(abspath $(BUILD_DIR))/mbedtls_compat \
 	PSA_CONFIG_DIR=$(abspath $(dir $(PSA_CONFIG))) \
-	WOLFSSL_FLAGS="-I$(abspath $(WOLFSSL_PATH)) \
+	WOLFSSL_FLAGS="-DWOLFPSA_MBEDTLS_COMPAT -I$(abspath $(WOLFSSL_PATH)) \
 		-I$(abspath $(USER_SETTINGS_PATH)) $(WOLFSSL_CPPFLAGS)" \
 	SANITIZE_FLAGS="$(SANITIZE_FLAGS)" WOLFPSA_LDFLAGS="$(LDFLAGS)"
 # mbedtls-compat-<name> runs <name> in test/mbedtls_compat. These test
