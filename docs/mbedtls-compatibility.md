@@ -40,6 +40,8 @@ TF-PSA-Crypto parts that every build has. See
 
 ## Currently supported
 
+Mbed TLS functions not listed here are not available.
+
 TLS:
 
 - `mbedtls_ssl_config_*`: init, free, defaults
@@ -84,6 +86,8 @@ Other:
 - The timers and `mbedtls_ms_time` use a monotonic clock.
   `MBEDTLS_TIMING_C` and `MBEDTLS_HAVE_TIME` need Windows or a Unix-like
   system.
+- The version macros, such as `MBEDTLS_VERSION_NUMBER`, but not the
+  `mbedtls/version.h` functions (`MBEDTLS_VERSION_C`)
 
 TF-PSA-Crypto, in every build:
 
@@ -112,21 +116,41 @@ TLS:
 - CRLs through `mbedtls_ssl_conf_ca_chain`
 - ALPN (`mbedtls_ssl_conf_alpn_protocols`, `mbedtls_ssl_get_alpn_protocol`)
 - PSK and opaque keys
-- DTLS: timers, cookies, connection ID, renegotiation, and context save
-  and load
+- DTLS, with timers, cookies, connection ID, and context save and load.
+  Until then, `mbedtls_ssl_config_defaults` returns
+  `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE` for `MBEDTLS_SSL_TRANSPORT_DATAGRAM`.
+- Renegotiation (`mbedtls_ssl_conf_renegotiation`,
+  `mbedtls_ssl_renegotiate`)
+- A config without `mbedtls_ssl_config_defaults`
 - RSA keys up to 4096 bits
+- Read timeouts (`mbedtls_ssl_conf_read_timeout`,
+  `mbedtls_net_recv_timeout`) and non-blocking sockets
+  (`mbedtls_net_set_nonblock`, `mbedtls_net_set_block`, `mbedtls_net_poll`)
+- Groups and signature algorithms (`mbedtls_ssl_conf_groups`,
+  `mbedtls_ssl_conf_sig_algs`)
+- The server name callback (`mbedtls_ssl_conf_sni`) and the
+  `mbedtls_ssl_set_hs_*` functions
+- A session cache (`mbedtls_ssl_conf_session_cache`, `mbedtls/ssl_cache.h`)
+- TLS 1.3 early data
+- `mbedtls_ssl_check_pending`, `mbedtls_ssl_get_record_expansion`,
+  `mbedtls_ssl_get_max_in_record_payload`, `mbedtls_ssl_send_alert_message`
+  and `mbedtls_ssl_set_export_keys_cb`
 
 X.509:
 
-- `mbedtls_x509_crt_verify`
+- `mbedtls_x509_crt_verify` and `mbedtls_x509_crt_verify_with_profile`
+- `mbedtls_x509_crt_parse_der_nocopy` and
+  `mbedtls_x509_parse_subject_alt_name`
 - CRL and CSR parsing (`mbedtls/x509_crl.h`, `mbedtls/x509_csr.h`)
+- Certificate and CSR writing (`mbedtls_x509write_crt_*`,
+  `mbedtls_x509write_csr_*`)
 
 Other:
 
 - The rest of `mbedtls/pk.h`: key writing, sign and verify, PSA key
   wrapping
-- `mbedtls/asn1.h`, `mbedtls/asn1write.h`, `mbedtls/nist_kw.h` and
-  `mbedtls/constant_time.h`
+- The `mbedtls/asn1.h` functions. The header has the types and constants.
+- `mbedtls/asn1write.h`, `mbedtls/nist_kw.h` and `mbedtls/constant_time.h`
 - The rest of `mbedtls/psa_util.h`: `mbedtls_psa_get_random` and ECDSA
   signature conversion
 - Build files: pkg-config, a CMake package and Mbed TLS's library names
@@ -186,6 +210,8 @@ TLS:
   uses the extension in TLS 1.2 only.
 - `mbedtls_ssl_conf_dbg` and `mbedtls_ssl_conf_cert_profile` are accepted
   and ignored.
+- The timers of `mbedtls_ssl_set_timer_cb` are not used. Mbed TLS uses them
+  for DTLS and for `mbedtls_ssl_conf_read_timeout`.
 
 Certificate verification:
 
