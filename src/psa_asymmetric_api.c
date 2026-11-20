@@ -828,6 +828,34 @@ psa_status_t psa_verify_hash_with_context(psa_key_id_t key,
                                       signature, signature_length);
 }
 
+/* The digest a message signature covers; RSA PKCS#1 v1.5 raw takes the
+ * input as is. */
+static psa_status_t wolfpsa_message_hash(psa_algorithm_t alg,
+                                         const uint8_t *input,
+                                         size_t input_length,
+                                         uint8_t *hash,
+                                         size_t *hash_length)
+{
+    psa_algorithm_t hash_alg = PSA_ALG_SIGN_GET_HASH(alg);
+
+    if (alg == PSA_ALG_RSA_PKCS1V15_SIGN_RAW) {
+        if (input_length > WOLFPSA_HASH_MAX_SIZE) {
+            return PSA_ERROR_INVALID_ARGUMENT;
+        }
+        /* memcpy's pointers are declared nonnull, so (NULL, 0) skips it */
+        if (input_length > 0) {
+            XMEMCPY(hash, input, input_length);
+        }
+        *hash_length = input_length;
+        return PSA_SUCCESS;
+    }
+    if (hash_alg == 0) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    return psa_hash_compute(hash_alg, input, input_length, hash,
+                            WOLFPSA_HASH_MAX_SIZE, hash_length);
+}
+
 /* Internal worker: sign a message (hash-then-sign or pure EdDSA/ML-DSA),
  * with optional context. */
 static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
@@ -843,7 +871,6 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
     psa_key_attributes_t attributes;
     uint8_t *key_data = NULL;
     size_t key_data_length = 0;
-    psa_algorithm_t hash_alg;
     uint8_t hash[WOLFPSA_HASH_MAX_SIZE];
     size_t hash_length = 0;
     size_t sig_size;
@@ -909,8 +936,8 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
             uint8_t mldsa_hash[WOLFPSA_HASH_MAX_SIZE];
             size_t mldsa_hash_length = 0;
 
-            hash_alg = PSA_ALG_GET_HASH(alg);
-            status = psa_hash_compute(hash_alg, input, input_length,
+            status = psa_hash_compute(PSA_ALG_GET_HASH(alg), input,
+                                      input_length,
                                       mldsa_hash, sizeof(mldsa_hash),
                                       &mldsa_hash_length);
             if (status == PSA_SUCCESS) {
@@ -979,31 +1006,10 @@ static psa_status_t wolfpsa_sign_message_worker(psa_key_id_t key,
     }
 #endif /* HAVE_ED25519 || HAVE_ED448 */
 
-    if (alg == PSA_ALG_RSA_PKCS1V15_SIGN_RAW) {
-        hash_alg = 0;
-        hash_length = input_length;
-        if (hash_length > sizeof(hash)) {
-            status = PSA_ERROR_INVALID_ARGUMENT;
-            goto cleanup;
-        }
-        if (hash_length > 0) {
-            /* memcpy's pointers are declared nonnull, so a (NULL, 0) input
-             * must not reach it. */
-            XMEMCPY(hash, input, hash_length);
-        }
-    }
-    else {
-        hash_alg = PSA_ALG_SIGN_GET_HASH(alg);
-        if (hash_alg == 0) {
-            status = PSA_ERROR_NOT_SUPPORTED;
-            goto cleanup;
-        }
-
-        status = psa_hash_compute(hash_alg, input, input_length,
-                                  hash, sizeof(hash), &hash_length);
-        if (status != PSA_SUCCESS) {
-            goto cleanup;
-        }
+    status = wolfpsa_message_hash(alg, input, input_length, hash,
+                                  &hash_length);
+    if (status != PSA_SUCCESS) {
+        goto cleanup;
     }
 
     if (PSA_KEY_TYPE_IS_RSA(attributes.type)) {
@@ -1074,7 +1080,6 @@ static psa_status_t wolfpsa_verify_message_worker(psa_key_id_t key,
     psa_key_attributes_t attributes;
     uint8_t *key_data = NULL;
     size_t key_data_length = 0;
-    psa_algorithm_t hash_alg;
     uint8_t hash[WOLFPSA_HASH_MAX_SIZE];
     size_t hash_length = 0;
     psa_status_t status;
@@ -1128,8 +1133,8 @@ static psa_status_t wolfpsa_verify_message_worker(psa_key_id_t key,
             uint8_t mldsa_hash[WOLFPSA_HASH_MAX_SIZE];
             size_t mldsa_hash_length = 0;
 
-            hash_alg = PSA_ALG_GET_HASH(alg);
-            status = psa_hash_compute(hash_alg, input, input_length,
+            status = psa_hash_compute(PSA_ALG_GET_HASH(alg), input,
+                                      input_length,
                                       mldsa_hash, sizeof(mldsa_hash),
                                       &mldsa_hash_length);
             if (status == PSA_SUCCESS) {
@@ -1231,31 +1236,10 @@ static psa_status_t wolfpsa_verify_message_worker(psa_key_id_t key,
     }
 #endif /* HAVE_ED25519 || HAVE_ED448 */
 
-    if (alg == PSA_ALG_RSA_PKCS1V15_SIGN_RAW) {
-        hash_alg = 0;
-        hash_length = input_length;
-        if (hash_length > sizeof(hash)) {
-            status = PSA_ERROR_INVALID_ARGUMENT;
-            goto cleanup;
-        }
-        if (hash_length > 0) {
-            /* memcpy's pointers are declared nonnull, so a (NULL, 0) input
-             * must not reach it. */
-            XMEMCPY(hash, input, hash_length);
-        }
-    }
-    else {
-        hash_alg = PSA_ALG_SIGN_GET_HASH(alg);
-        if (hash_alg == 0) {
-            status = PSA_ERROR_NOT_SUPPORTED;
-            goto cleanup;
-        }
-
-        status = psa_hash_compute(hash_alg, input, input_length,
-                                  hash, sizeof(hash), &hash_length);
-        if (status != PSA_SUCCESS) {
-            goto cleanup;
-        }
+    status = wolfpsa_message_hash(alg, input, input_length, hash,
+                                  &hash_length);
+    if (status != PSA_SUCCESS) {
+        goto cleanup;
     }
 
     if (PSA_KEY_TYPE_IS_RSA(attributes.type)) {
