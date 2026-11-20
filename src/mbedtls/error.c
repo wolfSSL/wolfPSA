@@ -33,6 +33,7 @@
 #include <mbedtls/asn1.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/error.h>
+#include <mbedtls/md.h>
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pem.h>
 #include <mbedtls/pk.h>
@@ -61,6 +62,7 @@ static const struct {
         "Actual length differs from expected length"),
     MBED_ERR(ASN1, INVALID_DATA, "Data is invalid"),
     MBED_ERR(BASE64, INVALID_CHARACTER, "Invalid character in input"),
+    MBED_ERR(MD, FEATURE_UNAVAILABLE, "The selected feature is not available"),
     MBED_ERR(NET, SOCKET_FAILED, "Failed to open a socket"),
     MBED_ERR(NET, CONNECT_FAILED,
         "The connection to the given server / port failed"),
