@@ -27,12 +27,13 @@
 #include <string.h>
 
 #include <psa/crypto.h>
+#include <mbedtls/base64.h>
 #include <mbedtls/pem.h>
 
 #define CERT_BEGIN "-----BEGIN CERTIFICATE-----"
 #define CERT_END   "-----END CERTIFICATE-----"
-/* Mbed TLS adds MBEDTLS_ERR_BASE64_INVALID_CHARACTER, -0x002C */
-#define BAD_BASE64 (MBEDTLS_ERR_PEM_INVALID_DATA - 0x002C)
+#define BAD_BASE64 \
+    (MBEDTLS_ERR_PEM_INVALID_DATA + MBEDTLS_ERR_BASE64_INVALID_CHARACTER)
 /* Larger than the test files */
 #define FILE_SZ 8192
 
@@ -56,7 +57,9 @@ static const struct {
         MBEDTLS_ERR_PEM_NO_HEADER_FOOTER_PRESENT, NULL },
     { "data on the header line", "^TWJlZCBUTFM=\n$",
         MBEDTLS_ERR_PEM_NO_HEADER_FOOTER_PRESENT, NULL },
-    { "CRLF and a space", "^ \r\nTWJlZCBU\r\nTFM=\r\n$", 0, "Mbed TLS" }
+    { "CRLF and a space", "^ \r\nTWJlZCBU\r\nTFM=\r\n$", 0, "Mbed TLS" },
+    { "empty line", "^\nTWJl\n\nZCBUTFM=\n$", 0, "Mbed TLS" },
+    { "space inside a line", "^\nTWJl ZCBUTFM=\n$", BAD_BASE64, NULL }
 };
 
 static long ReadFile(const char* path, unsigned char* buf, size_t sz)

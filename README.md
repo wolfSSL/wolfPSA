@@ -24,14 +24,15 @@ PSA Crypto engine for PSA clients such as wolfSSL compiled with
 - The default make target creates a static library (`libwolfpsa.a`) built directly
   from wolfPSA sources plus the required wolfCrypt objects.
 - Parts of TF-PSA-Crypto, in every build: `mbedtls/pk.h` key parsing,
-  `mbedtls/threading.h` and `mbedtls/platform.h`. See
+  `mbedtls/base64.h`, `mbedtls/threading.h` and `mbedtls/platform.h`. See
   [currently supported](docs/mbedtls-compatibility.md#currently-supported).
 
 ## Mbed TLS compatibility
 
 `MBEDTLS_COMPAT=1` adds the Mbed TLS 4.x TLS, X.509, PEM and network API on
 top of wolfSSL. wolfPSA already provides the TF-PSA-Crypto side (`psa_*`,
-`mbedtls_pk_*`, `mbedtls_psa_crypto_free`, `mbedtls/platform.h`).
+`mbedtls_pk_*`, `mbedtls_base64_*`, `mbedtls_psa_crypto_free`,
+`mbedtls/platform.h`).
 
 Build wolfPSA with `MBEDTLS_COMPAT=1` as in [Build](#build). Applications
 then use `-I<wolfPSA>/wolfpsa`, `-I<wolfPSA>/wolfpsa/mbedtls_compat` and

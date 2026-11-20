@@ -32,7 +32,8 @@ TF-PSA-Crypto parts that every build has. See
 - TLS needs the X.509 API and wolfSSL's TLS with `HAVE_SNI`: without them,
   for example with `WOLFCRYPT_ONLY`, `MBEDTLS_SSL_TLS_C` is not defined.
   `MBEDTLS_NET_C` needs TLS and wolfSSL's socket I/O (no `WOLFSSL_USER_IO`).
-  `MBEDTLS_PEM_PARSE_C` needs wolfCrypt's Base64 decoding (no `NO_CODING`).
+  `MBEDTLS_PEM_PARSE_C` needs `MBEDTLS_BASE64_C`, which `NO_CODING` turns
+  off.
 - The verify callbacks need `WOLFSSL_ALWAYS_VERIFY_CB`, which wolfPSA's
   `user_settings.h` defines. A build with its own `USER_SETTINGS_PATH`
   defines it too.
@@ -91,6 +92,7 @@ TF-PSA-Crypto, in every build:
   PEM or DER, traditional or PKCS #8. Public keys are RSA, EC, X25519 and
   X448, PEM or DER, SubjectPublicKeyInfo or, for RSA, PKCS #1. EC keys are
   on the curves the PSA engine has.
+- `mbedtls_base64_*`: encode, decode
 - `mbedtls/threading.h` with `MBEDTLS_THREADING_C`, on pthreads
 - `mbedtls_psa_crypto_free`, `mbedtls_platform_zeroize` and
   `mbedtls/platform.h`
@@ -119,9 +121,8 @@ Other:
 
 - The rest of `mbedtls/pk.h`: key writing, sign and verify, PSA key
   wrapping
-- `mbedtls/base64.h`, `mbedtls/md.h`, `mbedtls/asn1.h`,
-  `mbedtls/asn1write.h`, `mbedtls/nist_kw.h`, `mbedtls/psa_util.h` and
-  `mbedtls/constant_time.h`
+- `mbedtls/md.h`, `mbedtls/asn1.h`, `mbedtls/asn1write.h`,
+  `mbedtls/nist_kw.h`, `mbedtls/psa_util.h` and `mbedtls/constant_time.h`
 - Build files: pkg-config, a CMake package and Mbed TLS's library names
   (`libmbedtls`, `libmbedx509`, `libtfpsacrypto`)
 - A Zephyr option for the compatibility layer

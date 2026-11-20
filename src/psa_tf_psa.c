@@ -30,12 +30,15 @@
 #if defined(WOLFSSL_PSA_ENGINE)
 
 #include <limits.h>
+#include <stdint.h>
 
 #include <psa/crypto.h>
+#include <mbedtls/base64.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/platform_util.h>
 #include <mbedtls/threading.h>
 #include <wolfssl/wolfcrypt/memory.h>
+#include <wolfssl/wolfcrypt/misc.h>
 #include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/ecc.h>
@@ -44,11 +47,19 @@
 #include <wolfpsa/psa_engine.h>
 #include "psa_lock.h"
 #include "psa_tf_psa_internal.h"
+#ifndef NO_INLINE
+    #define WOLFSSL_MISC_INCLUDED
+    #include <wolfcrypt/src/misc.c>
+#endif
 
 /* The generated crypto config must match the build's NO_FILESYSTEM */
 #if defined(MBEDTLS_FS_IO) == defined(NO_FILESYSTEM)
     #error "MBEDTLS_FS_IO must be defined exactly when NO_FILESYSTEM is not"
 #endif /* defined(MBEDTLS_FS_IO) == defined(NO_FILESYSTEM) */
+
+#if defined(MBEDTLS_BASE64_C) == defined(NO_CODING)
+    #error "MBEDTLS_BASE64_C must be defined exactly when NO_CODING is not"
+#endif /* defined(MBEDTLS_BASE64_C) == defined(NO_CODING) */
 
 /* MBEDTLS_THREADING_C promises a key store safe to use from any thread */
 #if defined(MBEDTLS_THREADING_C) && \
@@ -584,6 +595,184 @@ int mbedtls_pk_parse_public_keyfile(mbedtls_pk_context* ctx, const char* path)
     return ret;
 }
 #endif /* MBEDTLS_FS_IO */
+
+#if defined(MBEDTLS_BASE64_C)
+/* Base64 digits by range of values */
+static const struct {
+    byte first;
+    byte last;
+    byte digit; /* digit of first */
+} base64Ranges[] = {
+    {  0, 25, 'A' },
+    { 26, 51, 'a' },
+    { 52, 61, '0' },
+    { 62, 62, '+' },
+    { 63, 63, '/' }
+};
+
+#define BASE64_RANGES (sizeof(base64Ranges) / sizeof(base64Ranges[0]))
+
+/* Digit of a 6-bit value, in constant time */
+static byte Base64Digit(byte v)
+{
+    byte c = 0;
+    size_t i;
+
+    for (i = 0; i < BASE64_RANGES; i++) {
+        c |= ctMaskGTE(v, base64Ranges[i].first) &
+            ctMaskLTE(v, base64Ranges[i].last) &
+            (byte)(v - base64Ranges[i].first + base64Ranges[i].digit);
+    }
+    return c;
+}
+
+/* Value of a digit, or 0xff when c is not one, in constant time */
+static byte Base64Value(byte c)
+{
+    byte v = 0;
+    int lo;
+    size_t i;
+
+    for (i = 0; i < BASE64_RANGES; i++) {
+        lo = base64Ranges[i].digit;
+        v |= ctMaskGTE(c, lo) &
+            ctMaskLTE(c, lo + base64Ranges[i].last - base64Ranges[i].first) &
+            (byte)(c - lo + base64Ranges[i].first + 1);
+    }
+    return (byte)(v - 1);
+}
+
+/* Decodes as Mbed TLS. With dst NULL, checks and counts only. */
+static int Base64DecodeBlocks(const unsigned char* src, size_t slen,
+    unsigned char* dst, size_t* olen)
+{
+    word32 x = 0;
+    word32 digits = 0;
+    word32 equals = 0;
+    word32 j;
+    byte v;
+    size_t n = 0;
+    size_t i = 0;
+    int spaces;
+    int ret = 0;
+
+    while (ret == 0 && i < slen) {
+        spaces = 0;
+        while (i < slen && src[i] == ' ') {
+            spaces = 1;
+            i++;
+        }
+        if (i == slen) {
+            break;
+        }
+        if (src[i] == '\n') {
+            i++;
+            continue;
+        }
+        if (src[i] == '\r' && i + 1 < slen && src[i + 1] == '\n') {
+            i += 2;
+            continue;
+        }
+        if (spaces || (equals > 0 && src[i] != '=') ||
+                (src[i] == '=' && ++equals > 2)) {
+            ret = MBEDTLS_ERR_BASE64_INVALID_CHARACTER;
+            break;
+        }
+        v = (src[i] == '=') ? 0 : Base64Value(src[i]);
+        if (v > 63) {
+            ret = MBEDTLS_ERR_BASE64_INVALID_CHARACTER;
+            break;
+        }
+        i++;
+        x = (x << 6) | v;
+        if (++digits < 4) {
+            continue;
+        }
+        /* Any '=' is in this block, the last one */
+        for (j = 0; dst != NULL && j < 3 - equals; j++) {
+            dst[n + j] = (byte)(x >> (16 - 8 * j));
+        }
+        n += 3 - equals;
+        digits = 0;
+    }
+    if (ret == 0 && digits != 0) {
+        ret = MBEDTLS_ERR_BASE64_INVALID_CHARACTER;
+    }
+    wc_ForceZero(&x, sizeof(x));
+    *olen = n;
+    return ret;
+}
+
+int mbedtls_base64_decode(unsigned char* dst, size_t dlen, size_t* olen,
+    const unsigned char* src, size_t slen)
+{
+    size_t n;
+    int ret;
+
+    if (olen == NULL || (src == NULL && slen > 0)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    ret = Base64DecodeBlocks(src, slen, NULL, &n);
+    if (ret == 0) {
+        *olen = n;
+        /* As in Mbed TLS, an empty result needs no buffer */
+        if ((n != 0 && dst == NULL) || dlen < n) {
+            ret = MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
+        }
+    }
+    if (ret == 0 && n != 0) {
+        ret = Base64DecodeBlocks(src, slen, dst, &n);
+    }
+    return ret;
+}
+
+int mbedtls_base64_encode(unsigned char* dst, size_t dlen, size_t* olen,
+    const unsigned char* src, size_t slen)
+{
+    word32 x = 0;
+    size_t left;
+    size_t n;
+    size_t i;
+    size_t j;
+
+    if (olen == NULL || (src == NULL && slen > 0)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (slen == 0) {
+        *olen = 0;
+        return 0;
+    }
+    n = slen / 3 + (slen % 3 != 0);
+    if (n > (SIZE_MAX - 1) / 4) {
+        *olen = SIZE_MAX;
+        return MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
+    }
+    n *= 4;
+    if (dst == NULL || dlen <= n) {
+        *olen = n + 1;
+        return MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
+    }
+    for (i = 0, n = 0; i < slen; i += 3, n += 4) {
+        left = slen - i;
+        x = (word32)src[i] << 16;
+        if (left > 1) {
+            x |= (word32)src[i + 1] << 8;
+        }
+        if (left > 2) {
+            x |= src[i + 2];
+        }
+        /* With 1 or 2 bytes left, '=' pads the block */
+        for (j = 0; j < 4; j++) {
+            dst[n + j] = (j <= left) ?
+                Base64Digit((byte)((x >> (18 - 6 * j)) & 0x3f)) : '=';
+        }
+    }
+    dst[n] = '\0';
+    *olen = n;
+    wc_ForceZero(&x, sizeof(x));
+    return 0;
+}
+#endif /* MBEDTLS_BASE64_C */
 
 #if defined(MBEDTLS_THREADING_PTHREAD)
 static int ThreadingRet(int posixRet)

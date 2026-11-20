@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-/* Mbed TLS 4.x PEM decoding on wolfCrypt's Base64 (MBEDTLS_COMPAT=1). */
+/* Mbed TLS 4.x PEM decoding (MBEDTLS_COMPAT=1). */
 
 #ifdef HAVE_CONFIG_H
     #include <config.h>
@@ -29,23 +29,18 @@
 
 #if defined(WOLFSSL_PSA_ENGINE) && defined(WOLFPSA_MBEDTLS_COMPAT)
 
-#include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/logging.h>
 #include <wolfssl/wolfcrypt/memory.h>
 #include <wolfpsa/psa_engine.h>
+#include <mbedtls/base64.h>
 #include <mbedtls/pem.h>
 
-/* The generated config has MBEDTLS_PEM_PARSE_C with wolfCrypt's Base64
- * decoding */
-#if defined(MBEDTLS_PEM_PARSE_C) != \
-        (!defined(NO_CODING) && defined(WOLFSSL_BASE64_DECODE))
-    #error "MBEDTLS_PEM_PARSE_C does not match wolfCrypt's Base64 decoding"
-#endif /* MBEDTLS_PEM_PARSE_C != (!NO_CODING && WOLFSSL_BASE64_DECODE) */
+/* As in Mbed TLS, PEM needs Base64. The generated config has both. */
+#if defined(MBEDTLS_PEM_PARSE_C) != defined(MBEDTLS_BASE64_C)
+    #error "MBEDTLS_PEM_PARSE_C must be defined exactly with MBEDTLS_BASE64_C"
+#endif /* defined(MBEDTLS_PEM_PARSE_C) != defined(MBEDTLS_BASE64_C) */
 
 #if defined(MBEDTLS_PEM_PARSE_C)
-
-/* Mbed TLS adds MBEDTLS_ERR_BASE64_INVALID_CHARACTER to the PEM error */
-#define MBED_PEM_BAD_BASE64 (MBEDTLS_ERR_PEM_INVALID_DATA - 0x002C)
 
 void mbedtls_pem_init(mbedtls_pem_context* ctx)
 {
@@ -80,10 +75,9 @@ int mbedtls_pem_read_buffer(mbedtls_pem_context* ctx, const char* header,
     const char* s1;
     const char* s2;
     unsigned char* buf;
-    word32 inLen;
-    word32 size;
-    word32 len;
-    int ret = 0;
+    size_t bodyLen;
+    size_t len = 0;
+    int ret;
 
     WOLFSSL_ENTER("mbedtls_pem_read_buffer");
 
@@ -112,30 +106,29 @@ int mbedtls_pem_read_buffer(mbedtls_pem_context* ctx, const char* header,
     if (s1 >= s2) {
         return MBEDTLS_ERR_PEM_INVALID_DATA;
     }
-    if ((size_t)(s2 - s1) > (size_t)WOLFSSL_MAX_32BIT) {
-        return MBEDTLS_ERR_PEM_BAD_INPUT_DATA;
-    }
     if (!wolfPSA_CryptoReady()) {
         return PSA_ERROR_BAD_STATE;
     }
 
-    inLen = (word32)(s2 - s1);
-    size = (inLen / 4 + 1) * 3;
-    buf = (unsigned char*)XMALLOC(size, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    bodyLen = (size_t)(s2 - s1);
+    ret = mbedtls_base64_decode(NULL, 0, &len, (const unsigned char*)s1,
+        bodyLen);
+    if (ret == MBEDTLS_ERR_BASE64_INVALID_CHARACTER) {
+        return MBEDTLS_ERR_PEM_INVALID_DATA + ret;
+    }
+    if (len == 0) {
+        return MBEDTLS_ERR_PEM_BAD_INPUT_DATA;
+    }
+    buf = (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (buf == NULL) {
         return MBEDTLS_ERR_PEM_ALLOC_FAILED;
     }
-    len = size;
-    if (Base64_Decode((const byte*)s1, inLen, buf, &len) != 0) {
-        ret = MBED_PEM_BAD_BASE64;
-    }
-    else if (len == 0) {
-        ret = MBEDTLS_ERR_PEM_BAD_INPUT_DATA;
-    }
+    ret = mbedtls_base64_decode(buf, len, &len, (const unsigned char*)s1,
+        bodyLen);
     if (ret != 0) {
-        wc_ForceZero(buf, size);
+        wc_ForceZero(buf, len);
         XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        return ret;
+        return MBEDTLS_ERR_PEM_INVALID_DATA + ret;
     }
 
     mbedtls_pem_free(ctx);
