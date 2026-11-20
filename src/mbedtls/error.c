@@ -31,6 +31,7 @@
 
 #include <wolfssl/wolfcrypt/types.h>
 #include <mbedtls/asn1.h>
+#include <mbedtls/base64.h>
 #include <mbedtls/error.h>
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pem.h>
@@ -59,6 +60,7 @@ static const struct {
     MBED_ERR(ASN1, LENGTH_MISMATCH,
         "Actual length differs from expected length"),
     MBED_ERR(ASN1, INVALID_DATA, "Data is invalid"),
+    MBED_ERR(BASE64, INVALID_CHARACTER, "Invalid character in input"),
     MBED_ERR(NET, SOCKET_FAILED, "Failed to open a socket"),
     MBED_ERR(NET, CONNECT_FAILED,
         "The connection to the given server / port failed"),
