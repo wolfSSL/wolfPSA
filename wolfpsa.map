@@ -2,6 +2,8 @@ WOLFPSA_1.0 {
     global:
         mbedtls_base64_*;
         mbedtls_condition_variable_*;
+        mbedtls_md;
+        mbedtls_md_*;
         mbedtls_mutex_*;
         mbedtls_pk_*;
         mbedtls_platform_zeroize;

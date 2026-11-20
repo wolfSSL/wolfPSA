@@ -34,6 +34,9 @@
 #ifdef MBEDTLS_SSL_TLS_C
     #include <mbedtls/ssl.h>
 #endif /* MBEDTLS_SSL_TLS_C */
+#ifdef MBEDTLS_MD_C
+    #include <mbedtls/md.h>
+#endif /* MBEDTLS_MD_C */
 #include <stdio.h>
 #include <string.h>
 
@@ -41,6 +44,10 @@
 #include <wolfssl/certs_test.h>
 
 static int failures;
+#ifdef MBEDTLS_MD_C
+/* Set up before init, then used and freed after it */
+static mbedtls_md_context_t md;
+#endif /* MBEDTLS_MD_C */
 
 static const uint8_t msg[] = "abc";
 #ifdef MBEDTLS_PEM_PARSE_C
@@ -201,6 +208,12 @@ static void test_before_init(void)
 #ifdef MBEDTLS_SSL_TLS_C
     test_ssl(PSA_ERROR_BAD_STATE, "before init");
 #endif /* MBEDTLS_SSL_TLS_C */
+#ifdef MBEDTLS_MD_C
+    mbedtls_md_init(&md);
+    check("mbedtls_md_setup before init",
+          mbedtls_md_setup(&md, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+                           0), 0);
+#endif /* MBEDTLS_MD_C */
 
     (void)psa_hash_abort(&op);
     (void)psa_xof_abort(&xof);
@@ -293,6 +306,21 @@ static void test_after_init(void)
 #ifdef MBEDTLS_SSL_TLS_C
     test_ssl(0, "after init");
 #endif /* MBEDTLS_SSL_TLS_C */
+#ifdef MBEDTLS_MD_C
+    st = mbedtls_md_starts(&md);
+    if (st == PSA_SUCCESS) {
+        st = mbedtls_md_update(&md, msg, sizeof(msg) - 1);
+    }
+    if (st == PSA_SUCCESS) {
+        st = mbedtls_md_finish(&md, out);
+    }
+    check("mbedtls_md_starts, update, finish after init", st, PSA_SUCCESS);
+    if (st == PSA_SUCCESS) {
+        check_bytes("mbedtls_md_finish after init", out, sizeof(sha256_abc),
+                    sha256_abc, sizeof(sha256_abc));
+    }
+    mbedtls_md_free(&md);
+#endif /* MBEDTLS_MD_C */
 }
 
 /* Leaks, and frees of memory the tracker did not allocate, unbalance it */

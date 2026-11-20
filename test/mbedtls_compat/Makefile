@@ -60,7 +60,8 @@ ifeq ($(MBEDTLS_THREADING_C),1)
 PROGRAMS += $(BUILD_DIR)/programs/ssl/ssl_pthread_server
 endif
 PROGRAMS += $(BUILD_DIR)/programs/x509/load_roots \
-	$(BUILD_DIR)/programs/util/pem2der
+	$(BUILD_DIR)/programs/util/pem2der \
+	$(BUILD_DIR)/tf-psa-crypto/programs/psa/key_ladder_demo
 # strerror, run on each error code in the headers
 PROGRAMS += $(BUILD_DIR)/programs/util/strerror
 # Mbed TLS test certificates, data only. certs.c and the generated
@@ -182,7 +183,7 @@ $(addprefix $(BUILD_DIR)/,x509_crt_test ssl_test): \
 
 $(CLIENT): client-tls-mbedtls.c
 $(UNIT): $(BUILD_DIR)/%: %.c
-$(PROGRAMS): $(BUILD_DIR)/programs/%: $(MBEDTLS_PATH)/programs/%.c
+$(PROGRAMS): $(BUILD_DIR)/%: $(MBEDTLS_PATH)/%.c
 $(PROGRAMS): override CPPFLAGS += -I$(MBEDTLS_PATH)/tests/include
 $(addprefix $(BUILD_DIR)/programs/ssl/,ssl_client1 ssl_server \
 	ssl_fork_server ssl_pthread_server): $(CERTS)

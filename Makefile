@@ -299,6 +299,7 @@ UNIT_TESTS := psa_api_test \
 	psa_aead_gcm_short_tag_test \
 	psa_tf_psa_pk_test \
 	psa_tf_psa_base64_test \
+	psa_tf_psa_md_test \
 	psa_tf_psa_threading_test \
 	psa_track_memory_test
 

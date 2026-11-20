@@ -145,7 +145,8 @@ BINARIES += $(PSA_REGRESSION_TESTS)
 
 # TF-PSA-Crypto extension tests, built with the default link recipe.
 PSA_TF_PSA_TESTS = psa_tf_psa_extra_test psa_tf_psa_pk_test \
-	psa_tf_psa_base64_test
+	psa_tf_psa_base64_test \
+	psa_tf_psa_md_test
 BINARIES += $(PSA_TF_PSA_TESTS)
 
 # The pk test reads wolfSSL's test keys
@@ -220,7 +221,8 @@ $(PSA_REGRESSION_TESTS) $(PSA_TF_PSA_TESTS): %: require-wolfssl-lib \
 
 # Their expectations come from the library's generated config
 psa_server/psa_want_surface_test.o psa_server/psa_import_key_data_test.o \
-psa_server/psa_tf_psa_base64_test.o: $(wildcard $(PSA_CONFIG))
+psa_server/psa_tf_psa_base64_test.o psa_server/psa_tf_psa_md_test.o: \
+	$(wildcard $(PSA_CONFIG))
 
 ifdef WOLFSSL_HAS_PSA_TLS
 psa_tls_server: psa_server/psa_tls_server.o
