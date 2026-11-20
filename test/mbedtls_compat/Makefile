@@ -43,8 +43,8 @@ UNIT := $(addprefix $(BUILD_DIR)/,x509_crt_test pk_test pem_test ssl_test \
 # configured out of tree from WOLFSSL_PATH, so they do not depend on wolfPSA's
 # settings
 WOLFSSL_BUILD := $(BUILD_DIR)/wolfssl
-# Mbed TLS's test CA test-ca2.crt has NULL ECDSA parameters, which
-# ssl_server sends in its chain
+# DTLS for udp_proxy. Mbed TLS's test CA test-ca2.crt has NULL ECDSA
+# parameters, which ssl_server sends in its chain.
 WOLFSSL_CONFIG := --enable-static --disable-shared --enable-dtls \
 	CPPFLAGS=-DWOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED
 WOLFSSL_SERVER := $(WOLFSSL_BUILD)/examples/server/server

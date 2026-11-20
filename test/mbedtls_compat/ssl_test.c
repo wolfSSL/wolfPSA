@@ -2109,14 +2109,14 @@ static int Readable(int fd)
     return poll(&p, 1, 1000) == 1;
 }
 
-/* fd is non-blocking and bound to addr */
-static int StillBound(int fd, const struct sockaddr_storage* addr,
-    socklen_t addrLen)
+/* fd is non-blocking if nonBlock is set, blocking if not, and bound to addr */
+static int StillBound(int fd, int nonBlock,
+    const struct sockaddr_storage* addr, socklen_t addrLen)
 {
     struct sockaddr_storage now;
     socklen_t nowLen = (socklen_t)sizeof(now);
 
-    return (fcntl(fd, F_GETFL) & O_NONBLOCK) != 0 &&
+    return ((fcntl(fd, F_GETFL) & O_NONBLOCK) != 0) == nonBlock &&
         getsockname(fd, (struct sockaddr*)&now, &nowLen) == 0 &&
         nowLen == addrLen && memcmp(&now, addr, addrLen) == 0;
 }
@@ -2168,7 +2168,7 @@ static int UdpEcho(mbedtls_net_context* accepted, mbedtls_net_context* conn,
 /* Accepts two clients of host, with client_ip one byte short of ip's size,
  * then of its size */
 static int AcceptIp(const char* bindHost, const char* host,
-    const unsigned char* ip, size_t ipLen, int proto)
+    const unsigned char* ip, size_t ipLen, int proto, int nonBlock)
 {
     mbedtls_net_context bound;
     mbedtls_net_context conn[2];
@@ -2189,7 +2189,7 @@ static int AcceptIp(const char* bindHost, const char* host,
         mbedtls_net_init(&client[i]);
     }
     ok = mbedtls_net_bind(&bound, bindHost, "0", proto) == 0 &&
-        SetNonBlocking(bound.fd) &&
+        (!nonBlock || SetNonBlocking(bound.fd)) &&
         getsockname(bound.fd, (struct sockaddr*)&addr, &addrLen) == 0 &&
         getnameinfo((struct sockaddr*)&addr, addrLen, NULL, 0, port,
             sizeof(port), NI_NUMERICSERV) == 0;
@@ -2203,7 +2203,7 @@ static int AcceptIp(const char* bindHost, const char* host,
             mbedtls_net_accept(&bound, &client[i], buf, bufSz, &len) ==
                 ((bufSz < ipLen) ? MBEDTLS_ERR_NET_BUFFER_TOO_SMALL : 0) &&
             len == ipLen && (bufSz < ipLen || memcmp(buf, ip, ipLen) == 0) &&
-            StillBound(bound.fd, &addr, addrLen) &&
+            StillBound(bound.fd, nonBlock, &addr, addrLen) &&
             (!udp || UdpEcho(&client[i], &conn[i], i));
     }
     for (i = 0; i < 2; i++) {
@@ -2215,7 +2215,7 @@ static int AcceptIp(const char* bindHost, const char* host,
 }
 
 /* AcceptIp on 127.0.0.1, or ::1 with ipv6 set; any binds every address */
-static int AcceptLoopback(int ipv6, int any, int proto)
+static int AcceptLoopback(int ipv6, int any, int proto, int nonBlock)
 {
     static const unsigned char ip4[] = { 127, 0, 0, 1 };
     static const unsigned char ip6[] = {
@@ -2223,40 +2223,46 @@ static int AcceptLoopback(int ipv6, int any, int proto)
     };
 
     if (ipv6) {
-        return AcceptIp(any ? "::" : "::1", "::1", ip6, sizeof(ip6), proto);
+        return AcceptIp(any ? "::" : "::1", "::1", ip6, sizeof(ip6), proto,
+            nonBlock);
     }
     return AcceptIp(any ? "0.0.0.0" : "127.0.0.1", "127.0.0.1", ip4,
-        sizeof(ip4), proto);
+        sizeof(ip4), proto, nonBlock);
 }
 
 static int AcceptIpv4(void)
 {
-    return AcceptLoopback(0, 0, MBEDTLS_NET_PROTO_TCP);
+    return AcceptLoopback(0, 0, MBEDTLS_NET_PROTO_TCP, 1);
 }
 
 static int AcceptIpv6(void)
 {
-    return AcceptLoopback(1, 0, MBEDTLS_NET_PROTO_TCP);
+    return AcceptLoopback(1, 0, MBEDTLS_NET_PROTO_TCP, 1);
 }
 
 static int AcceptUdpIpv4(void)
 {
-    return AcceptLoopback(0, 0, MBEDTLS_NET_PROTO_UDP);
+    return AcceptLoopback(0, 0, MBEDTLS_NET_PROTO_UDP, 1);
 }
 
 static int AcceptUdpIpv6(void)
 {
-    return AcceptLoopback(1, 0, MBEDTLS_NET_PROTO_UDP);
+    return AcceptLoopback(1, 0, MBEDTLS_NET_PROTO_UDP, 1);
 }
 
 static int AcceptUdpAnyIpv4(void)
 {
-    return AcceptLoopback(0, 1, MBEDTLS_NET_PROTO_UDP);
+    return AcceptLoopback(0, 1, MBEDTLS_NET_PROTO_UDP, 1);
 }
 
 static int AcceptUdpAnyIpv6(void)
 {
-    return AcceptLoopback(1, 1, MBEDTLS_NET_PROTO_UDP);
+    return AcceptLoopback(1, 1, MBEDTLS_NET_PROTO_UDP, 1);
+}
+
+static int AcceptUdpBlocking(void)
+{
+    return AcceptLoopback(0, 0, MBEDTLS_NET_PROTO_UDP, 0);
 }
 
 /* Each listed suite's name gives back its ID */
@@ -2443,6 +2449,7 @@ static const struct {
     { "UDP accept, IPv6 client address", AcceptUdpIpv6 },
     { "UDP accept, bound to every IPv4 address", AcceptUdpAnyIpv4 },
     { "UDP accept, bound to every IPv6 address", AcceptUdpAnyIpv6 },
+    { "UDP accept, blocking listener", AcceptUdpBlocking },
     { "cipher suite ID from its name", SuiteIdFromName },
     { "handshake over", HandshakeOver },
 #ifdef MBEDTLS_TIMING_C
