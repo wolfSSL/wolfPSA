@@ -70,9 +70,13 @@ static const Case cases[] = {
     { IN "server7_int-ca.crt", 0, 2 },
     { IN "server7_trailing_space.crt", 0, 2 },
     { IN "cli-rsa-sha256-badalg.crt.der", ERR, 0 },
-    /* wolfSSL ignores bytes after an empty basicConstraints. Mbed TLS: ERR */
-    { IN "server5.basic-constraints-sequence-overflow.badsign.crt", 0, 1 },
-    { IN "server5.basic-constraints-sequence-overflow.selfsigned.crt", 0, 1 },
+    { IN "server5.basic-constraints-sequence-overflow.badsign.crt", ERR, 0 },
+    { IN "server5.basic-constraints-sequence-overflow.selfsigned.crt", ERR,
+        0 },
+    { "authorityKeyId_subjectKeyId_issuer_tag2_malformed.crt.der", ERR, 0 },
+    { "authorityKeyId_subjectKeyId_tag_len_malformed.crt.der", ERR, 0 },
+    { "authorityKeyId_no_keyid.crt.der", 0, 1 },
+    { IN "test-ca-any_policy_with_qualifier.crt", 0, 1 },
     /* Over WOLFSSL_MAX_PATH_LEN. Mbed TLS: 0, 1 */
     { IN "server1_pathlen_int_max-1.crt", ERR, 0 },
     /* wolfSSL skips spaces in base64. Mbed TLS: 1, 1 and ERR, 0 */
@@ -684,7 +688,50 @@ static int Extensions(void)
             MBEDTLS_ERR_X509_INVALID_EXTENSIONS,
             MBEDTLS_ERR_X509_INVALID_FORMAT },
         { "5 byte iPAddress", "30100603551D110409300787050102030405",
-            MBEDTLS_ERR_X509_INVALID_FORMAT }
+            MBEDTLS_ERR_X509_INVALID_FORMAT },
+        { "authority cert issuer not context specific",
+            "30110603551D23040A3008A1030C0161820101",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "authority cert issuer with an empty directoryName",
+            "30120603551D23040B3009A104A4023000820101",
+            MBEDTLS_ERR_X509_INVALID_NAME },
+        { "authority cert issuer with a 5 byte iPAddress",
+            "30150603551D23040E300CA10787050102030405820101",
+            MBEDTLS_ERR_X509_BAD_INPUT_DATA },
+        { "authority cert issuer with a truncated otherName OID",
+            "30130603551D23040C300AA105A00306052B820101",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "authority cert issuer without a serial number",
+            "300E0603551D2304073005A103820161",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "authority cert serial number without an issuer",
+            "300F0603551D2304083006800101820101",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "policies in a SET", "30100603551D2004093107300506032A0304",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "data after the policies",
+            "30120603551D20040B3007300506032A03040500",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "policy in a SET", "30100603551D2004093007310506032A0304",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "policy ID not an OID", "30100603551D2004093007300504032A0304",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "policy qualifiers not a SEQUENCE",
+            "30120603551D20040B3009300706032A03040500",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "data after the policy qualifiers",
+            "30140603551D20040D300B300906032A030430000500",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "policy longer than the policies", "300D0603551D200406300430050600",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "authority cert issuer name longer than the issuer",
+            "30110603551D23040A3008A103820561820101",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "data after the authority key identifier",
+            "300E0603551D23040730038001010500",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS },
+        { "data after the key usage", "30100603551D0F0101FF0406030207800500",
+            MBEDTLS_ERR_X509_INVALID_EXTENSIONS }
     };
     mbedtls_x509_crt crt;
     const mbedtls_x509_sequence* cur;
@@ -709,6 +756,16 @@ static int Extensions(void)
         fails++;
     }
     mbedtls_x509_crt_free(&crt);
+
+    /* Refused by Mbed TLS 4.2.0, accepted by later releases */
+    mbedtls_x509_crt_init(&crt);
+    ret = ParseExts(&crt, "30090603551D2304023000");
+    if (ret == 0 && !mbedtls_x509_crt_has_ext_type(&crt,
+            MBEDTLS_X509_EXT_AUTHORITY_KEY_IDENTIFIER)) {
+        ret = -1;
+    }
+    mbedtls_x509_crt_free(&crt);
+    fails += Expect("empty authority key identifier", ret, 0);
 
     mbedtls_x509_crt_init(&crt);
     if (mbedtls_x509_crt_parse_file(&crt, IN "multiple_san.crt") == 0) {
