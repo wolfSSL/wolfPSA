@@ -43,9 +43,9 @@ UNIT := $(addprefix $(BUILD_DIR)/,x509_crt_test pk_test pem_test ssl_test \
 # configured out of tree from WOLFSSL_PATH, so they do not depend on wolfPSA's
 # settings
 WOLFSSL_BUILD := $(BUILD_DIR)/wolfssl
-# Mbed TLS's test CA test-ca2.crt has NULL ECDSA parameters, which
-# ssl_server sends in its chain
-WOLFSSL_CONFIG := --enable-static --disable-shared \
+# DTLS for udp_proxy. Mbed TLS's test CA test-ca2.crt has NULL ECDSA
+# parameters, which ssl_server sends in its chain.
+WOLFSSL_CONFIG := --enable-static --disable-shared --enable-dtls \
 	CPPFLAGS=-DWOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED
 WOLFSSL_SERVER := $(WOLFSSL_BUILD)/examples/server/server
 WOLFSSL_CLIENT := $(WOLFSSL_BUILD)/examples/client/client
@@ -61,7 +61,8 @@ PROGRAMS += $(BUILD_DIR)/programs/ssl/ssl_pthread_server
 endif
 PROGRAMS += $(BUILD_DIR)/programs/x509/load_roots \
 	$(BUILD_DIR)/programs/util/pem2der \
-	$(BUILD_DIR)/tf-psa-crypto/programs/psa/key_ladder_demo
+	$(BUILD_DIR)/tf-psa-crypto/programs/psa/key_ladder_demo \
+	$(BUILD_DIR)/programs/test/udp_proxy
 # strerror, run on each error code in the headers
 PROGRAMS += $(BUILD_DIR)/programs/util/strerror
 # Mbed TLS test certificates, data only. certs.c and the generated
