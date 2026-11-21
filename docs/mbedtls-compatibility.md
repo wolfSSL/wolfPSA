@@ -122,7 +122,6 @@ TLS:
 - Renegotiation (`mbedtls_ssl_conf_renegotiation`,
   `mbedtls_ssl_renegotiate`)
 - A config without `mbedtls_ssl_config_defaults`
-- RSA keys up to 4096 bits
 - Read timeouts (`mbedtls_ssl_conf_read_timeout`,
   `mbedtls_net_recv_timeout`) and non-blocking sockets
   (`mbedtls_net_set_nonblock`, `mbedtls_net_set_block`, `mbedtls_net_poll`)
@@ -227,8 +226,6 @@ Certificate verification:
 - `mbedtls_ssl_conf_ca_chain` refuses a CRL: `mbedtls_ssl_setup` and the
   handshake then return `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE` until a CA
   list without one is set.
-- RSA keys are limited to 3072 bits, so a certificate chain with an RSA-4096
-  CA does not verify.
 - `mbedtls_ssl_conf_ca_chain` leaves out a CA that wolfSSL does not load,
   such as an expired one. A peer certificate from that CA then fails as
   `NOT_TRUSTED`, where Mbed TLS reports `EXPIRED`.
