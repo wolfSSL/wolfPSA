@@ -175,6 +175,8 @@
 #define WOLFSSL_IP_ALT_NAME
 /* The verify callbacks need the call for a peer certificate that passes */
 #define WOLFSSL_ALWAYS_VERIFY_CB
+/* Mbed TLS ends a chain at the first CA from the CA list */
+#define WOLFSSL_ALT_CERT_CHAINS
 #endif /* WOLFPSA_MBEDTLS_COMPAT */
 
 #endif /* __ZEPHYR__ */

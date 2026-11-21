@@ -22,6 +22,11 @@ TF-PSA-Crypto parts that every build has. See
   which wolfPSA's `user_settings.h` defines. A build with its own
   `USER_SETTINGS_PATH` defines them too, or rejects such certificates, for
   example Mbed TLS's `test-ca2.crt` and `test-ca-any_policy.crt`.
+- As in Mbed TLS, a chain verifies once it reaches a CA from the CA list,
+  even when the peer also sends certificates above that CA, such as a
+  cross-signed root. This needs `WOLFSSL_ALT_CERT_CHAINS`, which wolfPSA's
+  `user_settings.h` defines. A build with its own `USER_SETTINGS_PATH`
+  defines it too, or rejects such chains.
 - The X.509 API needs wolfCrypt's certificate parsing: without it (`NO_ASN`
   or `NO_CERTS`), `MBEDTLS_X509_CRT_PARSE_C` is not defined.
 - `mbedtls_ssl_session_save` and `mbedtls_ssl_session_load` need
@@ -224,6 +229,14 @@ Certificate verification:
   then above them the CA from the CA list that issued the last one. Mbed TLS
   builds the chain itself, and leaves out a certificate the peer sent once
   it reaches a CA from the list.
+- For a chain that reaches no CA from the CA list, `NOT_TRUSTED` is on the
+  peer's own certificate, at depth 0. Mbed TLS sets it on the top of the
+  chain.
+- A certificate the peer sends above a CA from the CA list is checked
+  against its own issuer when that issuer is in the list too, and fails the
+  chain if that check fails. Mbed TLS stops at the first CA from the list.
+  For example, a root cross-signed by an RSA-4096 CA in the list fails
+  while RSA keys are limited to 3072 bits.
 - `mbedtls_ssl_conf_ca_chain` refuses a CRL: `mbedtls_ssl_setup` and the
   handshake then return `MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE` until a CA
   list without one is set.
