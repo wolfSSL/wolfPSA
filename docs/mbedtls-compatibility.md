@@ -26,7 +26,7 @@ TF-PSA-Crypto parts that every build has. See
   even when the peer also sends certificates above that CA, such as a
   cross-signed root. This needs `WOLFSSL_ALT_CERT_CHAINS`, which wolfPSA's
   `user_settings.h` defines. A build with its own `USER_SETTINGS_PATH`
-  defines it too, or rejects such chains.
+  defines it too.
 - The X.509 API needs wolfCrypt's certificate parsing: without it (`NO_ASN`
   or `NO_CERTS`), `MBEDTLS_X509_CRT_PARSE_C` is not defined.
 - `mbedtls_ssl_session_save` and `mbedtls_ssl_session_load` need
@@ -198,8 +198,13 @@ Certificate verification:
   builds the chain itself, and leaves out a certificate the peer sent once
   it reaches a CA from the list.
 - For a chain that reaches no CA from the CA list, `NOT_TRUSTED` is on the
-  peer's own certificate, at depth 0. Mbed TLS sets it on the top of the
-  chain.
+  peer's own certificate, at depth 0, and wolfSSL checks no signature or
+  date in the chain. Mbed TLS sets `NOT_TRUSTED` on the top of the chain,
+  and flags each certificate that has expired or has a bad signature. So a
+  callback that clears `NOT_TRUSTED`, for example for a pinned peer
+  certificate, also accepts a CA in such a chain that has expired or has a
+  bad signature. A callback that clears it only on the top, for example to
+  pin a root, does not accept such a chain: add the root to the CA list.
 - A certificate the peer sends above a CA from the CA list is checked
   against its own issuer when that issuer is in the list too, and fails the
   chain if that check fails. Mbed TLS stops at the first CA from the list.
