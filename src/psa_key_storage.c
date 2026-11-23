@@ -2113,8 +2113,7 @@ psa_status_t psa_export_public_key(
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    status = wolfpsa_get_key_data(key_id, &attributes, &key_data,
-                                  &key_data_length);
+    status = psa_get_key_attributes(key_id, &attributes);
     if (status != PSA_SUCCESS) {
         return status;
     }
@@ -2127,8 +2126,12 @@ psa_status_t psa_export_public_key(
         attributes.type != PSA_KEY_TYPE_HSS_PUBLIC_KEY &&
         attributes.type != PSA_KEY_TYPE_XMSS_PUBLIC_KEY &&
         attributes.type != PSA_KEY_TYPE_XMSS_MT_PUBLIC_KEY) {
-        wolfpsa_forcezero_free_key_data(key_data, key_data_length);
         return PSA_ERROR_INVALID_ARGUMENT;
+    }
+
+    status = wolfpsa_get_key_data(key_id, NULL, &key_data, &key_data_length);
+    if (status != PSA_SUCCESS) {
+        return status;
     }
 
     if (PSA_KEY_TYPE_IS_RSA(attributes.type)) {
@@ -2596,7 +2599,6 @@ static int wolfpsa_alg2_intersect(psa_algorithm_t src_alg,
     return wolfpsa_alg_intersect(src_alg, dst_alg, alg);
 }
 
-/* Copy a key in the PSA key storage */
 /* Check a copy request against the source key and build the target's
  * attributes: usage and algorithms narrow to what both permit. */
 static psa_status_t wolfpsa_copy_attributes(const psa_key_attributes_t* src,
@@ -2633,6 +2635,7 @@ static psa_status_t wolfpsa_copy_attributes(const psa_key_attributes_t* src,
     return PSA_SUCCESS;
 }
 
+/* Copy a key in the PSA key storage */
 psa_status_t psa_copy_key(
     psa_key_id_t source_key,
     const psa_key_attributes_t* attributes,
@@ -2649,14 +2652,17 @@ psa_status_t psa_copy_key(
         return PSA_ERROR_INVALID_ARGUMENT;
     }
 
-    status = wolfpsa_get_key_data(source_key, &src_attr, &key_data,
-                                  &key_data_length);
+    status = psa_get_key_attributes(source_key, &src_attr);
     if (status == PSA_SUCCESS) {
         status = wolfpsa_copy_attributes(&src_attr, attributes, &dst_attr);
-        if (status == PSA_SUCCESS) {
-            status = psa_import_key(&dst_attr, key_data, key_data_length,
-                                    target_key);
-        }
+    }
+    if (status == PSA_SUCCESS) {
+        status = wolfpsa_get_key_data(source_key, NULL, &key_data,
+                                      &key_data_length);
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_import_key(&dst_attr, key_data, key_data_length,
+                                target_key);
         wolfpsa_forcezero_free_key_data(key_data, key_data_length);
     }
     return status;
