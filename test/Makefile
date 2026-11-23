@@ -309,6 +309,25 @@ psa_want_gated_test: psa_server/psa_want_gated_test.c $(WANTGATED_LIB) FORCE
 	$(CC) $(WANTGATED_CPPFLAGS) $(CFLAGS) -o $@ $< $(WANTGATED_LIB) \
 		$(SANITIZE_FLAGS) -lpthread -lm
 
+# The same set with CCM filtered out of PSA, for the CCM helpers' stubs
+CCMGATED_BUILD_DIR := $(abspath .)/build-ccm-gated$(if $(SANITIZE_FLAGS),-asan)
+CCMGATED_LIB := $(CCMGATED_BUILD_DIR)/libwolfpsa-ccm-gated.a
+CCMGATED_CPPFLAGS := $(subst $(SECURESET_BUILD_DIR),$(CCMGATED_BUILD_DIR),$(SECURESET_CPPFLAGS))
+
+$(CCMGATED_LIB): FORCE
+	$(MAKE) -C $(WOLFPSA_PATH) $@ \
+		LIBNAME=$@ \
+		BUILD_DIR=$(CCMGATED_BUILD_DIR) \
+		USER_SETTINGS_PATH=$(abspath secure-set) \
+		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
+		PSA_WANT_WITHOUT="PSA_WANT_ALG_CCM" \
+		CFLAGS="$(CFLAGS)" \
+		LDFLAGS="$(SANITIZE_FLAGS)"
+
+psa_ccm_gated_test: psa_server/psa_ccm_gated_test.c $(CCMGATED_LIB) FORCE
+	$(CC) $(CCMGATED_CPPFLAGS) $(CFLAGS) -o $@ $< $(CCMGATED_LIB) \
+		$(SANITIZE_FLAGS) -lpthread -lm
+
 # P-256 on the direct SP path, and the same test on the generic ecc.c build
 ECCDIRECT_BUILD_DIR := $(abspath .)/build-ecc-direct$(if $(SANITIZE_FLAGS),-asan)
 ECCDIRECT_LIB := $(ECCDIRECT_BUILD_DIR)/libwolfpsa-ecc-direct.a
@@ -479,7 +498,8 @@ clean:
 	rm -f psa_server/*.gcda psa_server/*.gcno
 	rm -rf $(abspath .)/build-secure-set $(abspath .)/build-secure-set-asan \
 		$(abspath .)/build-want-gated $(abspath .)/build-want-gated-asan \
+		$(abspath .)/build-ccm-gated $(abspath .)/build-ccm-gated-asan \
 		$(abspath .)/build-ecc-direct $(abspath .)/build-ecc-direct-asan
 	rm -f psa_secure_set_test
-	rm -f psa_want_gated_test
+	rm -f psa_want_gated_test psa_ccm_gated_test
 	rm -f psa_ecc_direct_test psa_ecc_generic_test

@@ -31,6 +31,7 @@
 #include <wolfpsa/psa_engine.h>
 #include <wolfpsa/psa_key_storage.h>
 #include <wolfpsa/psa_chacha20_poly1305.h>
+#include <wolfpsa/psa_ccm.h>
 #include <wolfssl/wolfcrypt/aes.h>
 #include <wolfssl/wolfcrypt/mem_track.h>
 #if defined(HAVE_XCHACHA) || defined(WOLFPSA_CHACHAPOLY)
@@ -631,7 +632,8 @@ static int wolfpsa_aead_stream_init(wolfpsa_aead_ctx_t *ctx)
 #endif
 
 #if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
-static psa_status_t wolfpsa_aead_ccm_start(wolfpsa_aead_ctx_t *ctx);
+static psa_status_t wolfpsa_aead_ccm_start(wolfpsa_aead_ctx_t *ctx,
+                                           int devId);
 static int wolfpsa_aead_ccm_mac(wolfpsa_aead_ctx_t *ctx, const uint8_t *in,
                                 size_t n);
 static int wolfpsa_aead_ccm_mac_flush(wolfpsa_aead_ctx_t *ctx);
@@ -685,7 +687,8 @@ static int wolfpsa_aead_stream_ad(wolfpsa_aead_ctx_t *ctx,
     if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM)) {
         *status = PSA_SUCCESS;
         if (!ctx->streaming) {
-            *status = wolfpsa_aead_ccm_start(ctx);
+            *status = wolfpsa_aead_ccm_start(ctx,
+                                             wolfPSA_GetDefaultDevID());
         }
         ctx->streaming = 1;
         if (*status == PSA_SUCCESS) {
@@ -823,7 +826,8 @@ static int wolfpsa_aead_ccm_mac(wolfpsa_aead_ctx_t *ctx, const uint8_t *in,
 
 /* Key the cipher, MAC B0, queue the AD length prefix and prime the CTR. CCM
  * requires set_lengths, so the AD and message lengths are both known here. */
-static psa_status_t wolfpsa_aead_ccm_start(wolfpsa_aead_ctx_t *ctx)
+static psa_status_t wolfpsa_aead_ccm_start(wolfpsa_aead_ctx_t *ctx,
+                                           int devId)
 {
     size_t nonce_len = ctx->nonce_length;
     size_t lenSz = 15 - nonce_len;
@@ -840,7 +844,7 @@ static psa_status_t wolfpsa_aead_ccm_start(wolfpsa_aead_ctx_t *ctx)
     ctx->ccm_lenSz = lenSz;
     ctx->ccm_tag_len = tag_len;
 
-    ret = wc_AesInit(&ctx->aes.ccm, NULL, wolfPSA_GetDefaultDevID());
+    ret = wc_AesInit(&ctx->aes.ccm, NULL, devId);
     if (ret == 0) {
         ctx->ccm_aes_inited = 1;
         ret = wc_AesSetKeyDirect(&ctx->aes.ccm, ctx->key,
@@ -900,12 +904,13 @@ static psa_status_t wolfpsa_aead_ccm_start(wolfpsa_aead_ctx_t *ctx)
 }
 
 /* Start CCM at the first data update with any AD the operation buffered. */
-static psa_status_t wolfpsa_aead_ccm_init(wolfpsa_aead_ctx_t *ctx)
+static psa_status_t wolfpsa_aead_ccm_init(wolfpsa_aead_ctx_t *ctx,
+                                          int devId)
 {
     psa_status_t status;
     int ret = 0;
 
-    status = wolfpsa_aead_ccm_start(ctx);
+    status = wolfpsa_aead_ccm_start(ctx, devId);
     if (status == PSA_SUCCESS && ctx->aad_length > 0) {
         ret = wolfpsa_aead_ccm_mac(ctx, wolfpsa_aead_nonnull_data(ctx->aad,
                                    ctx->aad_length), ctx->aad_length);
@@ -1064,7 +1069,7 @@ static psa_status_t wolfpsa_aead_stream_update(wolfpsa_aead_ctx_t *ctx,
     else if (PSA_ALG_AEAD_EQUAL(ctx->alg, PSA_ALG_CCM)) {
 #if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
         if (first) {
-            ret = wolfpsa_aead_ccm_init(ctx);
+            ret = wolfpsa_aead_ccm_init(ctx, wolfPSA_GetDefaultDevID());
             if (ret != PSA_SUCCESS) {
                 return ret;
             }
@@ -1160,6 +1165,121 @@ chacha_done:
 
     return PSA_ERROR_NOT_SUPPORTED;
 }
+
+#if defined(WOLFPSA_CCM) && defined(WOLFSSL_AES_DIRECT)
+static int wolfpsa_aead_ccm_wc_error(psa_status_t status)
+{
+    if (status == PSA_SUCCESS) {
+        return 0;
+    }
+    if (status == PSA_ERROR_INVALID_SIGNATURE) {
+        return AES_CCM_AUTH_E;
+    }
+    if (status == PSA_ERROR_INVALID_ARGUMENT) {
+        return BAD_FUNC_ARG;
+    }
+    if (status == PSA_ERROR_INSUFFICIENT_MEMORY) {
+        return MEMORY_E;
+    }
+    return WC_FAILURE;
+}
+
+static int wolfpsa_aead_ccm_oneshot(int direction, const byte* key,
+    word32 keySz, const byte* nonce, word32 nonceSz, const byte* aad,
+    word32 aadSz, const byte* in, word32 inSz, byte* out, byte* tag,
+    word32 tagSz)
+{
+#if defined(WC_AES_BITSLICED) || defined(WOLFSSL_SMALL_STACK)
+    wolfpsa_aead_ctx_t *ctx = NULL;
+#else
+    wolfpsa_aead_ctx_t ctx[1];
+#endif
+    psa_status_t status;
+
+    if (key == NULL || nonce == NULL || tag == NULL ||
+            (aad == NULL && aadSz > 0) ||
+            ((in == NULL || out == NULL) && inSz > 0) ||
+            nonceSz > sizeof(ctx->nonce) ||
+            wc_AesCcmCheckTagSize((int)tagSz) != 0) {
+        return BAD_FUNC_ARG;
+    }
+#if defined(WC_AES_BITSLICED) || defined(WOLFSSL_SMALL_STACK)
+    ctx = (wolfpsa_aead_ctx_t *)XMALLOC(sizeof(*ctx), NULL,
+                                        DYNAMIC_TYPE_TMP_BUFFER);
+    if (ctx == NULL) {
+        return MEMORY_E;
+    }
+#endif
+
+    XMEMSET(ctx, 0, sizeof(*ctx));
+    ctx->alg = PSA_ALG_CCM;
+    ctx->direction = direction;
+    ctx->key = (uint8_t *)(uintptr_t)key;
+    ctx->key_length = keySz;
+    XMEMCPY(ctx->nonce, nonce, nonceSz);
+    ctx->nonce_length = nonceSz;
+    ctx->aad = (uint8_t *)(uintptr_t)aad;
+    ctx->aad_length = aadSz;
+    ctx->ad_expected = aadSz;
+    ctx->plaintext_expected = inSz;
+    ctx->tag_length = tagSz;
+
+    status = wolfpsa_aead_ccm_init(ctx, INVALID_DEVID);
+    if (status == PSA_SUCCESS) {
+        status = wolfpsa_aead_ccm_update(ctx, in, inSz, out);
+    }
+    if (status == PSA_SUCCESS) {
+        status = wolfpsa_aead_stream_final(ctx, tag, tagSz);
+    }
+    if (ctx->ccm_aes_inited) {
+        wc_AesFree(&ctx->aes.ccm);
+    }
+    wc_ForceZero(ctx, sizeof(*ctx));
+#if defined(WC_AES_BITSLICED) || defined(WOLFSSL_SMALL_STACK)
+    XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+#endif
+    if (status != PSA_SUCCESS && !direction && inSz > 0) {
+        wc_ForceZero(out, inSz);
+    }
+    return wolfpsa_aead_ccm_wc_error(status);
+}
+
+int wolfPSA_AesCcmEncrypt(const byte* key, word32 keySz, const byte* nonce,
+    word32 nonceSz, const byte* aad, word32 aadSz, const byte* in,
+    word32 inSz, byte* out, byte* tag, word32 tagSz)
+{
+    return wolfpsa_aead_ccm_oneshot(1, key, keySz, nonce, nonceSz, aad,
+                                    aadSz, in, inSz, out, tag, tagSz);
+}
+
+int wolfPSA_AesCcmDecrypt(const byte* key, word32 keySz, const byte* nonce,
+    word32 nonceSz, const byte* aad, word32 aadSz, const byte* in,
+    word32 inSz, const byte* tag, word32 tagSz, byte* out)
+{
+    return wolfpsa_aead_ccm_oneshot(0, key, keySz, nonce, nonceSz, aad,
+                                    aadSz, in, inSz, out,
+                                    (byte*)(uintptr_t)tag, tagSz);
+}
+#elif defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT)
+/* PSA_WANT_WITHOUT dropped CCM, so its streaming code is not built */
+int wolfPSA_AesCcmEncrypt(const byte* key, word32 keySz, const byte* nonce,
+    word32 nonceSz, const byte* aad, word32 aadSz, const byte* in,
+    word32 inSz, byte* out, byte* tag, word32 tagSz)
+{
+    (void)key; (void)keySz; (void)nonce; (void)nonceSz; (void)aad;
+    (void)aadSz; (void)in; (void)inSz; (void)out; (void)tag; (void)tagSz;
+    return NOT_COMPILED_IN;
+}
+
+int wolfPSA_AesCcmDecrypt(const byte* key, word32 keySz, const byte* nonce,
+    word32 nonceSz, const byte* aad, word32 aadSz, const byte* in,
+    word32 inSz, const byte* tag, word32 tagSz, byte* out)
+{
+    (void)key; (void)keySz; (void)nonce; (void)nonceSz; (void)aad;
+    (void)aadSz; (void)in; (void)inSz; (void)tag; (void)tagSz; (void)out;
+    return NOT_COMPILED_IN;
+}
+#endif /* WOLFPSA_CCM && WOLFSSL_AES_DIRECT */
 
 psa_status_t psa_aead_update(psa_aead_operation_t *operation,
                              const uint8_t *input,
@@ -1384,7 +1504,7 @@ static psa_status_t wolfpsa_aead_encrypt_final(wolfpsa_aead_ctx_t *ctx,
         }
         /* The streaming CCM code serves one-shots too, so wolfCrypt's
          * one-shot CCM is not linked. */
-        status = wolfpsa_aead_ccm_init(ctx);
+        status = wolfpsa_aead_ccm_init(ctx, wolfPSA_GetDefaultDevID());
         if (status == PSA_SUCCESS) {
             status = wolfpsa_aead_ccm_update(ctx, input, ctx->input_length,
                                              out);
@@ -1580,7 +1700,7 @@ static psa_status_t wolfpsa_aead_decrypt_final(wolfpsa_aead_ctx_t *ctx,
         if (wc_AesCcmCheckTagSize((int)tag_length) != 0) {
             return PSA_ERROR_INVALID_SIGNATURE;
         }
-        status = wolfpsa_aead_ccm_init(ctx);
+        status = wolfpsa_aead_ccm_init(ctx, wolfPSA_GetDefaultDevID());
         if (status == PSA_SUCCESS) {
             status = wolfpsa_aead_ccm_update(ctx, input, ctx->input_length,
                                              out);

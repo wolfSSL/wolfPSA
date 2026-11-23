@@ -42,6 +42,7 @@
 
 #include <wolfpsa/psa/crypto.h>
 #include <wolfpsa/psa_engine.h>
+#include <wolfpsa/psa_ccm.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -320,6 +321,87 @@ static int check_deterministic_ecdsa_stays_local(void)
     return ret;
 }
 #endif /* WOLFSSL_ECDSA_DETERMINISTIC_K */
+
+#if defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT) && \
+    defined(PSA_WANT_ALG_CCM)
+/* wolfPSA_AesCcm*() match PSA's CCM, refuse a changed tag and never reach a
+ * device, even with one selected. Under WC_AES_BITSLICED they run on the
+ * heap. */
+static int check_ccm_helper_stays_local(void)
+{
+    static const uint8_t key[16] = { 0x2B, 0x7E, 0x15, 0x16 };
+    static const uint8_t nonce[13] = { 0x10, 0x11, 0x12 };
+    static const uint8_t aad[20] = { 0xA0, 0xA1 };
+    uint8_t pt[40];
+    uint8_t ref[sizeof(pt) + 16];
+    uint8_t ct[sizeof(pt)];
+    uint8_t tag[16];
+    uint8_t out[sizeof(pt)];
+    psa_key_attributes_t attr = psa_key_attributes_init();
+    psa_key_id_t k = PSA_KEY_ID_NULL;
+    size_t len = 0;
+    size_t i;
+    psa_status_t st;
+    int ret = 0;
+
+    XMEMSET(pt, 0x5A, sizeof(pt));
+    psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attr, 128);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT);
+    psa_set_key_algorithm(&attr, PSA_ALG_CCM);
+    st = psa_import_key(&attr, key, sizeof(key), &k);
+    if (st == PSA_SUCCESS) {
+        st = psa_aead_encrypt(k, PSA_ALG_CCM, nonce, sizeof(nonce), aad,
+                              sizeof(aad), pt, sizeof(pt), ref, sizeof(ref),
+                              &len);
+    }
+    psa_destroy_key(k);
+    if (st != PSA_SUCCESS || len != sizeof(ref))
+        return fail("ccm helper reference", st);
+
+    reset_counts(expect_devid);
+    if (wolfPSA_AesCcmEncrypt(key, sizeof(key), nonce, sizeof(nonce), aad,
+                              sizeof(aad), pt, sizeof(pt), ct, tag,
+                              sizeof(tag)) != 0 ||
+            XMEMCMP(ct, ref, sizeof(ct)) != 0 ||
+            XMEMCMP(tag, ref + sizeof(ct), sizeof(tag)) != 0) {
+        printf("FAIL wolfPSA_AesCcmEncrypt does not match psa_aead_encrypt\n");
+        ret = 1;
+    }
+    if (ret == 0 && (wolfPSA_AesCcmDecrypt(key, sizeof(key), nonce,
+                                           sizeof(nonce), aad, sizeof(aad),
+                                           ct, sizeof(ct), tag, sizeof(tag),
+                                           out) != 0 ||
+                     XMEMCMP(out, pt, sizeof(pt)) != 0)) {
+        printf("FAIL wolfPSA_AesCcmDecrypt does not open its sealing\n");
+        ret = 1;
+    }
+    tag[15] ^= 0x01;
+    if (ret == 0 && wolfPSA_AesCcmDecrypt(key, sizeof(key), nonce,
+                                          sizeof(nonce), aad, sizeof(aad),
+                                          ct, sizeof(ct), tag, sizeof(tag),
+                                          out) != AES_CCM_AUTH_E) {
+        printf("FAIL wolfPSA_AesCcmDecrypt accepted a changed tag\n");
+        ret = 1;
+    }
+    for (i = 0; ret == 0 && i < sizeof(out); i++) {
+        if (out[i] != 0) {
+            printf("FAIL wolfPSA_AesCcmDecrypt kept plaintext after a bad"
+                   " tag\n");
+            ret = 1;
+        }
+    }
+    if (ret == 0 && seen_total != 0) {
+        printf("FAIL the CCM helpers dispatched %d call(s) to a device\n",
+               seen_total);
+        ret = 1;
+    }
+    else if (ret == 0) {
+        printf("CCM helpers: match PSA, refuse a bad tag, stayed local\n");
+    }
+    return ret;
+}
+#endif
 
 #ifdef HAVE_ED25519
 static int exercise_eddsa(void)
@@ -894,6 +976,14 @@ int main(void)
         ret = check_kdf_dispatch();
     }
     reset_counts(TEST_DEVID);
+
+#if defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT) && \
+    defined(PSA_WANT_ALG_CCM)
+    if (ret == 0) {
+        ret = check_ccm_helper_stays_local();
+    }
+    reset_counts(TEST_DEVID);
+#endif
 
     if (ret == 0) {
         ret = check_keygen_silent_device_all();

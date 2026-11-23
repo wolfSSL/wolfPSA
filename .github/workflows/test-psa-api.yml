@@ -137,6 +137,12 @@ jobs:
           make -C test psa_want_gated_test ASAN=1
           rm -rf test/.store
           ./test/psa_want_gated_test
+          make -C test psa_ccm_gated_test
+          rm -rf test/.store
+          ./test/psa_ccm_gated_test
+          make -C test psa_ccm_gated_test ASAN=1
+          rm -rf test/.store
+          ./test/psa_ccm_gated_test
 
       # The same P-256 checks on the direct SP path and on ecc.c
       - name: Run the P-256 direct path test

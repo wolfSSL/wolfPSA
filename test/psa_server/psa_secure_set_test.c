@@ -31,6 +31,8 @@
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/hmac.h>
 #include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/wolfcrypt/error-crypt.h>
+#include <wolfpsa/psa_ccm.h>
 
 #ifndef NO_ASN
 #error "build this test against test/secure-set/user_settings.h"
@@ -483,7 +485,7 @@ static void ccm_stream_ad(void)
     uint8_t ct[sizeof(pt)];
     uint8_t tag[TAG];
     uint8_t out[sizeof(pt)];
-    char what[96];
+    char what[128];
     psa_key_id_t k = PSA_KEY_ID_NULL;
     size_t len = 0;
     size_t m;
@@ -519,15 +521,37 @@ static void ccm_stream_ad(void)
                  memcmp(ref, wc, m + TAG) == 0 &&
                  ccm_parts(k, 0, nonce, ad, ad_lens[i], pt, m, ct, NULL,
                            tag) == PSA_SUCCESS &&
+                 memcmp(ct, wc, m) == 0 && memcmp(tag, wc + m, TAG) == 0 &&
+                 wolfPSA_AesCcmEncrypt(key, sizeof(key),
+                                       nonce, sizeof(nonce), ad,
+                                       (word32)ad_lens[i], pt, (word32)m, ct,
+                                       tag, TAG) == 0 &&
                  memcmp(ct, wc, m) == 0 && memcmp(tag, wc + m, TAG) == 0;
             snprintf(what, sizeof(what),
-                     "CCM one-shot and multipart with a %zu-byte AD and "
-                     "%zu-byte message match wolfCrypt", ad_lens[i], m);
+                     "CCM one-shot, multipart and helper, %zu-byte AD, "
+                     "%zu-byte message, match wolfCrypt",
+                     ad_lens[i], m);
             check(ok, what);
             ok = ccm_parts(k, 1, nonce, ad, ad_lens[i], ref, m, out,
                            ref + m, NULL) == PSA_SUCCESS &&
                  memcmp(out, pt, m) == 0;
+            memset(out, 0xAA, sizeof(out));
+            ok = ok && wolfPSA_AesCcmDecrypt(key, sizeof(key),
+                                             nonce, sizeof(nonce), ad,
+                                             (word32)ad_lens[i], ref,
+                                             (word32)m, ref + m, TAG,
+                                             out) == 0 &&
+                 memcmp(out, pt, m) == 0;
             ad[ad_lens[i] - 1] ^= 0x80;
+            memset(out, 0xAA, sizeof(out));
+            ok = ok && wolfPSA_AesCcmDecrypt(key, sizeof(key),
+                                             nonce, sizeof(nonce), ad,
+                                             (word32)ad_lens[i], ref,
+                                             (word32)m, ref + m, TAG,
+                                             out) == AES_CCM_AUTH_E;
+            for (j = 0; j < m; j++) {
+                ok = ok && out[j] == 0;
+            }
             ok = ok && ccm_parts(k, 1, nonce, ad, ad_lens[i], ref, m, out,
                                  ref + m, NULL) ==
                  PSA_ERROR_INVALID_SIGNATURE;
@@ -541,12 +565,35 @@ static void ccm_stream_ad(void)
             }
             ad[ad_lens[i] - 1] ^= 0x80;
             snprintf(what, sizeof(what),
-                     "CCM opens with a %zu-byte AD and both reject a "
+                     "CCM opens with a %zu-byte AD and all reject a "
                      "changed last AD byte, releasing no plaintext",
                      ad_lens[i]);
             check(ok, what);
         }
     }
+    /* ref holds the last loop's sealing: the longest AD, the full message */
+    memcpy(out, ref, sizeof(out));
+    check(wolfPSA_AesCcmDecrypt(key, sizeof(key), nonce,
+                                sizeof(nonce), ad, sizeof(ad), out,
+                                sizeof(out), ref + sizeof(pt), TAG,
+                                out) == 0 && memcmp(out, pt, sizeof(pt)) == 0,
+          "wolfPSA_AesCcmDecrypt opens in place");
+    check(wolfPSA_AesCcmEncrypt(key, sizeof(key), nonce, 6, ad,
+                                1, pt, sizeof(pt), ct, tag, TAG) ==
+          BAD_FUNC_ARG &&
+          wolfPSA_AesCcmEncrypt(key, sizeof(key), nonce,
+                                sizeof(nonce), ad, 1, pt, sizeof(pt), ct,
+                                tag, 5) == BAD_FUNC_ARG &&
+          wolfPSA_AesCcmEncrypt(NULL, sizeof(key), nonce,
+                                sizeof(nonce), ad, 1, pt, sizeof(pt), ct,
+                                tag, TAG) == BAD_FUNC_ARG &&
+          wolfPSA_AesCcmEncrypt(key, sizeof(key), nonce,
+                                sizeof(nonce), NULL, 1, pt, sizeof(pt), ct,
+                                tag, TAG) == BAD_FUNC_ARG &&
+          wolfPSA_AesCcmEncrypt(key, 15, nonce, sizeof(nonce),
+                                ad, 1, pt, sizeof(pt), ct, tag, TAG) != 0,
+          "wolfPSA_AesCcmEncrypt refuses a short nonce, an odd tag, a NULL "
+          "key or AD, and a bad key length");
     wc_AesFree(&aes);
     (void)psa_destroy_key(k);
 }
