@@ -37,6 +37,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef NO_RSA
+int main(void)
+{
+    printf("RSA-4096 tests: skipped, NO_RSA\n");
+    return 0;
+}
+#else
 #define USE_CERT_BUFFERS_4096
 #include <wolfssl/certs_test.h>
 
@@ -212,3 +219,4 @@ int main(void)
     printf("RSA-4096 tests: %d failure(s)\n", failures);
     return 1;
 }
+#endif /* NO_RSA */

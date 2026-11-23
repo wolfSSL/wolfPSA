@@ -2553,6 +2553,9 @@ int main(void)
             fails++;
         }
     }
+#ifndef TEST_RSA_4096
+    printf("SKIP: RSA-4096 cases, RSA_MAX_SIZE below 4096\n");
+#endif /* !TEST_RSA_4096 */
     mbedtls_pk_free(&singleLabelKey);
     mbedtls_x509_crt_free(&singleLabel);
     mbedtls_x509_crt_free(&ipSan);

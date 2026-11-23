@@ -54,10 +54,8 @@
 #define WOLFSSL_HAVE_SP_RSA
 #define WOLFSSL_HAVE_SP_ECC
 #define WOLFSSL_SP_1024
-#ifndef NO_RSA
 /* RSA keys up to PSA_VENDOR_RSA_MAX_KEY_BITS */
 #define WOLFSSL_SP_4096
-#endif /* !NO_RSA */
 #define WOLFSSL_SP_384
 #define HAVE_SP_ECC
 #define RSA_MIN_SIZE 1024
