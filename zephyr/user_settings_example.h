@@ -79,6 +79,8 @@ extern "C" {
 #define WOLFSSL_HAVE_SP_RSA
 #define WOLFSSL_HAVE_SP_ECC
 #define WOLFSSL_SP_1024
+/* RSA keys up to PSA_VENDOR_RSA_MAX_KEY_BITS */
+#define WOLFSSL_SP_4096
 #define WOLFSSL_SP_384
 #define HAVE_SP_ECC
 

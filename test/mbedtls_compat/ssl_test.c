@@ -47,6 +47,7 @@
 #endif /* MBEDTLS_SSL_CACHE_C */
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/memory.h>
+#include <wolfssl/wolfcrypt/rsa.h>
 
 #define CA_FILE   "test-ca2.crt"
 /* A CA_FILE that is not valid until 2029, then CA_FILE */
@@ -71,6 +72,17 @@
  * files have no single-label name but localhost. */
 #define SINGLE_LABEL_FILE WOLFSSL_CERTS_DIR "/test/server-garbage.pem"
 #define SINGLE_LABEL_KEY_FILE WOLFSSL_CERTS_DIR "/server-key.pem"
+#if defined(RSA_MAX_SIZE) && RSA_MAX_SIZE >= 4096
+    #define TEST_RSA_4096
+#endif /* RSA_MAX_SIZE >= 4096 */
+/* Self-signed RSA-4096 CA, DNS name SAN example.com */
+#define RSA4096_FILE WOLFSSL_CERTS_DIR "/4096/client-cert.pem"
+#define RSA4096_KEY_FILE WOLFSSL_CERTS_DIR "/4096/client-key.pem"
+#define RSA4096_HOST "example.com"
+/* RSA-4096 intermediate CA, and the P-256 localhost certificate it issued */
+#define RSA4096_CA_FILE "test-int-ca.crt"
+#define RSA4096_LEAF_FILE "server7.crt"
+#define RSA4096_LEAF_KEY_FILE "server7.key"
 /* The CN of server5.crt and server10.crt */
 #define HOST_NAME "localhost"
 /* Handshake steps for each side */
@@ -548,6 +560,44 @@ static int SingleLabel(void)
     }
     return ok;
 }
+
+#ifdef TEST_RSA_4096
+/* ClientVerify with the CA, certificate and key in these files */
+static int ClientVerifyFiles(const char* caFile, const char* ownFile,
+    const char* keyFile, const char* host)
+{
+    mbedtls_x509_crt cas;
+    mbedtls_x509_crt own;
+    mbedtls_pk_context ownKey;
+    const Certs certs = { &cas, &own, &ownKey };
+    int ok;
+
+    mbedtls_x509_crt_init(&cas);
+    mbedtls_x509_crt_init(&own);
+    mbedtls_pk_init(&ownKey);
+    ok = mbedtls_x509_crt_parse_file(&cas, caFile) == 0 &&
+        mbedtls_x509_crt_parse_file(&own, ownFile) == 0 &&
+        mbedtls_pk_parse_keyfile(&ownKey, keyFile, NULL) == 0 &&
+        ClientVerify(&certs, host, 0, 0);
+    mbedtls_pk_free(&ownKey);
+    mbedtls_x509_crt_free(&own);
+    mbedtls_x509_crt_free(&cas);
+    return ok;
+}
+
+/* The server's certificate is the CA, so the key signs the handshake too */
+static int Rsa4096Key(void)
+{
+    return ClientVerifyFiles(RSA4096_FILE, RSA4096_FILE, RSA4096_KEY_FILE,
+        RSA4096_HOST);
+}
+
+static int Rsa4096Ca(void)
+{
+    return ClientVerifyFiles(RSA4096_CA_FILE, RSA4096_LEAF_FILE,
+        RSA4096_LEAF_KEY_FILE, HOST_NAME);
+}
+#endif /* TEST_RSA_4096 */
 
 /* The server's extended key usage only: the server reports the flag */
 static int ClientCertUsage(void)
@@ -2436,6 +2486,10 @@ static const struct {
     { "IP address SANs", IpSan },
     { "wrong IP address or DNS name", IpSanWrong },
     { "host name without a dot", SingleLabel },
+#ifdef TEST_RSA_4096
+    { "RSA-4096 server key", Rsa4096Key },
+    { "RSA-4096 CA", Rsa4096Ca },
+#endif /* TEST_RSA_4096 */
     { "client certificate for servers only", ClientCertUsage },
     { "VERIFY_NONE", VerifyNone },
     { "CA list set before config_defaults", CaChainBeforeDefaults },
@@ -2568,6 +2622,9 @@ int main(void)
             fails++;
         }
     }
+#ifndef TEST_RSA_4096
+    printf("SKIP: RSA-4096 cases, RSA_MAX_SIZE below 4096\n");
+#endif /* !TEST_RSA_4096 */
     mbedtls_pk_free(&singleLabelKey);
     mbedtls_x509_crt_free(&singleLabel);
     mbedtls_x509_crt_free(&ipSan);
