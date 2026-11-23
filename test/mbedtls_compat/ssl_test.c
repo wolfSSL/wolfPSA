@@ -60,6 +60,10 @@
 #define LEAF_FILE  "server10.crt"
 #define LEAF_KEY_FILE "server10.key"
 #define ROOT_FILE  "test-ca.crt"
+/* localhost, then intermediate CA 3 with a bad signature */
+#define BAD_SIG_FILE "server10_int3-bs.pem"
+/* The issuer of CA 3, the last intermediate CA of CHAIN_FILE */
+#define INT_CA2_FILE "test-int-ca2.crt"
 /* Self-signed with server5.key, IP address SANs 97.98.99.100 and
  * 6162:6364:2E65:7861:6D70:6C65:2E63:6F6D, the bytes of abcd.example.com */
 #define IP_SAN_FILE "server5-tricky-ip-san.crt.der"
@@ -121,6 +125,7 @@ typedef struct {
     int calls;
     int same; /* each certificate and the list after it was as expected */
     uint32_t clear;
+    const mbedtls_x509_crt* pin; /* when set, clear only for this list */
     uint32_t set; /* at depth 0 */
     int ret;
     int ret2; /* the client's result in a second handshake */
@@ -132,6 +137,8 @@ static mbedtls_x509_crt cert;
 static mbedtls_pk_context key;
 static mbedtls_x509_crt root;
 static mbedtls_x509_crt chain;
+/* CHAIN_FILE with CA 3's signature broken */
+static mbedtls_x509_crt badSig;
 static mbedtls_x509_crt leaf;
 static mbedtls_pk_context leafKey;
 static mbedtls_x509_crt ekuSrv;
@@ -146,6 +153,8 @@ static const Certs singleLabelCerts = { &singleLabel, &singleLabel,
 static const Certs chainCerts = { &root, &chain, &leafKey };
 /* The client does not trust it */
 static const Certs untrustedCerts = { &ca, &chain, &leafKey };
+/* The client trusts the root of the chain with a bad CA 3 */
+static const Certs badSigCerts = { &root, &badSig, &leafKey };
 static Pipe toClient;
 static Pipe toServer;
 static Peer cli;
@@ -462,6 +471,24 @@ static int VerifyUntrusted(void)
         MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, MBEDTLS_X509_BADCERT_NOT_TRUSTED);
 }
 
+/* The client trusts a CA below the top, as with a cross-signed root */
+static int VerifyToIntermediate(void)
+{
+    const mbedtls_x509_crt* crt;
+    mbedtls_x509_crt mid;
+    const Certs certs = { &mid, &chain, &leafKey };
+    int ok = 1;
+
+    for (crt = chain.next; ok && crt != NULL; crt = crt->next) {
+        mbedtls_x509_crt_init(&mid);
+        ok = mbedtls_x509_crt_parse_der(&mid, crt->raw.p, crt->raw.len) ==
+                0 &&
+            ClientVerify(&certs, HOST_NAME, 0, 0);
+        mbedtls_x509_crt_free(&mid);
+    }
+    return ok;
+}
+
 /* IP address host names, matched against the IP address SANs */
 static int IpSan(void)
 {
@@ -673,7 +700,9 @@ static int VerifyCb(void* ctx, mbedtls_x509_crt* crt, int depth,
         v->same &= SameList(crt, v->want[depth]);
     }
     v->calls++;
-    *flags &= ~v->clear;
+    if (v->pin == NULL || SameList(crt, v->pin)) {
+        *flags &= ~v->clear;
+    }
     if (depth == 0) {
         *flags |= v->set;
     }
@@ -738,8 +767,43 @@ static int VerifyTopDown(void)
     return ok;
 }
 
-/* The flags of the untrusted top of the chain, cleared */
+/* An untrusted chain's NOT_TRUSTED, on the peer's certificate, cleared. The
+ * CAs have no flag, as wolfSSL checks no signature above the peer's. */
+static int VerifyClearChain(mbedtls_x509_crt* own)
+{
+    const Certs certs = { &ca, own, &leafKey };
+    Verify v;
+    int s;
+    int ok;
+
+    VerifyInit(&v);
+    v.clear = MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+    v.want[0] = own;
+    v.want[1] = own->next;
+    v.want[2] = own->next->next;
+    ok = VerifyPeers(MBEDTLS_SSL_VERIFY_REQUIRED, &certs, HOST_NAME, &v) &&
+        Handshake(&s) == 0 && s == 0 && TopDown(&v, 3) && v.same &&
+        (v.flags[0] | v.flags[1]) == 0 &&
+        v.flags[2] == MBEDTLS_X509_BADCERT_NOT_TRUSTED &&
+        mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
 static int VerifyClear(void)
+{
+    return VerifyClearChain(&chain);
+}
+
+static int VerifyClearBadSig(void)
+{
+    return VerifyClearChain(&badSig);
+}
+
+/* NOT_TRUSTED cleared only on the top of an untrusted chain, as to pin a
+ * root, leaves the peer's certificate untrusted */
+static int VerifyPinTop(void)
 {
     Verify v;
     int s;
@@ -747,15 +811,14 @@ static int VerifyClear(void)
 
     VerifyInit(&v);
     v.clear = MBEDTLS_X509_BADCERT_NOT_TRUSTED;
-    v.want[0] = &chain;
-    v.want[1] = chain.next;
-    v.want[2] = chain.next->next;
+    v.pin = chain.next->next;
     ok = VerifyPeers(MBEDTLS_SSL_VERIFY_REQUIRED, &untrustedCerts, HOST_NAME,
             &v) &&
-        Handshake(&s) == 0 && s == 0 && TopDown(&v, 3) && v.same &&
-        v.flags[0] == MBEDTLS_X509_BADCERT_NOT_TRUSTED &&
-        (v.flags[1] | v.flags[2]) == 0 &&
-        mbedtls_ssl_get_verify_result(&cli.ssl) == 0;
+        Handshake(&s) == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED &&
+        TopDown(&v, 3) && v.flags[0] == 0 &&
+        v.flags[2] == MBEDTLS_X509_BADCERT_NOT_TRUSTED &&
+        mbedtls_ssl_get_verify_result(&cli.ssl) ==
+            MBEDTLS_X509_BADCERT_NOT_TRUSTED;
     PeerFree(&cli);
     PeerFree(&srv);
     return ok;
@@ -991,8 +1054,8 @@ static int VerifyContext(void)
     return ok;
 }
 
-/* After a handshake that accepted the untrusted CAs of the chain, or
- * rejected them, the next handshake on the config does not trust them */
+/* After a handshake that accepted CA 3 with its bad signature, or rejected
+ * it, the next handshake on the config does not trust it */
 static int VerifyNoCaCache(int authmode, uint32_t clear, int want)
 {
     const Certs leafCerts = { &ca, &leaf, &leafKey };
@@ -1002,7 +1065,7 @@ static int VerifyNoCaCache(int authmode, uint32_t clear, int want)
 
     VerifyInit(&v);
     v.clear = clear;
-    ok = VerifyPeers(authmode, &untrustedCerts, HOST_NAME, &v) &&
+    ok = VerifyPeers(authmode, &badSigCerts, HOST_NAME, &v) &&
         Handshake(&s) == want;
     PeerFree(&srv);
     if (ok) {
@@ -1067,22 +1130,21 @@ static int VerifySecondCb(void* ctx, mbedtls_x509_crt* crt, int depth,
     return 0;
 }
 
-/* While the verify callback of a handshake runs, after wolfSSL accepted the
- * untrusted CAs of its chain, a handshake on the same config does not trust
- * them */
+/* While the verify callback of a handshake runs, after wolfSSL accepted CA 3
+ * with its bad signature, a handshake on the same config does not trust it */
 static int NoCaCacheDuringVerify(void)
 {
     Verify v;
     int s;
     int ok = PeerNewCerts(&cli, MBEDTLS_SSL_IS_CLIENT,
-            MBEDTLS_SSL_VERIFY_REQUIRED, &untrustedCerts, 1, HOST_NAME) == 0 &&
+            MBEDTLS_SSL_VERIFY_REQUIRED, &badSigCerts, 1, HOST_NAME) == 0 &&
         PeerNewCerts(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE,
-            &untrustedCerts, 0, NULL) == 0;
+            &badSigCerts, 0, NULL) == 0;
 
     VerifyInit(&v);
     if (ok) {
         mbedtls_ssl_set_verify(&cli.ssl, VerifySecondCb, &v);
-        ok = Handshake(&s) == 0 && s == 0 && v.calls == 3 &&
+        ok = Handshake(&s) == 0 && s == 0 && v.calls == 4 &&
             v.ret2 == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED &&
             v.flags2 == MBEDTLS_X509_BADCERT_NOT_TRUSTED;
     }
@@ -2370,6 +2432,7 @@ static const struct {
     { "host name set after the handshake", HostAfterHandshake },
     { "chain with intermediate CAs", VerifyChain },
     { "untrusted chain", VerifyUntrusted },
+    { "chain ends at a trusted intermediate CA", VerifyToIntermediate },
     { "IP address SANs", IpSan },
     { "wrong IP address or DNS name", IpSanWrong },
     { "host name without a dot", SingleLabel },
@@ -2378,6 +2441,9 @@ static const struct {
     { "CA list set before config_defaults", CaChainBeforeDefaults },
     { "verify callback, top down", VerifyTopDown },
     { "verify callback clears NOT_TRUSTED", VerifyClear },
+    { "verify callback clears NOT_TRUSTED, CA with a bad signature",
+        VerifyClearBadSig },
+    { "verify callback clears NOT_TRUSTED on the top only", VerifyPinTop },
     { "verify callback clears NOT_TRUSTED, self-signed",
         VerifyClearSelfSigned },
     { "verify callback clears CN_MISMATCH", VerifyClearHost },
@@ -2388,10 +2454,10 @@ static const struct {
     { "verify callback error", VerifyError },
     { "verify callback returns CERT_VERIFY_FAILED", VerifyErrorVerifyFailed },
     { "verify callback on the context", VerifyContext },
-    { "untrusted chain CA not kept, OPTIONAL", NoCaCacheOptional },
-    { "untrusted chain CA not kept, cleared", NoCaCacheCleared },
-    { "untrusted chain CA not kept, rejected", NoCaCacheRejected },
-    { "untrusted chain CA not used during the verify callback",
+    { "accepted chain CA not kept, OPTIONAL", NoCaCacheOptional },
+    { "accepted chain CA not kept, cleared", NoCaCacheCleared },
+    { "accepted chain CA not kept, rejected", NoCaCacheRejected },
+    { "accepted chain CA not used during the verify callback",
         NoCaCacheDuringVerify },
     { "write and read", ReadWrite },
     { "zero-length write", WriteZero },
@@ -2468,6 +2534,7 @@ int main(void)
     mbedtls_pk_init(&key);
     mbedtls_x509_crt_init(&root);
     mbedtls_x509_crt_init(&chain);
+    mbedtls_x509_crt_init(&badSig);
     mbedtls_x509_crt_init(&leaf);
     mbedtls_pk_init(&leafKey);
     mbedtls_x509_crt_init(&ekuSrv);
@@ -2480,6 +2547,8 @@ int main(void)
             mbedtls_pk_parse_keyfile(&key, KEY_FILE, NULL) != 0 ||
             mbedtls_x509_crt_parse_file(&root, ROOT_FILE) != 0 ||
             mbedtls_x509_crt_parse_file(&chain, CHAIN_FILE) != 0 ||
+            mbedtls_x509_crt_parse_file(&badSig, BAD_SIG_FILE) != 0 ||
+            mbedtls_x509_crt_parse_file(&badSig, INT_CA2_FILE) != 0 ||
             mbedtls_x509_crt_parse_file(&leaf, LEAF_FILE) != 0 ||
             mbedtls_pk_parse_keyfile(&leafKey, LEAF_KEY_FILE, NULL) != 0 ||
             mbedtls_x509_crt_parse_file(&ekuSrv, EKU_SRV_FILE) != 0 ||
@@ -2505,6 +2574,7 @@ int main(void)
     mbedtls_x509_crt_free(&ekuSrv);
     mbedtls_pk_free(&leafKey);
     mbedtls_x509_crt_free(&leaf);
+    mbedtls_x509_crt_free(&badSig);
     mbedtls_x509_crt_free(&chain);
     mbedtls_x509_crt_free(&root);
     mbedtls_pk_free(&key);

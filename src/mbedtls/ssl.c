@@ -60,6 +60,10 @@
 #ifndef WOLFSSL_ALWAYS_VERIFY_CB
     #error "wolfPSA: MBEDTLS_COMPAT needs WOLFSSL_ALWAYS_VERIFY_CB"
 #endif /* !WOLFSSL_ALWAYS_VERIFY_CB */
+/* Mbed TLS ends a chain at the first CA from the CA list */
+#ifndef WOLFSSL_ALT_CERT_CHAINS
+    #error "wolfPSA: MBEDTLS_COMPAT needs WOLFSSL_ALT_CERT_CHAINS"
+#endif /* !WOLFSSL_ALT_CERT_CHAINS */
 
 /* Unknown codes map to the last entry */
 int MbedIoErr(int code, int dir, int toWolf)
