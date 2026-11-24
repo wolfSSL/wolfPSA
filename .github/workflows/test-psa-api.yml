@@ -90,6 +90,24 @@ jobs:
       - name: Build wolfPSA
         run: make
 
+      # Ports that run GCM whole have no GCM stream for one-shot GCM to use
+      - name: Refuse WOLFPSA_GCM_ONESHOT_STREAM on whole-message GCM ports
+        run: |
+          mkdir -p build/gcm-stubs
+          touch build/gcm-stubs/kcapi.h
+          for port in WOLF_CRYPTO_CB_FIND FREESCALE_LTC_AES_GCM WOLFSSL_SECO_CAAM \
+              WOLFSSL_AFALG WOLFSSL_AFALG_XILINX_AES WOLFSSL_KCAPI_AES \
+              WOLFSSL_DEVCRYPTO_AES WOLFSSL_TI_CRYPT; do
+            if cc -fsyntax-only -DWOLFSSL_USER_SETTINGS -I. -I../wolfssl -Iwolfpsa \
+                -Isrc -Ibuild/include -Ibuild/gcm-stubs -DWOLFPSA_GCM_ONESHOT_STREAM \
+                -D"$port" src/psa_aead.c 2> "build/gcm-$port.err"; then
+              echo "$port: one-shot GCM stream accepted"
+              exit 1
+            fi
+            grep -q 'WOLFPSA_GCM_ONESHOT_STREAM needs software GCM' "build/gcm-$port.err" || \
+              { cat "build/gcm-$port.err"; exit 1; }
+          done
+
       - name: Build sibling wolfSSL for wolfPSA tests
         run: make -C test rebuild-wolfssl-psa
 

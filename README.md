@@ -130,6 +130,14 @@ Define it only when nothing else can change those buffers during the call,
 for example a Secure service whose inputs sit in its own memory. Outputs that
 partly overlap the input or overlap the AAD still take the copying path.
 
+`WOLFPSA_GCM_ONESHOT_STREAM` runs one-shot GCM on the GCM stream, so an image
+linked with `-ffunction-sections -Wl,--gc-sections` drops `wc_AesGcmEncrypt()`
+and `wc_AesGcmDecrypt()` unless other code calls them. It also builds
+`wolfPSA_AesGcmEncrypt()` and `wolfPSA_AesGcmDecrypt()` for other code in the
+same image. It needs `WOLFSSL_AESGCM_STREAM` and software GCM: ports that run
+GCM whole in hardware, and `WOLF_CRYPTO_CB_FIND`, stop the build. With a
+crypto callback device selected, one-shot GCM still goes to the device whole.
+
 `WOLFPSA_AEAD_STREAM_AAD` feeds multipart GCM and ChaCha20-Poly1305 AAD into
 the cipher as `psa_aead_update_ad()` receives it, so the operation holds no
 copy of the AAD however long it is. `psa_aead_update()` then needs an output

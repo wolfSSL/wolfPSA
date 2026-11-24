@@ -28,15 +28,15 @@
 #if defined(WOLFSSL_PSA_ENGINE) && defined(HAVE_AESCCM) && \
     defined(WOLFSSL_AES_DIRECT)
 
-/* One-shot AES-CCM on wolfPSA's streaming CCM, for code built into the same
- * image that would otherwise link wolfCrypt's one-shot CCM too. They run in
- * software, touch no wolfPSA state, and return 0, BAD_FUNC_ARG,
- * AES_CCM_AUTH_E for a tag mismatch (the output is then zeroed),
- * NOT_COMPILED_IN when PSA_WANT_WITHOUT drops CCM, or a wolfCrypt error. */
-WOLFSSL_LOCAL int wolfPSA_AesCcmEncrypt(const byte* key, word32 keySz,
+/* One-shot AES-CCM on wolfPSA's streaming CCM, with INVALID_DEVID. Returns 0,
+ * BAD_FUNC_ARG, MEMORY_E, AES_CCM_AUTH_E (output zeroed), NOT_COMPILED_IN
+ * when CCM is not built, or WC_FAILURE. */
+WOLFSSL_LOCAL WARN_UNUSED_RESULT
+int wolfPSA_AesCcmEncrypt(const byte* key, word32 keySz,
     const byte* nonce, word32 nonceSz, const byte* aad, word32 aadSz,
     const byte* in, word32 inSz, byte* out, byte* tag, word32 tagSz);
-WOLFSSL_LOCAL WARN_UNUSED_RESULT int wolfPSA_AesCcmDecrypt(const byte* key, word32 keySz,
+WOLFSSL_LOCAL WARN_UNUSED_RESULT
+int wolfPSA_AesCcmDecrypt(const byte* key, word32 keySz,
     const byte* nonce, word32 nonceSz, const byte* aad, word32 aadSz,
     const byte* in, word32 inSz, const byte* tag, word32 tagSz, byte* out);
 

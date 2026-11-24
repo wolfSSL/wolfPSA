@@ -245,14 +245,15 @@ CRYPTOCB_LIB := $(CRYPTOCB_BUILD_DIR)/libwolfpsa-cryptocb.a
 VARIANT_SETTINGS := $(abspath $(USER_SETTINGS_PATH))
 VARIANT_INC := -I$(abspath $(WOLFSSL_PATH)) -I$(VARIANT_SETTINGS) \
 	-I$(WOLFPSA_ABS) -I$(WOLFPSA_ABS)/wolfpsa -I$(WOLFPSA_ABS)/src
-CRYPTOCB_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLF_CRYPTO_CB $(VARIANT_INC) \
+CRYPTOCB_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLF_CRYPTO_CB \
+	-DWOLFPSA_GCM_ONESHOT_STREAM $(VARIANT_INC) \
 	-I$(CRYPTOCB_BUILD_DIR)/include
 
 # FORCE, because only the sub-make knows whether a library source changed.
 # Without it make treats the existing archive as permanently up to date and
 # the test relinks against a stale copy of the code it is meant to guard.
 $(CRYPTOCB_LIB): FORCE
-	$(call variant_lib,$(CRYPTOCB_BUILD_DIR),-DWOLF_CRYPTO_CB)
+	$(call variant_lib,$(CRYPTOCB_BUILD_DIR),-DWOLF_CRYPTO_CB -DWOLFPSA_GCM_ONESHOT_STREAM)
 
 # Build a library variant: $(1) is its build dir, $(2) its extra defines and
 # $(3) its extra make variables

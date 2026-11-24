@@ -25,6 +25,8 @@
 #include <psa/crypto.h>
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/wolfcrypt/error-crypt.h>
+#include <wolfpsa/psa_gcm.h>
 
 #if !defined(HAVE_AESGCM) || !defined(HAVE_AESCCM)
 #error "this test needs wolfCrypt GCM and CCM"
@@ -122,6 +124,14 @@ static void test_wolfcrypt_gcm_kept(void)
                           tag, sizeof(tag), NULL, 0) == 0;
     wc_AesFree(&aes);
     check(ok, "wolfCrypt one-shot GCM is still available");
+#ifdef WOLFSSL_AESGCM_STREAM
+    check(wolfPSA_AesGcmEncrypt(key, sizeof(key), iv, sizeof(iv), NULL, 0,
+                                pt, sizeof(pt), ct, tag, sizeof(tag)) ==
+          NOT_COMPILED_IN, "wolfPSA_AesGcmEncrypt reports NOT_COMPILED_IN");
+    check(wolfPSA_AesGcmDecrypt(key, sizeof(key), iv, sizeof(iv), NULL, 0,
+                                ct, sizeof(pt), tag, sizeof(tag), pt) ==
+          NOT_COMPILED_IN, "wolfPSA_AesGcmDecrypt reports NOT_COMPILED_IN");
+#endif
 }
 
 static psa_status_t kdf_run(psa_algorithm_t alg)

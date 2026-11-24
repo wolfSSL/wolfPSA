@@ -43,6 +43,7 @@
 #include <wolfpsa/psa/crypto.h>
 #include <wolfpsa/psa_engine.h>
 #include <wolfpsa/psa_ccm.h>
+#include <wolfpsa/psa_gcm.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -64,6 +65,7 @@ static int mute_keygen_pk_type = WC_PK_TYPE_NONE;
 
 static int seen[WC_ALGO_TYPE_MAX + 1];
 static int seen_total;
+static int seen_gcm;
 static int seen_wrong_devid;
 static int expect_devid = INVALID_DEVID;
 
@@ -100,6 +102,12 @@ static int count_cb(int devId, wc_CryptoInfo *info, void *ctx)
     else if (info != NULL && info->algo_type >= 0 &&
              info->algo_type <= WC_ALGO_TYPE_MAX) {
         seen[info->algo_type]++;
+#ifdef HAVE_AESGCM
+        if (info->algo_type == WC_ALGO_TYPE_CIPHER &&
+            info->cipher.type == WC_CIPHER_AES_GCM) {
+            seen_gcm++;
+        }
+#endif
     }
     seen_total++;
 
@@ -125,6 +133,7 @@ static void reset_counts(int devId)
 {
     XMEMSET(seen, 0, sizeof(seen));
     seen_total = 0;
+    seen_gcm = 0;
     seen_wrong_devid = 0;
     expect_devid = devId;
 }
@@ -322,12 +331,72 @@ static int check_deterministic_ecdsa_stays_local(void)
 }
 #endif /* WOLFSSL_ECDSA_DETERMINISTIC_K */
 
-#if defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT) && \
-    defined(PSA_WANT_ALG_CCM)
-/* wolfPSA_AesCcm*() match PSA's CCM, refuse a changed tag and never reach a
- * device, even with one selected. Under WC_AES_BITSLICED they run on the
- * heap. */
-static int check_ccm_helper_stays_local(void)
+#if defined(HAVE_AESGCM) && defined(PSA_WANT_ALG_GCM)
+/* One-shot PSA GCM hands the whole AEAD to the selected device, as wolfCrypt's
+ * one-shot GCM does, rather than running on the local GCM stream. */
+static int check_gcm_oneshot_dispatch(void)
+{
+    static const uint8_t key[16] = { 0x2B, 0x7E };
+    static const uint8_t nonce[12] = { 0x10, 0x11 };
+    uint8_t pt[24];
+    uint8_t ct[sizeof(pt) + 16];
+    uint8_t back[sizeof(pt)];
+    psa_key_attributes_t attr = psa_key_attributes_init();
+    psa_key_id_t k = PSA_KEY_ID_NULL;
+    size_t clen = 0;
+    size_t plen = 0;
+    psa_status_t st;
+    int ret = 0;
+
+    XMEMSET(pt, 0x3C, sizeof(pt));
+    psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attr, 128);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT |
+                            PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attr, PSA_ALG_GCM);
+    st = psa_import_key(&attr, key, sizeof(key), &k);
+    if (st != PSA_SUCCESS)
+        return fail("gcm dispatch import", st);
+    reset_counts(expect_devid);
+    st = psa_aead_encrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), NULL, 0, pt,
+                          sizeof(pt), ct, sizeof(ct), &clen);
+    if (st == PSA_SUCCESS) {
+        st = psa_aead_decrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), NULL, 0,
+                              ct, clen, back, sizeof(back), &plen);
+    }
+    psa_destroy_key(k);
+    if (st != PSA_SUCCESS || plen != sizeof(pt) ||
+            XMEMCMP(back, pt, sizeof(pt)) != 0) {
+        ret = fail("gcm one-shot round trip", st);
+    }
+    else if (seen_gcm != 2) {
+        printf("FAIL one-shot GCM reached the device %d time(s), expected 2\n",
+               seen_gcm);
+        ret = 1;
+    }
+    else {
+        printf("one-shot GCM: dispatched whole to the device\n");
+    }
+    return ret;
+}
+#endif
+
+#if (defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT) && \
+     defined(PSA_WANT_ALG_CCM)) || \
+    (defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM) && \
+     defined(PSA_WANT_ALG_GCM) && defined(WOLFPSA_GCM_ONESHOT_STREAM))
+typedef int (*aead_enc_fn)(const byte* key, word32 keySz, const byte* nonce,
+    word32 nonceSz, const byte* aad, word32 aadSz, const byte* in,
+    word32 inSz, byte* out, byte* tag, word32 tagSz);
+typedef int (*aead_dec_fn)(const byte* key, word32 keySz, const byte* nonce,
+    word32 nonceSz, const byte* aad, word32 aadSz, const byte* in,
+    word32 inSz, const byte* tag, word32 tagSz, byte* out);
+
+/* The wolfPSA one-shot AEAD helpers match PSA, refuse a changed tag and never
+ * reach a device, even with one selected. Under WC_AES_BITSLICED they run on
+ * the heap. */
+static int check_aead_helper_stays_local(const char* name, psa_algorithm_t alg,
+    size_t nonceSz, aead_enc_fn enc, aead_dec_fn dec, int auth_err)
 {
     static const uint8_t key[16] = { 0x2B, 0x7E, 0x15, 0x16 };
     static const uint8_t nonce[13] = { 0x10, 0x11, 0x12 };
@@ -348,56 +417,54 @@ static int check_ccm_helper_stays_local(void)
     psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
     psa_set_key_bits(&attr, 128);
     psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT);
-    psa_set_key_algorithm(&attr, PSA_ALG_CCM);
+    psa_set_key_algorithm(&attr, alg);
     st = psa_import_key(&attr, key, sizeof(key), &k);
     if (st == PSA_SUCCESS) {
-        st = psa_aead_encrypt(k, PSA_ALG_CCM, nonce, sizeof(nonce), aad,
-                              sizeof(aad), pt, sizeof(pt), ref, sizeof(ref),
-                              &len);
+        st = psa_aead_encrypt(k, alg, nonce, nonceSz, aad, sizeof(aad), pt,
+                              sizeof(pt), ref, sizeof(ref), &len);
     }
     psa_destroy_key(k);
     if (st != PSA_SUCCESS || len != sizeof(ref))
-        return fail("ccm helper reference", st);
+        return fail("aead helper reference", st);
 
     reset_counts(expect_devid);
-    if (wolfPSA_AesCcmEncrypt(key, sizeof(key), nonce, sizeof(nonce), aad,
-                              sizeof(aad), pt, sizeof(pt), ct, tag,
-                              sizeof(tag)) != 0 ||
+    if (enc(key, sizeof(key), nonce, (word32)nonceSz, aad, sizeof(aad), pt,
+            sizeof(pt), ct, tag, sizeof(tag)) != 0 ||
             XMEMCMP(ct, ref, sizeof(ct)) != 0 ||
             XMEMCMP(tag, ref + sizeof(ct), sizeof(tag)) != 0) {
-        printf("FAIL wolfPSA_AesCcmEncrypt does not match psa_aead_encrypt\n");
+        printf("FAIL %s encrypt helper does not match psa_aead_encrypt\n",
+               name);
         ret = 1;
     }
-    if (ret == 0 && (wolfPSA_AesCcmDecrypt(key, sizeof(key), nonce,
-                                           sizeof(nonce), aad, sizeof(aad),
-                                           ct, sizeof(ct), tag, sizeof(tag),
-                                           out) != 0 ||
+    if (ret == 0 && (dec(key, sizeof(key), nonce, (word32)nonceSz, aad,
+                         sizeof(aad), ct, sizeof(ct), tag, sizeof(tag),
+                         out) != 0 ||
                      XMEMCMP(out, pt, sizeof(pt)) != 0)) {
-        printf("FAIL wolfPSA_AesCcmDecrypt does not open its sealing\n");
+        printf("FAIL %s decrypt helper does not open its sealing\n", name);
         ret = 1;
     }
     tag[15] ^= 0x01;
-    if (ret == 0 && wolfPSA_AesCcmDecrypt(key, sizeof(key), nonce,
-                                          sizeof(nonce), aad, sizeof(aad),
-                                          ct, sizeof(ct), tag, sizeof(tag),
-                                          out) != AES_CCM_AUTH_E) {
-        printf("FAIL wolfPSA_AesCcmDecrypt accepted a changed tag\n");
+    if (ret == 0 && dec(key, sizeof(key), nonce, (word32)nonceSz, aad,
+                        sizeof(aad), ct, sizeof(ct), tag, sizeof(tag),
+                        out) != auth_err) {
+        printf("FAIL %s decrypt helper accepted a changed tag\n", name);
         ret = 1;
     }
     for (i = 0; ret == 0 && i < sizeof(out); i++) {
         if (out[i] != 0) {
-            printf("FAIL wolfPSA_AesCcmDecrypt kept plaintext after a bad"
-                   " tag\n");
+            printf("FAIL %s decrypt helper kept plaintext after a bad tag\n",
+                   name);
             ret = 1;
         }
     }
     if (ret == 0 && seen_total != 0) {
-        printf("FAIL the CCM helpers dispatched %d call(s) to a device\n",
-               seen_total);
+        printf("FAIL the %s helpers dispatched %d call(s) to a device\n",
+               name, seen_total);
         ret = 1;
     }
     else if (ret == 0) {
-        printf("CCM helpers: match PSA, refuse a bad tag, stayed local\n");
+        printf("%s helpers: match PSA, refuse a bad tag, stayed local\n",
+               name);
     }
     return ret;
 }
@@ -977,10 +1044,29 @@ int main(void)
     }
     reset_counts(TEST_DEVID);
 
+#if defined(HAVE_AESGCM) && defined(PSA_WANT_ALG_GCM)
+    if (ret == 0) {
+        ret = check_gcm_oneshot_dispatch();
+    }
+    reset_counts(TEST_DEVID);
+#endif
 #if defined(HAVE_AESCCM) && defined(WOLFSSL_AES_DIRECT) && \
     defined(PSA_WANT_ALG_CCM)
     if (ret == 0) {
-        ret = check_ccm_helper_stays_local();
+        ret = check_aead_helper_stays_local("CCM", PSA_ALG_CCM, 13,
+                                            wolfPSA_AesCcmEncrypt,
+                                            wolfPSA_AesCcmDecrypt,
+                                            AES_CCM_AUTH_E);
+    }
+    reset_counts(TEST_DEVID);
+#endif
+#if defined(HAVE_AESGCM) && defined(WOLFSSL_AESGCM_STREAM) && \
+    defined(PSA_WANT_ALG_GCM) && defined(WOLFPSA_GCM_ONESHOT_STREAM)
+    if (ret == 0) {
+        ret = check_aead_helper_stays_local("GCM", PSA_ALG_GCM, 12,
+                                            wolfPSA_AesGcmEncrypt,
+                                            wolfPSA_AesGcmDecrypt,
+                                            AES_GCM_AUTH_E);
     }
     reset_counts(TEST_DEVID);
 #endif
