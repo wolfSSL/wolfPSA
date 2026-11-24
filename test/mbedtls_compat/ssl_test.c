@@ -30,7 +30,9 @@
 #include <stdint.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <signal.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <poll.h>
 #ifdef MBEDTLS_THREADING_C
     #include <pthread.h>
@@ -105,6 +107,14 @@
 /* The version, config, field size and format bytes at the start of a saved
  * session */
 #define SESSION_HDR_SZ 8
+/* A wait that times out, and one for data already sent, in ms */
+#define SHORT_WAIT_MS 10
+#define LONG_WAIT_MS 1000
+/* A record header and the start of its data */
+#define PARTIAL_RECORD_SZ 8
+/* A wait, and a signal during it, in ms */
+#define SIGNAL_WAIT_MS 300
+#define SIGNAL_AT_MS 200
 
 /* Data in one direction. closed is set by the writer. */
 typedef struct {
@@ -123,6 +133,7 @@ typedef struct {
     int recvErr;
     /* When not -1, the bytes sends take before WANT_WRITE */
     int sendRoom;
+    uint32_t timeout; /* the last one PipeRecvTimeout got */
 } Peer;
 
 /* The CAs a peer trusts, and the certificates and key a server sends */
@@ -225,6 +236,16 @@ static int PipeRecv(void* ctx, unsigned char* buf, size_t len)
     return (int)len;
 }
 
+/* PipeRecv, with MBEDTLS_ERR_SSL_TIMEOUT when there is no data */
+static int PipeRecvTimeout(void* ctx, unsigned char* buf, size_t len,
+    uint32_t timeout)
+{
+    int ret = PipeRecv(ctx, buf, len);
+
+    ((Peer*)ctx)->timeout = timeout;
+    return (ret == MBEDTLS_ERR_SSL_WANT_READ) ? MBEDTLS_ERR_SSL_TIMEOUT : ret;
+}
+
 static void PeerInit(Peer* p, int endpoint)
 {
     const int second = (p == &cli2 || p == &srv2);
@@ -279,10 +300,11 @@ static void PeerFree(Peer* p)
     mbedtls_ssl_config_free(&p->conf);
 }
 
+/* The call is made again after these */
 static int Waiting(int ret)
 {
     return ret == MBEDTLS_ERR_SSL_WANT_READ ||
-        ret == MBEDTLS_ERR_SSL_WANT_WRITE;
+        ret == MBEDTLS_ERR_SSL_WANT_WRITE || ret == MBEDTLS_ERR_SSL_TIMEOUT;
 }
 
 /* The result of client. *srvRet gets server's. */
@@ -1369,6 +1391,95 @@ static int BioErrors(void)
     return ok;
 }
 
+/* A read goes on after a timeout, between records and inside one */
+static int ReadTimeout(void)
+{
+    unsigned char buf[16];
+    unsigned char rest[64];
+    size_t restLen = 0;
+    int ok = Connect(MBEDTLS_SSL_VERIFY_NONE) == 0;
+
+    if (ok) {
+        mbedtls_ssl_set_bio(&srv.ssl, &srv, PipeSend, NULL, PipeRecvTimeout);
+        ok = mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+                MBEDTLS_ERR_SSL_TIMEOUT && srv.timeout == 0 &&
+            mbedtls_ssl_write(&cli.ssl, (const unsigned char*)"hello",
+                5) == 5 &&
+            toServer.len > PARTIAL_RECORD_SZ &&
+            toServer.len - PARTIAL_RECORD_SZ <= sizeof(rest);
+    }
+    if (ok) {
+        restLen = toServer.len - PARTIAL_RECORD_SZ;
+        memcpy(rest, toServer.buf + PARTIAL_RECORD_SZ, restLen);
+        toServer.len = PARTIAL_RECORD_SZ;
+        mbedtls_ssl_conf_read_timeout(&srv.conf, SHORT_WAIT_MS);
+        ok = mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+                MBEDTLS_ERR_SSL_TIMEOUT && srv.timeout == SHORT_WAIT_MS;
+        memcpy(toServer.buf + toServer.len, rest, restLen);
+        toServer.len += restLen;
+        ok = ok && mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) == 5 &&
+            memcmp(buf, "hello", 5) == 0;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* A read's BIO error is returned again only when it ended the connection */
+static int BioErrorKept(void)
+{
+    static const struct {
+        int err;
+        int next; /* the next read's result, with no BIO error */
+    } errs[] = {
+        { MBEDTLS_ERR_SSL_TIMEOUT, MBEDTLS_ERR_SSL_WANT_READ },
+        { MBEDTLS_ERR_NET_RECV_FAILED, MBEDTLS_ERR_NET_RECV_FAILED },
+        { MBEDTLS_ERR_NET_CONN_RESET, MBEDTLS_ERR_NET_CONN_RESET }
+    };
+    unsigned char buf[16];
+    size_t i;
+    int ok = 1;
+
+    for (i = 0; ok && i < sizeof(errs) / sizeof(errs[0]); i++) {
+        ok = Connect(MBEDTLS_SSL_VERIFY_NONE) == 0;
+        srv.recvErr = errs[i].err;
+        ok = ok && mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+            errs[i].err;
+        srv.recvErr = 0;
+        ok = ok && mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+            errs[i].next;
+        PeerFree(&cli);
+        PeerFree(&srv);
+    }
+    return ok;
+}
+
+/* A write and a close_notify that the BIO asks to retry are sent once */
+static int SendRetry(void)
+{
+    unsigned char buf[16];
+    int ok = Connect(MBEDTLS_SSL_VERIFY_NONE) == 0;
+
+    cli.sendErr = MBEDTLS_ERR_SSL_WANT_WRITE;
+    ok = ok && mbedtls_ssl_write(&cli.ssl, (const unsigned char*)"hello",
+        5) == MBEDTLS_ERR_SSL_WANT_WRITE;
+    cli.sendErr = 0;
+    ok = ok && mbedtls_ssl_write(&cli.ssl, (const unsigned char*)"hello",
+        5) == 5;
+    cli.sendErr = MBEDTLS_ERR_SSL_WANT_WRITE;
+    ok = ok && mbedtls_ssl_close_notify(&cli.ssl) ==
+        MBEDTLS_ERR_SSL_WANT_WRITE;
+    cli.sendErr = 0;
+    ok = ok && mbedtls_ssl_close_notify(&cli.ssl) == 0 &&
+        mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) == 5 &&
+        memcmp(buf, "hello", 5) == 0 &&
+        mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+            MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
 /* A length that does not fit in an int. As in Mbed TLS, a write sends at
  * most one record, so each write and read uses only RECORD_SZ bytes of buf.
  * A sanitizer report here means a write sent more than one record. */
@@ -1473,9 +1584,6 @@ static int OwnAlert(void)
     return ok;
 }
 
-#if defined(MBEDTLS_SSL_MAX_FRAGMENT_LENGTH) || \
-    defined(MBEDTLS_SSL_KEYING_MATERIAL_EXPORT) || \
-    defined(MBEDTLS_SSL_PROTO_TLS1_3)
 static int Connected(void)
 {
     int s;
@@ -2511,9 +2619,9 @@ static int SuitesThreads(void)
 }
 #endif /* MBEDTLS_THREADING_C */
 
-static int SetNonBlocking(int fd)
+static int IsNonBlocking(int fd)
 {
-    return fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) == 0;
+    return (fcntl(fd, F_GETFL) & O_NONBLOCK) != 0;
 }
 
 /* Waits at most a second for data, or a connection, on fd */
@@ -2534,7 +2642,7 @@ static int StillBound(int fd, int nonBlock,
     struct sockaddr_storage now;
     socklen_t nowLen = (socklen_t)sizeof(now);
 
-    return ((fcntl(fd, F_GETFL) & O_NONBLOCK) != 0) == nonBlock &&
+    return IsNonBlocking(fd) == nonBlock &&
         getsockname(fd, (struct sockaddr*)&now, &nowLen) == 0 &&
         nowLen == addrLen && memcmp(&now, addr, addrLen) == 0;
 }
@@ -2548,7 +2656,7 @@ static int AcceptBlock(int proto)
     mbedtls_net_init(&bound);
     mbedtls_net_init(&client);
     ok = mbedtls_net_bind(&bound, "127.0.0.1", "0", proto) == 0 &&
-        SetNonBlocking(bound.fd) &&
+        mbedtls_net_set_nonblock(&bound) == 0 &&
         mbedtls_net_accept(&bound, &client, NULL, 0, NULL) ==
             MBEDTLS_ERR_SSL_WANT_READ;
     mbedtls_net_free(&client);
@@ -2583,6 +2691,17 @@ static int UdpEcho(mbedtls_net_context* accepted, mbedtls_net_context* conn,
         UdpRecvByte(conn, b);
 }
 
+/* The address bound is bound to, and its port as text */
+static int BoundAddr(const mbedtls_net_context* bound,
+    struct sockaddr_storage* addr, socklen_t* addrLen, char* port,
+    socklen_t portSz)
+{
+    *addrLen = (socklen_t)sizeof(*addr);
+    return getsockname(bound->fd, (struct sockaddr*)addr, addrLen) == 0 &&
+        getnameinfo((struct sockaddr*)addr, *addrLen, NULL, 0, port, portSz,
+            NI_NUMERICSERV) == 0;
+}
+
 /* Accepts two clients of host, with client_ip one byte short of ip's size,
  * then of its size */
 static int AcceptIp(const char* bindHost, const char* host,
@@ -2607,10 +2726,8 @@ static int AcceptIp(const char* bindHost, const char* host,
         mbedtls_net_init(&client[i]);
     }
     ok = mbedtls_net_bind(&bound, bindHost, "0", proto) == 0 &&
-        (!nonBlock || SetNonBlocking(bound.fd)) &&
-        getsockname(bound.fd, (struct sockaddr*)&addr, &addrLen) == 0 &&
-        getnameinfo((struct sockaddr*)&addr, addrLen, NULL, 0, port,
-            sizeof(port), NI_NUMERICSERV) == 0;
+        (!nonBlock || mbedtls_net_set_nonblock(&bound) == 0) &&
+        BoundAddr(&bound, &addr, &addrLen, port, sizeof(port));
     for (i = 0; ok && i < 2; i++) {
         bufSz = ipLen - 1 + i;
         memset(buf, 0, sizeof(buf));
@@ -2681,6 +2798,191 @@ static int AcceptUdpAnyIpv6(void)
 static int AcceptUdpBlocking(void)
 {
     return AcceptLoopback(0, 0, MBEDTLS_NET_PROTO_UDP, 0);
+}
+
+/* conn, connected over TCP on 127.0.0.1 to accepted */
+static int TcpPair(mbedtls_net_context* conn, mbedtls_net_context* accepted)
+{
+    mbedtls_net_context bound;
+    struct sockaddr_storage addr;
+    socklen_t addrLen;
+    char port[8];
+    int ok;
+
+    mbedtls_net_init(&bound);
+    mbedtls_net_init(conn);
+    mbedtls_net_init(accepted);
+    ok = mbedtls_net_bind(&bound, "127.0.0.1", "0",
+            MBEDTLS_NET_PROTO_TCP) == 0 &&
+        BoundAddr(&bound, &addr, &addrLen, port, sizeof(port)) &&
+        mbedtls_net_connect(conn, "127.0.0.1", port,
+            MBEDTLS_NET_PROTO_TCP) == 0 &&
+        mbedtls_net_accept(&bound, accepted, NULL, 0, NULL) == 0;
+    mbedtls_net_free(&bound);
+    return ok;
+}
+
+static int NetBlocking(void)
+{
+    mbedtls_net_context conn;
+    mbedtls_net_context accepted;
+    unsigned char b;
+    int ok = TcpPair(&conn, &accepted) &&
+        mbedtls_net_set_nonblock(&conn) == 0 && IsNonBlocking(conn.fd) &&
+        mbedtls_net_recv(&conn, &b, 1) == MBEDTLS_ERR_SSL_WANT_READ &&
+        mbedtls_net_set_block(&conn) == 0 && !IsNonBlocking(conn.fd);
+
+    mbedtls_net_free(&accepted);
+    mbedtls_net_free(&conn);
+    return ok;
+}
+
+/* With a timeout of 0, the events ready now */
+static int NetPoll(void)
+{
+    const uint32_t rw = MBEDTLS_NET_POLL_READ | MBEDTLS_NET_POLL_WRITE;
+    mbedtls_net_context conn;
+    mbedtls_net_context accepted;
+    int ok = TcpPair(&conn, &accepted) &&
+        mbedtls_net_poll(&conn, rw, 0) == MBEDTLS_NET_POLL_WRITE &&
+        mbedtls_net_poll(&conn, MBEDTLS_NET_POLL_READ, SHORT_WAIT_MS) == 0 &&
+        mbedtls_net_poll(&conn, MBEDTLS_NET_POLL_WRITE, UINT32_MAX) ==
+            MBEDTLS_NET_POLL_WRITE &&
+        mbedtls_net_send(&accepted, (const unsigned char*)"x", 1) == 1 &&
+        mbedtls_net_poll(&conn, MBEDTLS_NET_POLL_READ, LONG_WAIT_MS) ==
+            MBEDTLS_NET_POLL_READ &&
+        mbedtls_net_poll(&conn, rw, 0) == (int)rw &&
+        mbedtls_net_poll(&conn, rw + 1, 0) == MBEDTLS_ERR_NET_BAD_INPUT_DATA;
+
+    mbedtls_net_free(&accepted);
+    mbedtls_net_free(&conn);
+    return ok;
+}
+
+/* A timeout of 0 waits until data comes */
+static int NetRecvTimeout(void)
+{
+    mbedtls_net_context conn;
+    mbedtls_net_context accepted;
+    unsigned char b = 0;
+    int ok = TcpPair(&conn, &accepted) &&
+        mbedtls_net_recv_timeout(&conn, &b, 1, SHORT_WAIT_MS) ==
+            MBEDTLS_ERR_SSL_TIMEOUT &&
+        mbedtls_net_set_nonblock(&conn) == 0 &&
+        mbedtls_net_send(&accepted, (const unsigned char*)"x", 1) == 1 &&
+        mbedtls_net_recv_timeout(&conn, &b, 1, LONG_WAIT_MS) == 1 &&
+        b == 'x' &&
+        mbedtls_net_send(&accepted, (const unsigned char*)"y", 1) == 1 &&
+        mbedtls_net_recv_timeout(&conn, &b, 1, 0) == 1 && b == 'y';
+
+    mbedtls_net_free(&accepted);
+    ok = ok && mbedtls_net_recv_timeout(&conn, &b, 1, LONG_WAIT_MS) == 0;
+    mbedtls_net_free(&conn);
+    return ok;
+}
+
+/* No socket, or one that select() does not take */
+static int NetBadContext(void)
+{
+    mbedtls_net_context net;
+    unsigned char b;
+    int ok;
+
+    mbedtls_net_init(&net);
+    ok = mbedtls_net_set_block(&net) == MBEDTLS_ERR_NET_INVALID_CONTEXT &&
+        mbedtls_net_set_nonblock(NULL) == MBEDTLS_ERR_NET_INVALID_CONTEXT &&
+        mbedtls_net_poll(&net, MBEDTLS_NET_POLL_READ, 0) ==
+            MBEDTLS_ERR_NET_INVALID_CONTEXT &&
+        mbedtls_net_poll(NULL, MBEDTLS_NET_POLL_READ, 0) ==
+            MBEDTLS_ERR_NET_INVALID_CONTEXT &&
+        mbedtls_net_recv_timeout(&net, &b, 1, 0) ==
+            MBEDTLS_ERR_NET_INVALID_CONTEXT &&
+        mbedtls_net_recv_timeout(NULL, &b, 1, 0) ==
+            MBEDTLS_ERR_NET_INVALID_CONTEXT;
+    /* At least FD_SETSIZE */
+    net.fd = INT_MAX;
+    return ok && mbedtls_net_poll(&net, MBEDTLS_NET_POLL_READ, 0) ==
+            MBEDTLS_ERR_NET_POLL_FAILED &&
+        mbedtls_net_recv_timeout(&net, &b, 1, 0) ==
+            MBEDTLS_ERR_NET_POLL_FAILED;
+}
+
+#ifdef MBEDTLS_HAVE_TIME
+static void OnAlarm(int sig)
+{
+    (void)sig;
+}
+
+/* A signal does not make a poll longer, and ends a timed receive */
+static int NetInterrupted(void)
+{
+    struct sigaction onAlarm;
+    struct sigaction old;
+    struct itimerval alarmAt;
+    mbedtls_net_context conn;
+    mbedtls_net_context accepted;
+    mbedtls_ms_time_t start = 0;
+    unsigned char b;
+    int ok;
+
+    memset(&onAlarm, 0, sizeof(onAlarm));
+    onAlarm.sa_handler = OnAlarm;
+    memset(&alarmAt, 0, sizeof(alarmAt));
+    alarmAt.it_value.tv_usec = SIGNAL_AT_MS * 1000;
+    ok = TcpPair(&conn, &accepted) &&
+        sigaction(SIGALRM, &onAlarm, &old) == 0;
+    if (ok) {
+        start = mbedtls_ms_time();
+        ok = setitimer(ITIMER_REAL, &alarmAt, NULL) == 0 &&
+            mbedtls_net_poll(&conn, MBEDTLS_NET_POLL_READ,
+                SIGNAL_WAIT_MS) == 0 &&
+            mbedtls_ms_time() - start < SIGNAL_WAIT_MS + SIGNAL_AT_MS &&
+            setitimer(ITIMER_REAL, &alarmAt, NULL) == 0 &&
+            mbedtls_net_recv_timeout(&conn, &b, 1, SIGNAL_WAIT_MS) ==
+                MBEDTLS_ERR_SSL_WANT_READ;
+        (void)sigaction(SIGALRM, &old, NULL);
+    }
+    mbedtls_net_free(&accepted);
+    mbedtls_net_free(&conn);
+    return ok;
+}
+#endif /* MBEDTLS_HAVE_TIME */
+
+/* The handshake and a read called again after a timeout, over TCP */
+static int ReadTimeoutTcp(void)
+{
+    mbedtls_net_context conn;
+    mbedtls_net_context accepted;
+    unsigned char buf[16];
+    int s;
+    int ok = TcpPair(&conn, &accepted) &&
+        mbedtls_net_set_nonblock(&accepted) == 0 &&
+        PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED, 1,
+            HOST_NAME) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+
+    if (ok) {
+        mbedtls_ssl_conf_read_timeout(&cli.conf, SHORT_WAIT_MS);
+        mbedtls_ssl_set_bio(&cli.ssl, &conn, mbedtls_net_send, NULL,
+            mbedtls_net_recv_timeout);
+        mbedtls_ssl_set_bio(&srv.ssl, &accepted, mbedtls_net_send,
+            mbedtls_net_recv, NULL);
+        /* Before the server answers */
+        ok = mbedtls_ssl_handshake(&cli.ssl) == MBEDTLS_ERR_SSL_TIMEOUT &&
+            Handshake(&s) == 0 && s == 0 &&
+            mbedtls_ssl_read(&cli.ssl, buf, sizeof(buf)) ==
+                MBEDTLS_ERR_SSL_TIMEOUT &&
+            mbedtls_ssl_write(&srv.ssl, (const unsigned char*)"hello",
+                5) == 5 &&
+            mbedtls_ssl_read(&cli.ssl, buf, sizeof(buf)) == 5 &&
+            memcmp(buf, "hello", 5) == 0;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    mbedtls_net_free(&accepted);
+    mbedtls_net_free(&conn);
+    return ok;
 }
 
 /* Each listed suite's name gives back its ID */
@@ -2828,6 +3130,69 @@ static int TimerCb(void)
     mbedtls_ssl_free(&ssl);
     return ok;
 }
+
+/* The read timeout on the timer callbacks, for non-blocking I/O */
+static int TimerReadTimeout(void)
+{
+    mbedtls_timing_delay_context timer;
+    unsigned char buf[16];
+    int ok = Connect(MBEDTLS_SSL_VERIFY_NONE) == 0;
+
+    if (ok) {
+        mbedtls_ssl_conf_read_timeout(&srv.conf, SHORT_WAIT_MS);
+        mbedtls_ssl_set_timer_cb(&srv.ssl, &timer, mbedtls_timing_set_delay,
+            mbedtls_timing_get_delay);
+        ok = mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+                MBEDTLS_ERR_SSL_WANT_READ &&
+            mbedtls_timing_get_delay(&timer) >= 0;
+        mbedtls_net_usleep(2 * SHORT_WAIT_MS * 1000);
+        /* As in Mbed TLS, the timer stays expired until it is set again */
+        ok = ok && mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+                MBEDTLS_ERR_SSL_TIMEOUT &&
+            mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+                MBEDTLS_ERR_SSL_TIMEOUT;
+        mbedtls_ssl_set_timer_cb(&srv.ssl, &timer, mbedtls_timing_set_delay,
+            mbedtls_timing_get_delay);
+        ok = ok && mbedtls_ssl_write(&cli.ssl, (const unsigned char*)"hello",
+                5) == 5 &&
+            mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) == 5 &&
+            mbedtls_timing_get_delay(&timer) == -1 &&
+            mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+                MBEDTLS_ERR_SSL_WANT_READ &&
+            mbedtls_timing_get_delay(&timer) >= 0 &&
+            mbedtls_ssl_session_reset(&srv.ssl) == 0 &&
+            mbedtls_timing_get_delay(&timer) == -1;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* A zero-length read that gets a record stops the timer, as Mbed TLS does */
+static int TimerBufferedRead(void)
+{
+    mbedtls_timing_delay_context timer;
+    unsigned char buf[16];
+    int ok = Connect(MBEDTLS_SSL_VERIFY_NONE) == 0;
+
+    if (ok) {
+        mbedtls_ssl_conf_read_timeout(&srv.conf, LONG_WAIT_MS);
+        mbedtls_ssl_set_timer_cb(&srv.ssl, &timer, mbedtls_timing_set_delay,
+            mbedtls_timing_get_delay);
+        ok = mbedtls_ssl_write(&cli.ssl, (const unsigned char*)"hello",
+                5) == 5 &&
+            mbedtls_ssl_read(&srv.ssl, buf, 0) == 0 &&
+            mbedtls_ssl_get_bytes_avail(&srv.ssl) == 5 &&
+            mbedtls_timing_get_delay(&timer) == -1 &&
+            mbedtls_ssl_read(&srv.ssl, buf, 2) == 2 &&
+            mbedtls_timing_get_delay(&timer) == -1 &&
+            mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) == 3 &&
+            mbedtls_timing_get_delay(&timer) == -1;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
 #endif /* MBEDTLS_TIMING_C */
 
 static const struct {
@@ -2898,6 +3263,9 @@ static const struct {
     { "alerts after the handshake", SendAlertPeer },
     { "alert after a failed verify", SendAlertVerifyFailed },
     { "BIO errors", BioErrors },
+    { "read after a timeout", ReadTimeout },
+    { "BIO error kept only when it ends the connection", BioErrorKept },
+    { "write and close_notify sent once after a retry", SendRetry },
     { "length over INT_MAX", LargeLength },
     { "record expansion", RecordExpansion },
 #ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
@@ -2952,12 +3320,22 @@ static const struct {
     { "UDP accept, bound to every IPv4 address", AcceptUdpAnyIpv4 },
     { "UDP accept, bound to every IPv6 address", AcceptUdpAnyIpv6 },
     { "UDP accept, blocking listener", AcceptUdpBlocking },
+    { "blocking and non-blocking socket", NetBlocking },
+    { "poll", NetPoll },
+    { "receive with a timeout", NetRecvTimeout },
+    { "network calls without a usable socket", NetBadContext },
+#ifdef MBEDTLS_HAVE_TIME
+    { "poll and timed receive interrupted", NetInterrupted },
+#endif /* MBEDTLS_HAVE_TIME */
+    { "read timeout over TCP", ReadTimeoutTcp },
     { "cipher suite ID from its name", SuiteIdFromName },
     { "cipher suite info", SuiteInfo },
     { "handshake over", HandshakeOver },
     { "debug threshold and callback ignored", DebugIgnored },
 #ifdef MBEDTLS_TIMING_C
     { "timer callbacks", TimerCb },
+    { "read timeout on the timer callbacks", TimerReadTimeout },
+    { "read timer with buffered data", TimerBufferedRead },
 #endif /* MBEDTLS_TIMING_C */
     { "user data kept through session reset", UserData }
 };

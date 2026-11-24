@@ -87,7 +87,8 @@ int MbedIoErr(int code, int dir, int toWolf)
         /* A receive of 0 bytes is EOF */
         { WC_NO_ERR_TRACE(WOLFSSL_CBIO_ERR_CONN_CLOSE),
             { 0, MBEDTLS_ERR_NET_CONN_RESET } },
-        { WC_NO_ERR_TRACE(WOLFSSL_CBIO_ERR_TIMEOUT),
+        /* As in Mbed TLS, the next call goes on after a timeout */
+        { WC_NO_ERR_TRACE(WOLFSSL_CBIO_ERR_WANT_READ),
             { MBEDTLS_ERR_SSL_TIMEOUT, MBEDTLS_ERR_SSL_TIMEOUT } },
         { WC_NO_ERR_TRACE(WOLFSSL_CBIO_ERR_ISR),
             { MBEDTLS_ERR_SSL_WANT_READ, MBEDTLS_ERR_SSL_WANT_WRITE } },
@@ -142,8 +143,11 @@ static int MbedSslCallErr(const mbedtls_ssl_context* ssl, int ret)
     int err = wolfSSL_get_error(ssl->ssl, ret);
     size_t i;
 
-    /* wolfSSL's error for any failed BIO call */
-    if (err == WC_NO_ERR_TRACE(SOCKET_ERROR_E) && ssl->io_err != 0) {
+    /* The BIO's error behind a failed call, a reset, or a call to retry */
+    if (ssl->io_err != 0 && (err == WC_NO_ERR_TRACE(SOCKET_ERROR_E) ||
+            err == WC_NO_ERR_TRACE(SOCKET_PEER_CLOSED_E) ||
+            err == WOLFSSL_ERROR_WANT_READ ||
+            err == WOLFSSL_ERROR_WANT_WRITE)) {
         return ssl->io_err;
     }
     /* FATAL_ERROR is also wolfSSL's error after its own fatal alert */
@@ -218,14 +222,37 @@ static int MbedIoRet(mbedtls_ssl_context* s, int ret, int dir)
     return (ret > 0) ? ret : MbedIoErr(ret, dir, 1);
 }
 
+/* As wolfSSL does with its own errors, drops a BIO error to retry */
+static void MbedIoStart(mbedtls_ssl_context* ssl)
+{
+    if (ssl->io_err == MBEDTLS_ERR_SSL_WANT_READ ||
+            ssl->io_err == MBEDTLS_ERR_SSL_WANT_WRITE ||
+            ssl->io_err == MBEDTLS_ERR_SSL_TIMEOUT) {
+        ssl->io_err = 0;
+    }
+}
+
+/* As mbedtls_ssl_set_timer(): a delay of 0 stops the timer */
+static void MbedSetTimer(const mbedtls_ssl_context* ssl, uint32_t ms)
+{
+    if (ssl->f_set_timer != NULL) {
+        ssl->f_set_timer(ssl->p_timer, ms / 4, ms);
+    }
+}
+
 static int MbedRecvCb(WOLFSSL* ssl, char* buf, int sz, void* ctx)
 {
     mbedtls_ssl_context* s = (mbedtls_ssl_context*)ctx;
     int ret = MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
 
     (void)ssl;
-    if (s->f_recv_timeout != NULL) {
-        ret = s->f_recv_timeout(s->p_bio, (unsigned char*)buf, (size_t)sz, 0);
+    /* As in Mbed TLS, a timeout once the read timer expires (2) */
+    if (s->f_get_timer != NULL && s->f_get_timer(s->p_timer) == 2) {
+        ret = MBEDTLS_ERR_SSL_TIMEOUT;
+    }
+    else if (s->f_recv_timeout != NULL) {
+        ret = s->f_recv_timeout(s->p_bio, (unsigned char*)buf, (size_t)sz,
+            s->conf->read_timeout);
     }
     else if (s->f_recv != NULL) {
         ret = s->f_recv(s->p_bio, (unsigned char*)buf, (size_t)sz);
@@ -837,6 +864,15 @@ void mbedtls_ssl_conf_verify(mbedtls_ssl_config* conf,
     }
 }
 
+void mbedtls_ssl_conf_read_timeout(mbedtls_ssl_config* conf, uint32_t timeout)
+{
+    WOLFSSL_ENTER("mbedtls_ssl_conf_read_timeout");
+
+    if (conf != NULL) {
+        conf->read_timeout = timeout;
+    }
+}
+
 #define MBED_SUITES_MAX     (WOLFSSL_MAX_SUITE_SZ / 2)
 #define MBED_SUITE_NAME_SZ  64
 
@@ -1222,6 +1258,7 @@ int mbedtls_ssl_session_reset(mbedtls_ssl_context* ssl)
     }
     /* As in Mbed TLS, the session set before is not used again */
     ssl->session_set = 0;
+    MbedSetTimer(ssl, 0);
     return MbedSslNew(ssl);
 }
 
@@ -1239,7 +1276,7 @@ void mbedtls_ssl_set_bio(mbedtls_ssl_context* ssl, void* p_bio,
     }
 }
 
-/* Stored for DTLS. As in Mbed TLS, cancels the timer running. */
+/* Read timeout timers. As in Mbed TLS, cancels the timer running. */
 void mbedtls_ssl_set_timer_cb(mbedtls_ssl_context* ssl, void* p_timer,
     mbedtls_ssl_set_timer_t* f_set_timer, mbedtls_ssl_get_timer_t* f_get_timer)
 {
@@ -1249,9 +1286,7 @@ void mbedtls_ssl_set_timer_cb(mbedtls_ssl_context* ssl, void* p_timer,
         ssl->p_timer = p_timer;
         ssl->f_set_timer = f_set_timer;
         ssl->f_get_timer = f_get_timer;
-        if (f_set_timer != NULL) {
-            f_set_timer(p_timer, 0, 0);
-        }
+        MbedSetTimer(ssl, 0);
     }
 }
 
@@ -1333,6 +1368,7 @@ static int MbedSslStart(mbedtls_ssl_context* ssl)
     }
     if (ret == 0) {
         ssl->started = 1;
+        MbedIoStart(ssl);
     }
     return ret;
 }
@@ -1460,15 +1496,27 @@ int mbedtls_ssl_check_pending(const mbedtls_ssl_context* ssl)
 
 int mbedtls_ssl_read(mbedtls_ssl_context* ssl, unsigned char* buf, size_t len)
 {
+    int buffered;
     int ret;
 
     WOLFSSL_ENTER("mbedtls_ssl_read");
 
-    ret = MbedSslStart(ssl);
+    /* As in Mbed TLS, the handshake first, then the read timer */
+    ret = mbedtls_ssl_is_handshake_over(ssl) ? MbedSslStart(ssl) :
+        mbedtls_ssl_handshake(ssl);
     if (ret != 0) {
         return ret;
     }
+    /* The timer runs only while waiting for a record */
+    buffered = wolfSSL_pending(ssl->ssl) > 0;
+    if (!buffered && ssl->f_get_timer != NULL &&
+            ssl->f_get_timer(ssl->p_timer) == -1) {
+        MbedSetTimer(ssl, ssl->conf->read_timeout);
+    }
     ret = wolfSSL_read(ssl->ssl, buf, MbedIoLen(len, INT_MAX));
+    if (!buffered && (ret > 0 || wolfSSL_pending(ssl->ssl) > 0)) {
+        MbedSetTimer(ssl, 0);
+    }
     if (ret > 0) {
         return ret;
     }
@@ -1495,6 +1543,7 @@ int mbedtls_ssl_write(mbedtls_ssl_context* ssl,
             ssl->conf->transport == MBEDTLS_SSL_TRANSPORT_DATAGRAM) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
+    MbedIoStart(ssl);
     ret = wolfSSL_write(ssl->ssl, buf, MbedIoLen(len, max));
     return (ret > 0) ? ret : MbedSslErr(ssl, ret);
 }
@@ -1573,6 +1622,7 @@ int mbedtls_ssl_close_notify(mbedtls_ssl_context* ssl)
     if (ssl == NULL || ssl->ssl == NULL) {
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
+    MbedIoStart(ssl);
     ret = wolfSSL_shutdown(ssl->ssl);
     if (ret == WOLFSSL_SUCCESS ||
             ret == WC_NO_ERR_TRACE(WOLFSSL_SHUTDOWN_NOT_DONE)) {

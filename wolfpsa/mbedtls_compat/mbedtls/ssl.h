@@ -272,6 +272,7 @@ typedef struct mbedtls_ssl_config {
     mbedtls_x509_crl* ca_crl; /* not supported, an error when set */
     int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*);
     void* p_vrfy;
+    uint32_t read_timeout; /* ms, passed to f_recv_timeout */
     mbedtls_ssl_user_data_t user_data;
 } mbedtls_ssl_config;
 
@@ -348,6 +349,7 @@ void mbedtls_ssl_conf_cert_profile(mbedtls_ssl_config* conf,
     const mbedtls_x509_crt_profile* profile);
 void mbedtls_ssl_conf_verify(mbedtls_ssl_config* conf,
     int (*f_vrfy)(void*, mbedtls_x509_crt*, int, uint32_t*), void* p_vrfy);
+void mbedtls_ssl_conf_read_timeout(mbedtls_ssl_config* conf, uint32_t timeout);
 
 static inline void mbedtls_ssl_conf_set_user_data_p(mbedtls_ssl_config* conf,
     void* p)
