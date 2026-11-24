@@ -46,6 +46,7 @@
     #include <mbedtls/ssl_cache.h>
 #endif /* MBEDTLS_SSL_CACHE_C */
 #include <wolfssl/wolfcrypt/settings.h>
+#include <wolfssl/ssl.h>
 #include <wolfssl/wolfcrypt/memory.h>
 #include <wolfssl/wolfcrypt/rsa.h>
 
@@ -97,7 +98,7 @@
 #define SUITE_ID 0x1301
 #define SUITE_NAME "TLS1-3-AES-128-GCM-SHA256"
 /* The most data in one TLS record */
-#define RECORD_SZ 16384
+#define RECORD_SZ MBEDTLS_SSL_OUT_CONTENT_LEN
 /* Threads that look up the cipher suites at once */
 #define SUITE_THREADS 8
 /* The version, config, field size and format bytes at the start of a saved
@@ -1332,9 +1333,6 @@ static int LargeLength(void)
     return ok;
 }
 
-#if defined(MBEDTLS_SSL_MAX_FRAGMENT_LENGTH) || \
-    defined(MBEDTLS_SSL_KEYING_MATERIAL_EXPORT) || \
-    defined(MBEDTLS_SSL_PROTO_TLS1_3)
 /* A server, and a client that offers only version and does not verify */
 static int PeersVersion(mbedtls_ssl_protocol_version version)
 {
@@ -1350,6 +1348,73 @@ static int PeersVersion(mbedtls_ssl_protocol_version version)
     return ok;
 }
 
+/* The server's fatal alert, in TLS 1.3 after the client's handshake */
+static int PeerAlert(mbedtls_ssl_protocol_version version)
+{
+    unsigned char buf[1];
+    int s = 0;
+    int c;
+    int ok = PeersVersion(version);
+
+    if (ok) {
+        mbedtls_ssl_conf_authmode(&srv.conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+        c = Handshake(&s);
+        if (version == MBEDTLS_SSL_VERSION_TLS1_3) {
+            ok = c == 0;
+            c = mbedtls_ssl_read(&cli.ssl, buf, sizeof(buf));
+        }
+        ok = ok && s == MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE &&
+            c == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+#ifdef MBEDTLS_SSL_PROTO_TLS1_2
+static int PeerAlertTls12(void)
+{
+    return PeerAlert(MBEDTLS_SSL_VERSION_TLS1_2);
+}
+#endif /* MBEDTLS_SSL_PROTO_TLS1_2 */
+
+#ifdef MBEDTLS_SSL_PROTO_TLS1_3
+static int PeerAlertTls13(void)
+{
+    return PeerAlert(MBEDTLS_SSL_VERSION_TLS1_3);
+}
+#endif /* MBEDTLS_SSL_PROTO_TLS1_3 */
+
+static int SniReject(WOLFSSL* ssl, int* ad, void* arg)
+{
+    (void)ssl;
+    (void)ad;
+    (void)arg;
+    return fatal_return;
+}
+
+/* A native server name callback's alert is the server's own, not a peer's */
+static int OwnAlert(void)
+{
+    int s = 0;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            1, HOST_NAME) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+
+    if (ok) {
+        wolfSSL_CTX_set_servername_callback(srv.conf.ctx, SniReject);
+        ok = Handshake(&s) == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE &&
+            s == MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+#if defined(MBEDTLS_SSL_MAX_FRAGMENT_LENGTH) || \
+    defined(MBEDTLS_SSL_KEYING_MATERIAL_EXPORT) || \
+    defined(MBEDTLS_SSL_PROTO_TLS1_3)
 static int Connected(void)
 {
     int s;
@@ -2471,6 +2536,13 @@ static const struct {
 #endif /* MBEDTLS_THREADING_C */
     { "no client certificate, OPTIONAL", NoClientCertOptional },
     { "no client certificate, REQUIRED", NoClientCertRequired },
+#ifdef MBEDTLS_SSL_PROTO_TLS1_2
+    { "fatal alert from the peer, TLS 1.2", PeerAlertTls12 },
+#endif /* MBEDTLS_SSL_PROTO_TLS1_2 */
+#ifdef MBEDTLS_SSL_PROTO_TLS1_3
+    { "fatal alert from the peer, TLS 1.3", PeerAlertTls13 },
+#endif /* MBEDTLS_SSL_PROTO_TLS1_3 */
+    { "fatal alert from the server name callback", OwnAlert },
     { "no server certificate, OPTIONAL", NoServerCertOptional },
     { "host name not set", HostNotSet },
     { "host name cleared", HostCleared },
