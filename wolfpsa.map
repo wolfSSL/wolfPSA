@@ -142,6 +142,7 @@ WOLFPSA_1.0 {
         wolfPSA_SetDefaultDevID;
         wolfPSA_GetDefaultDevID;
         /* Mbed TLS compatibility layer, MBEDTLS_COMPAT=1 */
+        mbedtls_debug_*;
         mbedtls_ms_time*;
         mbedtls_net_*;
         mbedtls_pem_*;

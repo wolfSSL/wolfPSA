@@ -83,6 +83,7 @@ X.509:
 Other:
 
 - `mbedtls_strerror`
+- `mbedtls_debug_set_threshold`
 - `mbedtls_net_*`: init, connect, bind, accept (TCP and UDP), close, free,
   recv, send, usleep
 - `mbedtls_pem_*`: init, read_buffer, get_buffer, free
@@ -212,8 +213,9 @@ TLS:
 - In TLS 1.3, a client sends the max fragment length extension, and a
   server sends records of at most the length its client asks for. Mbed TLS
   uses the extension in TLS 1.2 only.
-- `mbedtls_ssl_conf_dbg` and `mbedtls_ssl_conf_cert_profile` are accepted
-  and ignored.
+- `mbedtls_ssl_conf_dbg`, `mbedtls_debug_set_threshold` and
+  `mbedtls_ssl_conf_cert_profile` are accepted and ignored.
+  `MBEDTLS_DEBUG_C` is not defined, and the debug callback is never called.
 - The timers of `mbedtls_ssl_set_timer_cb` are not used. Mbed TLS uses them
   for DTLS and for `mbedtls_ssl_conf_read_timeout`.
 
