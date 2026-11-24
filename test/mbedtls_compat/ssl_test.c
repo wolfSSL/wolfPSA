@@ -120,6 +120,8 @@ typedef struct {
     /* Returned by each send or receive when set */
     int sendErr;
     int recvErr;
+    /* When not -1, the bytes sends take before WANT_WRITE */
+    int sendRoom;
 } Peer;
 
 /* The CAs a peer trusts, and the certificates and key a server sends */
@@ -180,10 +182,14 @@ static Peer srv2;
 
 static int PipeSend(void* ctx, const unsigned char* buf, size_t len)
 {
-    Pipe* p = ((Peer*)ctx)->tx;
+    Peer* peer = (Peer*)ctx;
+    Pipe* p = peer->tx;
 
-    if (((Peer*)ctx)->sendErr != 0) {
-        return ((Peer*)ctx)->sendErr;
+    if (peer->sendErr != 0) {
+        return peer->sendErr;
+    }
+    if (peer->sendRoom != -1 && len > (size_t)peer->sendRoom) {
+        len = (size_t)peer->sendRoom;
     }
     if (len > sizeof(p->buf) - p->len) {
         len = sizeof(p->buf) - p->len;
@@ -193,6 +199,9 @@ static int PipeSend(void* ctx, const unsigned char* buf, size_t len)
     }
     memcpy(p->buf + p->len, buf, len);
     p->len += len;
+    if (peer->sendRoom != -1) {
+        peer->sendRoom -= (int)len;
+    }
     return (int)len;
 }
 
@@ -227,6 +236,7 @@ static void PeerInit(Peer* p, int endpoint)
     p->tx = (endpoint == MBEDTLS_SSL_IS_CLIENT) ? toSrv : toCli;
     p->sendErr = 0;
     p->recvErr = 0;
+    p->sendRoom = -1;
     memset(p->tx, 0, sizeof(*p->tx));
     mbedtls_ssl_set_bio(&p->ssl, p, PipeSend, PipeRecv, NULL);
 }
@@ -1305,35 +1315,6 @@ static int SendAlertPlain(void)
     return ok;
 }
 
-/* close_notify, and a fatal alert, after which wolfSSL sends nothing more */
-static int SendAlertPeer(void)
-{
-    unsigned char buf[16];
-    int ok = Connect(MBEDTLS_SSL_VERIFY_NONE) == 0 &&
-        mbedtls_ssl_send_alert_message(&cli.ssl,
-            MBEDTLS_SSL_ALERT_LEVEL_WARNING,
-            MBEDTLS_SSL_ALERT_MSG_CLOSE_NOTIFY) == 0 &&
-        mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
-            MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY;
-    int ret;
-
-    PeerFree(&cli);
-    PeerFree(&srv);
-    ok = ok && Connect(MBEDTLS_SSL_VERIFY_NONE) == 0 &&
-        mbedtls_ssl_send_alert_message(&srv.ssl,
-            MBEDTLS_SSL_ALERT_LEVEL_FATAL,
-            MBEDTLS_SSL_ALERT_MSG_ACCESS_DENIED) == 0;
-    if (ok) {
-        ret = mbedtls_ssl_read(&cli.ssl, buf, sizeof(buf));
-        ok = ret < 0 && !Waiting(ret) &&
-            mbedtls_ssl_write(&srv.ssl, (const unsigned char*)"x", 1) ==
-                MBEDTLS_ERR_SSL_CONN_EOF;
-    }
-    PeerFree(&cli);
-    PeerFree(&srv);
-    return ok;
-}
-
 /* The client's send or receive fails with err during the handshake. It sends
  * before it receives. */
 static int BioErrorHandshake(int send, int err)
@@ -1506,6 +1487,63 @@ static int RecordExpansion(void)
     for (i = 0; ok && i < sizeof(expansions) / sizeof(expansions[0]); i++) {
         ok = RecordExpansionSuite(i);
     }
+    return ok;
+}
+
+/* close_notify sent in part, then the rest after WANT_WRITE, as one record */
+static int SendAlertRetry(mbedtls_ssl_protocol_version version)
+{
+    unsigned char buf[16];
+    size_t before = 0;
+    int ok = PeersVersion(version) && Connected();
+
+    if (ok) {
+        before = toServer.len;
+        cli.sendRoom = 3;
+        ok = mbedtls_ssl_send_alert_message(&cli.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_WARNING,
+            MBEDTLS_SSL_ALERT_MSG_CLOSE_NOTIFY) ==
+            MBEDTLS_ERR_SSL_WANT_WRITE && toServer.len == before + 3;
+        cli.sendRoom = -1;
+    }
+    ok = ok && mbedtls_ssl_send_alert_message(&cli.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_WARNING,
+            MBEDTLS_SSL_ALERT_MSG_CLOSE_NOTIFY) == 0 &&
+        toServer.len - before ==
+            2 + (size_t)mbedtls_ssl_get_record_expansion(&cli.ssl) &&
+        mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+            MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY &&
+        toServer.len == 0;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* close_notify, and a fatal alert, after which wolfSSL sends nothing more */
+static int SendAlertPeer(void)
+{
+    unsigned char buf[16];
+    int ok = 1;
+    int ret;
+
+#ifdef MBEDTLS_SSL_PROTO_TLS1_2
+    ok = SendAlertRetry(MBEDTLS_SSL_VERSION_TLS1_2);
+#endif /* MBEDTLS_SSL_PROTO_TLS1_2 */
+#ifdef MBEDTLS_SSL_PROTO_TLS1_3
+    ok = ok && SendAlertRetry(MBEDTLS_SSL_VERSION_TLS1_3);
+#endif /* MBEDTLS_SSL_PROTO_TLS1_3 */
+    ok = ok && Connect(MBEDTLS_SSL_VERIFY_NONE) == 0 &&
+        mbedtls_ssl_send_alert_message(&srv.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_FATAL,
+            MBEDTLS_SSL_ALERT_MSG_ACCESS_DENIED) == 0;
+    if (ok) {
+        ret = mbedtls_ssl_read(&cli.ssl, buf, sizeof(buf));
+        ok = ret < 0 && !Waiting(ret) &&
+            mbedtls_ssl_write(&srv.ssl, (const unsigned char*)"x", 1) ==
+                MBEDTLS_ERR_SSL_CONN_EOF;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
     return ok;
 }
 
