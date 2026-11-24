@@ -34,6 +34,7 @@
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfpsa/psa_ccm.h>
 #include <wolfpsa/psa_gcm.h>
+#include <wolfpsa/psa_engine.h>
 
 #ifndef NO_ASN
 #error "build this test against test/secure-set/user_settings.h"
@@ -183,6 +184,65 @@ static psa_status_t kdf_setup_status(psa_algorithm_t alg)
 
     (void)psa_key_derivation_abort(&op);
     return st;
+}
+
+/* The mapping wc_error_to_psa_status() had as a switch, kept as the oracle. */
+static psa_status_t ref_wc_error(int ret)
+{
+    switch (ret) {
+    case 0:
+        return PSA_SUCCESS;
+    case NOT_COMPILED_IN:
+        return PSA_ERROR_NOT_SUPPORTED;
+    case BAD_FUNC_ARG:
+    case ECC_BAD_ARG_E:
+    case ECC_CURVE_OID_E:
+    case ECC_PRIV_KEY_E:
+    case ECC_OUT_OF_RANGE_E:
+    case ECC_PRIVATEONLY_E:
+        return PSA_ERROR_INVALID_ARGUMENT;
+    case BUFFER_E:
+    case RSA_BUFFER_E:
+        return PSA_ERROR_BUFFER_TOO_SMALL;
+    case MEMORY_E:
+        return PSA_ERROR_INSUFFICIENT_MEMORY;
+    case WC_HW_E:
+        return PSA_ERROR_HARDWARE_FAILURE;
+    case SIG_VERIFY_E:
+    case AES_GCM_AUTH_E:
+    case AES_CCM_AUTH_E:
+    case AES_EAX_AUTH_E:
+    case AES_SIV_AUTH_E:
+    case MAC_CMP_FAILED_E:
+        return PSA_ERROR_INVALID_SIGNATURE;
+    case RNG_FAILURE_E:
+        return PSA_ERROR_INSUFFICIENT_ENTROPY;
+    case BAD_PADDING_E:
+    case RSA_PAD_E:
+        return PSA_ERROR_INVALID_PADDING;
+    case BAD_STATE_E:
+        return PSA_ERROR_BAD_STATE;
+    default:
+        return PSA_ERROR_GENERIC_ERROR;
+    }
+}
+
+static void test_wc_error_map(void)
+{
+    int ret;
+    int bad = 0;
+
+    for (ret = WC_LAST_E - 64; ret <= 64; ret++) {
+        if (wc_error_to_psa_status(ret) != ref_wc_error(ret)) {
+            printf("  wolfCrypt %d maps to %d, want %d\n", ret,
+                   (int)wc_error_to_psa_status(ret), (int)ref_wc_error(ret));
+            bad++;
+        }
+    }
+    check(bad == 0, "every wolfCrypt error code maps to its PSA status");
+    check(wc_error_to_psa_status(-32768) == PSA_ERROR_GENERIC_ERROR &&
+          wc_error_to_psa_status(65536 + BAD_FUNC_ARG) ==
+          PSA_ERROR_GENERIC_ERROR, "codes beyond a short stay generic");
 }
 
 static void test_kdf_families_off(void)
@@ -879,6 +939,7 @@ int main(void)
     test_ecdsa_raw();
     test_import_families_off();
     test_kdf_families_off();
+    test_wc_error_map();
     test_import_ecc_checked();
     aead_overlap(PSA_ALG_GCM, "GCM");
     aead_overlap(PSA_ALG_CCM, "CCM");
