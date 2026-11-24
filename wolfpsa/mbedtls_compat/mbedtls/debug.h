@@ -26,4 +26,14 @@
 
 #include "mbedtls/ssl.h"
 
+#ifdef __cplusplus
+    extern "C" {
+#endif /* __cplusplus */
+
+void mbedtls_debug_set_threshold(int threshold);
+
+#ifdef __cplusplus
+    } /* extern "C" */
+#endif /* __cplusplus */
+
 #endif /* MBEDTLS_DEBUG_H */

@@ -38,6 +38,7 @@
 
 #include <psa/crypto.h>
 #include <mbedtls/ssl.h>
+#include <mbedtls/debug.h>
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/x509_crt.h>
@@ -2439,6 +2440,42 @@ static int UserData(void)
     return ok;
 }
 
+static int debugCalls;
+
+static void DebugCb(void* ctx, int level, const char* file, int line,
+    const char* str)
+{
+    (void)ctx;
+    (void)level;
+    (void)file;
+    (void)line;
+    (void)str;
+    debugCalls++;
+}
+
+/* As in Mbed TLS without MBEDTLS_DEBUG_C */
+static int DebugIgnored(void)
+{
+    int s = 0;
+    int ok;
+
+    debugCalls = 0;
+    mbedtls_debug_set_threshold(4);
+    ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED, 1,
+            HOST_NAME) == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+    if (ok) {
+        mbedtls_ssl_conf_dbg(&cli.conf, DebugCb, NULL);
+        mbedtls_ssl_conf_dbg(&srv.conf, DebugCb, NULL);
+        ok = Handshake(&s) == 0 && s == 0 && debugCalls == 0;
+    }
+    mbedtls_debug_set_threshold(0);
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
 #ifdef MBEDTLS_TIMING_C
 /* Setting the callbacks cancels the delay running */
 static int TimerCb(void)
@@ -2572,6 +2609,7 @@ static const struct {
     { "UDP accept, blocking listener", AcceptUdpBlocking },
     { "cipher suite ID from its name", SuiteIdFromName },
     { "handshake over", HandshakeOver },
+    { "debug threshold and callback ignored", DebugIgnored },
 #ifdef MBEDTLS_TIMING_C
     { "timer callbacks", TimerCb },
 #endif /* MBEDTLS_TIMING_C */
