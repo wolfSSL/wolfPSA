@@ -24,6 +24,7 @@
 #endif
 
 #include "psa_config.h"
+#include "psa_want_gate.h"
 
 #if defined(WOLFSSL_PSA_ENGINE)
 
@@ -46,6 +47,11 @@
 #endif
 
 #define WOLFPSA_CHACHA20_IV_BYTES 12
+#ifdef WOLFPSA_CCM_STAR
+    #define WOLFPSA_IS_CCM_STAR(alg) ((alg) == PSA_ALG_CCM_STAR_NO_TAG)
+#else
+    #define WOLFPSA_IS_CCM_STAR(alg) 0
+#endif
 
 #if !defined(NO_AES_CBC) || !defined(NO_DES3)
     #define WOLFPSA_CBC
@@ -140,6 +146,9 @@ static psa_status_t wolfpsa_cipher_check_alg(psa_algorithm_t alg)
 #endif
 #ifdef WOLFSSL_AES_COUNTER
         case PSA_ALG_CTR:
+            return PSA_SUCCESS;
+#endif
+#ifdef WOLFPSA_CCM_STAR
         case PSA_ALG_CCM_STAR_NO_TAG:
             return PSA_SUCCESS;
 #endif
@@ -458,7 +467,7 @@ static psa_status_t wolfpsa_cipher_setup(psa_cipher_operation_t *operation,
         }
         else
 #endif
-        if (alg == PSA_ALG_CCM_STAR_NO_TAG || alg == PSA_ALG_OFB ||
+        if (WOLFPSA_IS_CCM_STAR(alg) || alg == PSA_ALG_OFB ||
             alg == PSA_ALG_CFB) {
             /* These modes run the forward cipher in both directions */
             ret = wc_AesSetKey(&ctx->aes, key_data, (word32)key_data_length,
@@ -539,7 +548,7 @@ static psa_status_t wolfpsa_cipher_set_iv(psa_cipher_operation_t *operation,
         return PSA_ERROR_NOT_SUPPORTED;
 #endif
     }
-    else if (ctx->alg == PSA_ALG_CCM_STAR_NO_TAG) {
+    else if (WOLFPSA_IS_CCM_STAR(ctx->alg)) {
         uint8_t counter[AES_BLOCK_SIZE];
 
         if (iv_length != 13) {
@@ -941,7 +950,7 @@ pkcs7_dec_partial_done:
     }
     else
 #endif /* WOLFPSA_CBC */
-    if (ctx->alg == PSA_ALG_CCM_STAR_NO_TAG) {
+    if (WOLFPSA_IS_CCM_STAR(ctx->alg)) {
 #ifdef WOLFSSL_AES_COUNTER
         if (!ctx->iv_set) {
             return wolfpsa_cipher_fail(operation, PSA_ERROR_BAD_STATE);

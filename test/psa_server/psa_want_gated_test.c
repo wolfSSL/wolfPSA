@@ -34,8 +34,9 @@
 #ifndef WOLFPSA_WANT_GATED
 #error "build the library with PSA_WANT_WITHOUT=PSA_WANT_ALG_GCM"
 #endif
-#if defined(PSA_WANT_ALG_GCM) || defined(PSA_WANT_ALG_SP800_108_COUNTER_HMAC)
-#error "GCM and SP800-108 HMAC should be filtered out of the generated config"
+#if defined(PSA_WANT_ALG_GCM) || defined(PSA_WANT_ALG_SP800_108_COUNTER_HMAC) || \
+    defined(PSA_WANT_ALG_CCM_STAR_NO_TAG)
+#error "GCM, SP800-108 HMAC and CCM* should be filtered out of the generated config"
 #endif
 
 static int g_failures;
@@ -165,6 +166,39 @@ static void test_sp800_108_refused(void)
           "HKDF on the same HMAC still derives");
 }
 
+static psa_status_t cipher_run(psa_algorithm_t alg, size_t iv_len)
+{
+    static const uint8_t iv[16] = { 0 };
+    uint8_t in[16] = { 0 };
+    uint8_t out[16];
+    size_t out_len = 0;
+    psa_cipher_operation_t op = PSA_CIPHER_OPERATION_INIT;
+    psa_key_id_t id = aes_key(alg);
+    psa_status_t st = PSA_ERROR_GENERIC_ERROR;
+
+    if (id != PSA_KEY_ID_NULL) {
+        st = psa_cipher_encrypt_setup(&op, id, alg);
+        if (st == PSA_SUCCESS) {
+            st = psa_cipher_set_iv(&op, iv, iv_len);
+        }
+        if (st == PSA_SUCCESS) {
+            st = psa_cipher_update(&op, in, sizeof(in), out, sizeof(out),
+                                   &out_len);
+        }
+        (void)psa_cipher_abort(&op);
+        (void)psa_destroy_key(id);
+    }
+    return st;
+}
+
+static void test_ccm_star_refused(void)
+{
+    check(cipher_run(PSA_ALG_CCM_STAR_NO_TAG, 13) == PSA_ERROR_NOT_SUPPORTED,
+          "CCM* without a tag is not supported");
+    check(cipher_run(PSA_ALG_CTR, 16) == PSA_SUCCESS,
+          "CTR on the same AES still runs");
+}
+
 int main(void)
 {
     check(psa_crypto_init() == PSA_SUCCESS, "psa_crypto_init");
@@ -172,6 +206,7 @@ int main(void)
     test_ccm_kept();
     test_wolfcrypt_gcm_kept();
     test_sp800_108_refused();
+    test_ccm_star_refused();
     printf("%s: %d failure(s)\n", g_failures ? "FAIL" : "PASS", g_failures);
     return g_failures ? 1 : 0;
 }

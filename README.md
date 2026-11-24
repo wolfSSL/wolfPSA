@@ -103,8 +103,9 @@ includes `<psa/crypto.h>` needs that directory on its include path next to
 keeps its primitive, for example when the application seals with one-shot
 AES-GCM but should not offer GCM through PSA:
 `make PSA_WANT_WITHOUT=PSA_WANT_ALG_GCM`. It takes `PSA_WANT_ALG_GCM`,
-`PSA_WANT_ALG_CCM`, `PSA_WANT_ALG_CHACHA20_POLY1305`,
-`PSA_WANT_ALG_SP800_108_COUNTER_HMAC` and `PSA_WANT_ALG_SP800_108_COUNTER_CMAC`,
+`PSA_WANT_ALG_CCM`, `PSA_WANT_ALG_CCM_STAR_NO_TAG` (CTR stays),
+`PSA_WANT_ALG_CHACHA20_POLY1305`, `PSA_WANT_ALG_SP800_108_COUNTER_HMAC` and
+`PSA_WANT_ALG_SP800_108_COUNTER_CMAC`,
 and that algorithm then returns `PSA_ERROR_NOT_SUPPORTED`. Every other algorithm follows the wolfCrypt
 build, so turn it off there.
 

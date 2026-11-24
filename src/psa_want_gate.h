@@ -40,6 +40,10 @@
     (!defined(WOLFPSA_WANT_GATED) || defined(PSA_WANT_ALG_CHACHA20_POLY1305))
     #define WOLFPSA_CHACHAPOLY
 #endif
+#if defined(WOLFSSL_AES_COUNTER) && \
+    (!defined(WOLFPSA_WANT_GATED) || defined(PSA_WANT_ALG_CCM_STAR_NO_TAG))
+    #define WOLFPSA_CCM_STAR
+#endif
 #if !defined(NO_HMAC) && \
     (!defined(WOLFPSA_WANT_GATED) || \
      defined(PSA_WANT_ALG_SP800_108_COUNTER_HMAC))
