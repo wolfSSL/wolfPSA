@@ -40,6 +40,10 @@ then use `-I<wolfPSA>/wolfpsa`, `-I<wolfPSA>/wolfpsa/mbedtls_compat` and
 `-I<wolfPSA>/build/include`, and link `libwolfpsa.a`, in place of Mbed TLS's
 libraries. The headers include no wolfSSL header.
 
+Applications that support only Mbed TLS 3.x define `WOLFPSA_MBEDTLS_3` when
+they compile, for the Mbed TLS 3.6 API of the same library. Most of the
+3.6-only API is still to come.
+
 To run the compatibility tests:
 
 ```

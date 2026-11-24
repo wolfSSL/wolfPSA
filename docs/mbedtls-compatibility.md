@@ -361,6 +361,8 @@ runs these against `libwolfpsa.a`. Each is also a target of its own;
   `x509_cert_info` cases of Mbed TLS's x509parse suite. `ssl_test.c` checks
   return codes, verify results and the verify callbacks, client and server
   in one process. `timing_test.c` checks the timers and `mbedtls_ms_time`.
+  `mbedtls3_test.c` checks the Mbed TLS 3.6 API, built with
+  `WOLFPSA_MBEDTLS_3`.
 - `mbedtls-compat-programs`: the Mbed TLS migration guide client
   (`test/mbedtls_compat/client-tls-mbedtls.c`) and Mbed TLS's sample
   programs, built unchanged. The clients run against the wolfSSL example

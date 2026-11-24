@@ -34,6 +34,7 @@ static int Version(void)
         strcmp(MBEDTLS_VERSION_STRING, "3.6.8") == 0;
 }
 
+#ifndef MBEDTLS_DEPRECATED_REMOVED
 /* Each range by minor version is the range by TLS version. ssl_test checks
  * the handshakes of the ranges by TLS version. */
 static int VersionsMajorMinor(void)
@@ -72,13 +73,16 @@ static int VersionsMajorMinor(void)
     mbedtls_ssl_config_free(&byVersion);
     return ok;
 }
+#endif /* !MBEDTLS_DEPRECATED_REMOVED */
 
 static const struct {
     const char* name;
     int (*test)(void);
 } cases[] = {
     { "version 3.6.8", Version },
-    { "version ranges by major and minor", VersionsMajorMinor }
+#ifndef MBEDTLS_DEPRECATED_REMOVED
+    { "version ranges by major and minor", VersionsMajorMinor },
+#endif /* !MBEDTLS_DEPRECATED_REMOVED */
 };
 
 int main(void)
