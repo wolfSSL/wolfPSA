@@ -134,6 +134,7 @@ typedef struct {
     /* When not -1, the bytes sends take before WANT_WRITE */
     int sendRoom;
     uint32_t timeout; /* the last one PipeRecvTimeout got */
+    mbedtls_net_context* net; /* when set, polled before handshake steps */
 } Peer;
 
 /* The CAs a peer trusts, and the certificates and key a server sends */
@@ -259,6 +260,7 @@ static void PeerInit(Peer* p, int endpoint)
     p->sendErr = 0;
     p->recvErr = 0;
     p->sendRoom = -1;
+    p->net = NULL;
     memset(p->tx, 0, sizeof(*p->tx));
     mbedtls_ssl_set_bio(&p->ssl, p, PipeSend, PipeRecv, NULL);
 }
@@ -307,6 +309,15 @@ static int Waiting(int ret)
         ret == MBEDTLS_ERR_SSL_WANT_WRITE || ret == MBEDTLS_ERR_SSL_TIMEOUT;
 }
 
+/* A handshake step, after data reaches p's socket, if it has one */
+static int HandshakeStep(Peer* p)
+{
+    if (p->net != NULL) {
+        (void)mbedtls_net_poll(p->net, MBEDTLS_NET_POLL_READ, LONG_WAIT_MS);
+    }
+    return mbedtls_ssl_handshake(&p->ssl);
+}
+
 /* The result of client. *srvRet gets server's. */
 static int HandshakeOf(Peer* client, Peer* server, int* srvRet)
 {
@@ -316,10 +327,10 @@ static int HandshakeOf(Peer* client, Peer* server, int* srvRet)
 
     for (i = 0; i < MAX_STEPS && (Waiting(c) || Waiting(s)); i++) {
         if (Waiting(c)) {
-            c = mbedtls_ssl_handshake(&client->ssl);
+            c = HandshakeStep(client);
         }
         if (Waiting(s)) {
-            s = mbedtls_ssl_handshake(&server->ssl);
+            s = HandshakeStep(server);
         }
     }
     *srvRet = s;
@@ -1338,11 +1349,10 @@ static int SendAlertPlain(void)
     return ok;
 }
 
-/* The client's send or receive fails with err during the handshake. It sends
- * before it receives. */
+/* The client's send or receive fails with err in its first handshake call. It
+ * sends before it receives. */
 static int BioErrorHandshake(int send, int err)
 {
-    int s;
     int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
             1, HOST_NAME) == 0 &&
         PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
@@ -1350,7 +1360,7 @@ static int BioErrorHandshake(int send, int err)
 
     if (ok) {
         *(send ? &cli.sendErr : &cli.recvErr) = err;
-        ok = Handshake(&s) == err;
+        ok = mbedtls_ssl_handshake(&cli.ssl) == err;
     }
     PeerFree(&cli);
     PeerFree(&srv);
@@ -2968,6 +2978,7 @@ static int ReadTimeoutTcp(void)
             mbedtls_net_recv_timeout);
         mbedtls_ssl_set_bio(&srv.ssl, &accepted, mbedtls_net_send,
             mbedtls_net_recv, NULL);
+        srv.net = &accepted;
         /* Before the server answers */
         ok = mbedtls_ssl_handshake(&cli.ssl) == MBEDTLS_ERR_SSL_TIMEOUT &&
             Handshake(&s) == 0 && s == 0 &&
@@ -2975,6 +2986,8 @@ static int ReadTimeoutTcp(void)
                 MBEDTLS_ERR_SSL_TIMEOUT &&
             mbedtls_ssl_write(&srv.ssl, (const unsigned char*)"hello",
                 5) == 5 &&
+            mbedtls_net_poll(&conn, MBEDTLS_NET_POLL_READ, LONG_WAIT_MS) ==
+                MBEDTLS_NET_POLL_READ &&
             mbedtls_ssl_read(&cli.ssl, buf, sizeof(buf)) == 5 &&
             memcmp(buf, "hello", 5) == 0;
     }

@@ -254,6 +254,9 @@ TLS:
   Mbed TLS leaves the connection as it was.
 - `mbedtls_ssl_ciphersuite_t` has the ID, name and TLS versions only, not the
   cipher, MAC, key exchange or flags.
+- The timers of `mbedtls_ssl_set_timer_cb` are used only for
+  `mbedtls_ssl_conf_read_timeout`. Mbed TLS also uses them for DTLS
+  retransmission.
 
 Certificate verification:
 

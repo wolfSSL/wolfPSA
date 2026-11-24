@@ -257,7 +257,7 @@ static int MbedNetUdpAccept(mbedtls_net_context* bind_ctx,
 #ifndef USE_WINDOWS_API
     /* Keeps the blocking mode, which Winsock cannot read */
     flags = fcntl(client_ctx->fd, F_GETFL);
-    if (flags < 0 || fcntl(fd, F_SETFL, flags & O_NONBLOCK) != 0) {
+    if (flags < 0 || fcntl(fd, F_SETFL, flags & O_NONBLOCK) < 0) {
         ret = MBEDTLS_ERR_NET_SOCKET_FAILED;
     }
 #endif /* !USE_WINDOWS_API */
@@ -443,7 +443,7 @@ static int MbedNetSetNonBlock(mbedtls_net_context* ctx, int nonBlock)
         return MBEDTLS_ERR_NET_SOCKET_FAILED;
     }
     flags = nonBlock ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
-    if (fcntl(ctx->fd, F_SETFL, flags) != 0) {
+    if (fcntl(ctx->fd, F_SETFL, flags) < 0) {
         return MBEDTLS_ERR_NET_SOCKET_FAILED;
     }
 #endif /* USE_WINDOWS_API */

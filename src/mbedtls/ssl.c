@@ -87,8 +87,7 @@ int MbedIoErr(int code, int dir, int toWolf)
         /* A receive of 0 bytes is EOF */
         { WC_NO_ERR_TRACE(WOLFSSL_CBIO_ERR_CONN_CLOSE),
             { 0, MBEDTLS_ERR_NET_CONN_RESET } },
-        /* As in Mbed TLS, the next call goes on after a timeout */
-        { WC_NO_ERR_TRACE(WOLFSSL_CBIO_ERR_WANT_READ),
+        { WC_NO_ERR_TRACE(WOLFSSL_CBIO_ERR_TIMEOUT),
             { MBEDTLS_ERR_SSL_TIMEOUT, MBEDTLS_ERR_SSL_TIMEOUT } },
         { WC_NO_ERR_TRACE(WOLFSSL_CBIO_ERR_ISR),
             { MBEDTLS_ERR_SSL_WANT_READ, MBEDTLS_ERR_SSL_WANT_WRITE } },
@@ -245,7 +244,6 @@ static int MbedRecvCb(WOLFSSL* ssl, char* buf, int sz, void* ctx)
     mbedtls_ssl_context* s = (mbedtls_ssl_context*)ctx;
     int ret = MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
 
-    (void)ssl;
     /* As in Mbed TLS, a timeout once the read timer expires (2) */
     if (s->f_get_timer != NULL && s->f_get_timer(s->p_timer) == 2) {
         ret = MBEDTLS_ERR_SSL_TIMEOUT;
@@ -257,7 +255,15 @@ static int MbedRecvCb(WOLFSSL* ssl, char* buf, int sz, void* ctx)
     else if (s->f_recv != NULL) {
         ret = s->f_recv(s->p_bio, (unsigned char*)buf, (size_t)sz);
     }
-    return MbedIoRet(s, ret, MBED_IO_RECV);
+    ret = MbedIoRet(s, ret, MBED_IO_RECV);
+    /* wolfSSL resends a DTLS flight on a timeout. Otherwise, as in Mbed TLS,
+     * the next call goes on. */
+    if (ret == WC_NO_ERR_TRACE(WOLFSSL_CBIO_ERR_TIMEOUT) &&
+            (s->conf->transport == MBEDTLS_SSL_TRANSPORT_STREAM ||
+             wolfSSL_is_init_finished(ssl))) {
+        ret = WOLFSSL_CBIO_ERR_WANT_READ;
+    }
+    return ret;
 }
 
 static int MbedSendCb(WOLFSSL* ssl, char* buf, int sz, void* ctx)
