@@ -19,12 +19,27 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-/* The version macros are in build_info.h. MBEDTLS_VERSION_C is not defined,
- * so there is no mbedtls_version_get_number() and friends. */
+/* The version macros are in build_info.h */
 
 #ifndef MBEDTLS_VERSION_H
 #define MBEDTLS_VERSION_H
 
 #include "mbedtls/build_info.h"
+
+#if defined(MBEDTLS_VERSION_C)
+
+#ifdef __cplusplus
+    extern "C" {
+#endif /* __cplusplus */
+
+unsigned int mbedtls_version_get_number(void);
+const char* mbedtls_version_get_string(void);
+const char* mbedtls_version_get_string_full(void);
+
+#ifdef __cplusplus
+    } /* extern "C" */
+#endif /* __cplusplus */
+
+#endif /* MBEDTLS_VERSION_C */
 
 #endif /* MBEDTLS_VERSION_H */

@@ -34,10 +34,9 @@ MBEDTLS_STAMP := $(MBEDTLS_CLONE)-$(MBEDTLS_REF)
 
 # Mbed TLS's test data
 DATA := $(MBEDTLS_PATH)/framework/data_files
-# Parsing, TLS return codes and verify results in one process, timers and
-# error strings
+# Our own tests of the Mbed TLS API
 UNIT := $(addprefix $(BUILD_DIR)/,x509_crt_test pk_test pem_test ssl_test \
-	timing_test error_test mbedtls3_test)
+	timing_test error_test version_test mbedtls3_test)
 
 # The peers are the wolfSSL example server and client, from a wolfSSL
 # configured out of tree from WOLFSSL_PATH, so they do not depend on wolfPSA's

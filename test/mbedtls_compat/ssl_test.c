@@ -121,6 +121,8 @@ typedef struct {
     /* Returned by each send or receive when set */
     int sendErr;
     int recvErr;
+    /* When not -1, the bytes sends take before WANT_WRITE */
+    int sendRoom;
 } Peer;
 
 /* The CAs a peer trusts, and the certificates and key a server sends */
@@ -181,10 +183,14 @@ static Peer srv2;
 
 static int PipeSend(void* ctx, const unsigned char* buf, size_t len)
 {
-    Pipe* p = ((Peer*)ctx)->tx;
+    Peer* peer = (Peer*)ctx;
+    Pipe* p = peer->tx;
 
-    if (((Peer*)ctx)->sendErr != 0) {
-        return ((Peer*)ctx)->sendErr;
+    if (peer->sendErr != 0) {
+        return peer->sendErr;
+    }
+    if (peer->sendRoom != -1 && len > (size_t)peer->sendRoom) {
+        len = (size_t)peer->sendRoom;
     }
     if (len > sizeof(p->buf) - p->len) {
         len = sizeof(p->buf) - p->len;
@@ -194,6 +200,9 @@ static int PipeSend(void* ctx, const unsigned char* buf, size_t len)
     }
     memcpy(p->buf + p->len, buf, len);
     p->len += len;
+    if (peer->sendRoom != -1) {
+        peer->sendRoom -= (int)len;
+    }
     return (int)len;
 }
 
@@ -228,6 +237,7 @@ static void PeerInit(Peer* p, int endpoint)
     p->tx = (endpoint == MBEDTLS_SSL_IS_CLIENT) ? toSrv : toCli;
     p->sendErr = 0;
     p->recvErr = 0;
+    p->sendRoom = -1;
     memset(p->tx, 0, sizeof(*p->tx));
     mbedtls_ssl_set_bio(&p->ssl, p, PipeSend, PipeRecv, NULL);
 }
@@ -1218,6 +1228,24 @@ static int ReadWrite(void)
     return ok;
 }
 
+/* The rest of a record read in part is pending, a record not read yet is not */
+static int CheckPending(void)
+{
+    unsigned char buf[16];
+    int ok = !mbedtls_ssl_check_pending(NULL) &&
+        Connect(MBEDTLS_SSL_VERIFY_NONE) == 0 &&
+        mbedtls_ssl_write(&srv.ssl, (const unsigned char*)"hello", 5) == 5 &&
+        !mbedtls_ssl_check_pending(&cli.ssl) &&
+        mbedtls_ssl_read(&cli.ssl, buf, 2) == 2 &&
+        mbedtls_ssl_check_pending(&cli.ssl) &&
+        mbedtls_ssl_read(&cli.ssl, buf, sizeof(buf)) == 3 &&
+        !mbedtls_ssl_check_pending(&cli.ssl);
+
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
 static int WriteZero(void)
 {
     int ok = Connect(MBEDTLS_SSL_VERIFY_NONE) == 0 &&
@@ -1253,6 +1281,38 @@ static int ReadCloseNotify(void)
 
     PeerFree(&cli);
     PeerFree(&srv);
+    return ok;
+}
+
+/* As in Mbed TLS, after WANT_WRITE the next call sends the alert once */
+static int SendAlertPlain(void)
+{
+    static const unsigned char want[] = {
+        MBEDTLS_SSL_MSG_ALERT, 0, 0, 0, 2, MBEDTLS_SSL_ALERT_LEVEL_FATAL,
+        MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE
+    };
+    int ok = mbedtls_ssl_send_alert_message(NULL,
+            MBEDTLS_SSL_ALERT_LEVEL_FATAL,
+            MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE) ==
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+        PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0;
+
+    if (ok) {
+        cli.sendErr = MBEDTLS_ERR_SSL_WANT_WRITE;
+        ok = mbedtls_ssl_send_alert_message(&cli.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_FATAL,
+            MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE) ==
+            MBEDTLS_ERR_SSL_WANT_WRITE && toServer.len == 0;
+        cli.sendErr = 0;
+    }
+    /* Not the record version, bytes 1 and 2 */
+    ok = ok && mbedtls_ssl_send_alert_message(&cli.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_FATAL,
+            MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE) == 0 &&
+        toServer.len == sizeof(want) && toServer.buf[0] == want[0] &&
+        memcmp(toServer.buf + 3, want + 3, sizeof(want) - 3) == 0;
+    PeerFree(&cli);
     return ok;
 }
 
@@ -1422,8 +1482,167 @@ static int Connected(void)
 
     return Handshake(&s) == 0 && s == 0;
 }
-#endif /* MBEDTLS_SSL_MAX_FRAGMENT_LENGTH ||
-          MBEDTLS_SSL_KEYING_MATERIAL_EXPORT || MBEDTLS_SSL_PROTO_TLS1_3 */
+
+/* The most a record adds with each suite: the 5-byte header, then */
+static const struct {
+    int suite;
+    mbedtls_ssl_protocol_version version;
+    int expansion;
+} expansions[] = {
+#ifdef MBEDTLS_SSL_PROTO_TLS1_3
+    /* the content type and the tag */
+    { MBEDTLS_TLS1_3_AES_128_GCM_SHA256, MBEDTLS_SSL_VERSION_TLS1_3,
+        5 + 1 + 16 },
+    { MBEDTLS_TLS1_3_CHACHA20_POLY1305_SHA256, MBEDTLS_SSL_VERSION_TLS1_3,
+        5 + 1 + 16 },
+#endif /* MBEDTLS_SSL_PROTO_TLS1_3 */
+#ifdef MBEDTLS_SSL_PROTO_TLS1_2
+    /* the explicit IV and the tag */
+    { MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+        MBEDTLS_SSL_VERSION_TLS1_2, 5 + 8 + 16 },
+    /* the tag */
+    { MBEDTLS_TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+        MBEDTLS_SSL_VERSION_TLS1_2, 5 + 16 },
+    /* the IV, a block of padding and the MAC */
+    { MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
+        MBEDTLS_SSL_VERSION_TLS1_2, 5 + 16 + 16 + 32 },
+    { MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+        MBEDTLS_SSL_VERSION_TLS1_2, 5 + 16 + 16 + 20 },
+#endif /* MBEDTLS_SSL_PROTO_TLS1_2 */
+};
+
+/* Lengths up to three blocks, as CBC padding depends on the length */
+static int RecordExpansionSuite(size_t i)
+{
+    static const unsigned char data[48];
+    const int suites[] = { expansions[i].suite, 0 };
+    const int want = expansions[i].expansion;
+    size_t before;
+    size_t len;
+    size_t most = 0;
+    int ok = PeersVersion(expansions[i].version);
+
+    if (ok) {
+        mbedtls_ssl_conf_ciphersuites(&cli.conf, suites);
+        ok = mbedtls_ssl_get_record_expansion(&cli.ssl) == 5 && Connected() &&
+            mbedtls_ssl_get_ciphersuite_id_from_ssl(&cli.ssl) == suites[0] &&
+            mbedtls_ssl_get_record_expansion(&cli.ssl) == want &&
+            mbedtls_ssl_get_record_expansion(&srv.ssl) == want;
+    }
+    for (len = 1; ok && len <= sizeof(data); len++) {
+        before = toServer.len;
+        ok = mbedtls_ssl_write(&cli.ssl, data, len) == (int)len;
+        if (ok && toServer.len - before - len > most) {
+            most = toServer.len - before - len;
+        }
+    }
+    if (!ok || most != (size_t)want) {
+        printf("FAIL: %s: most added %zu, expected %d\n",
+            mbedtls_ssl_get_ciphersuite_name(suites[0]), most, want);
+        ok = 0;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+static int RecordExpansion(void)
+{
+    size_t i;
+    int ok = mbedtls_ssl_get_record_expansion(NULL) ==
+        MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+
+    /* Suites wolfSSL is built without are skipped */
+    for (i = 0; ok && i < sizeof(expansions) / sizeof(expansions[0]); i++) {
+        ok = mbedtls_ssl_ciphersuite_from_id(expansions[i].suite) == NULL ||
+            RecordExpansionSuite(i);
+    }
+    return ok;
+}
+
+/* close_notify sent in part, then the rest after WANT_WRITE, as one record */
+static int SendAlertRetry(mbedtls_ssl_protocol_version version)
+{
+    unsigned char buf[16];
+    size_t before = 0;
+    int ok = PeersVersion(version) && Connected();
+
+    if (ok) {
+        before = toServer.len;
+        cli.sendRoom = 3;
+        ok = mbedtls_ssl_send_alert_message(&cli.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_WARNING,
+            MBEDTLS_SSL_ALERT_MSG_CLOSE_NOTIFY) ==
+            MBEDTLS_ERR_SSL_WANT_WRITE && toServer.len == before + 3;
+        cli.sendRoom = -1;
+    }
+    ok = ok && mbedtls_ssl_send_alert_message(&cli.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_WARNING,
+            MBEDTLS_SSL_ALERT_MSG_CLOSE_NOTIFY) == 0 &&
+        toServer.len - before ==
+            2 + (size_t)mbedtls_ssl_get_record_expansion(&cli.ssl) &&
+        mbedtls_ssl_read(&srv.ssl, buf, sizeof(buf)) ==
+            MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY &&
+        toServer.len == 0;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* close_notify, and a fatal alert, after which wolfSSL sends nothing more */
+static int SendAlertPeer(void)
+{
+    unsigned char buf[16];
+    int ok = 1;
+    int ret;
+
+#ifdef MBEDTLS_SSL_PROTO_TLS1_2
+    ok = SendAlertRetry(MBEDTLS_SSL_VERSION_TLS1_2);
+#endif /* MBEDTLS_SSL_PROTO_TLS1_2 */
+#ifdef MBEDTLS_SSL_PROTO_TLS1_3
+    ok = ok && SendAlertRetry(MBEDTLS_SSL_VERSION_TLS1_3);
+#endif /* MBEDTLS_SSL_PROTO_TLS1_3 */
+    ok = ok && Connect(MBEDTLS_SSL_VERIFY_NONE) == 0 &&
+        mbedtls_ssl_send_alert_message(&srv.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_FATAL,
+            MBEDTLS_SSL_ALERT_MSG_ACCESS_DENIED) == 0;
+    if (ok) {
+        ret = mbedtls_ssl_read(&cli.ssl, buf, sizeof(buf));
+        ok = ret < 0 && !Waiting(ret) &&
+            mbedtls_ssl_write(&srv.ssl, (const unsigned char*)"x", 1) ==
+                MBEDTLS_ERR_SSL_CONN_EOF;
+    }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* WANT_WRITE, not the verify error, from an alert after a failed verify */
+static int SendAlertVerifyFailed(void)
+{
+    size_t before = 0;
+    int s;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            1, "wrong.example.org") == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0 &&
+        Handshake(&s) == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
+
+    if (ok) {
+        before = toServer.len;
+        cli.sendErr = MBEDTLS_ERR_SSL_WANT_WRITE;
+        ok = mbedtls_ssl_send_alert_message(&cli.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_FATAL, MBEDTLS_SSL_ALERT_MSG_BAD_CERT) ==
+            MBEDTLS_ERR_SSL_WANT_WRITE && toServer.len == before;
+        cli.sendErr = 0;
+    }
+    ok = ok && mbedtls_ssl_send_alert_message(&cli.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_FATAL, MBEDTLS_SSL_ALERT_MSG_BAD_CERT) ==
+            0 && toServer.len > before;
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
 
 #ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
 /* Each end's code, and the most data per record each then sends */
@@ -2481,6 +2700,33 @@ static int SuiteIdFromName(void)
     return ok;
 }
 
+/* ID, name and version of each listed suite, TLS 1.3 for the 0x13 suites */
+static int SuiteInfo(void)
+{
+    const int* ids = mbedtls_ssl_list_ciphersuites();
+    const mbedtls_ssl_ciphersuite_t* info;
+    mbedtls_ssl_protocol_version version;
+    size_t i;
+    int ok = mbedtls_ssl_ciphersuite_from_id(0) == NULL &&
+        mbedtls_ssl_ciphersuite_from_id(0xFFFF) == NULL &&
+        mbedtls_ssl_ciphersuite_from_string("TLS-NO-SUCH-SUITE") == NULL &&
+        mbedtls_ssl_ciphersuite_from_string(NULL) == NULL;
+
+    for (i = 0; ok && ids[i] != 0; i++) {
+        info = mbedtls_ssl_ciphersuite_from_id(ids[i]);
+        version = ((ids[i] >> 8) == 0x13) ? MBEDTLS_SSL_VERSION_TLS1_3 :
+            MBEDTLS_SSL_VERSION_TLS1_2;
+        ok = info != NULL && mbedtls_ssl_ciphersuite_get_id(info) == ids[i] &&
+            mbedtls_ssl_ciphersuite_get_name(info) ==
+                mbedtls_ssl_get_ciphersuite_name(ids[i]) &&
+            mbedtls_ssl_ciphersuite_from_string(
+                mbedtls_ssl_ciphersuite_get_name(info)) == info &&
+            info->MBEDTLS_PRIVATE(min_tls_version) == version &&
+            info->MBEDTLS_PRIVATE(max_tls_version) == version;
+    }
+    return ok;
+}
+
 static int HandshakeOver(void)
 {
     int s = 0;
@@ -2644,11 +2890,16 @@ static const struct {
     { "accepted chain CA not used during the verify callback",
         NoCaCacheDuringVerify },
     { "write and read", ReadWrite },
+    { "data pending", CheckPending },
     { "zero-length write", WriteZero },
     { "EOF without close_notify", ReadEof },
     { "close_notify", ReadCloseNotify },
+    { "alert before the handshake, and after WANT_WRITE", SendAlertPlain },
+    { "alerts after the handshake", SendAlertPeer },
+    { "alert after a failed verify", SendAlertVerifyFailed },
     { "BIO errors", BioErrors },
     { "length over INT_MAX", LargeLength },
+    { "record expansion", RecordExpansion },
 #ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
     { "max fragment length, TLS 1.2", MaxFragLenTls12 },
     { "max fragment length, TLS 1.3", MaxFragLenTls13 },
@@ -2702,6 +2953,7 @@ static const struct {
     { "UDP accept, bound to every IPv6 address", AcceptUdpAnyIpv6 },
     { "UDP accept, blocking listener", AcceptUdpBlocking },
     { "cipher suite ID from its name", SuiteIdFromName },
+    { "cipher suite info", SuiteInfo },
     { "handshake over", HandshakeOver },
     { "debug threshold and callback ignored", DebugIgnored },
 #ifdef MBEDTLS_TIMING_C

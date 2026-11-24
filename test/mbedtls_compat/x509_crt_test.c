@@ -25,6 +25,7 @@
  * tests/suites/test_suite_x509parse.data. Run from framework/data_files in
  * an Mbed TLS checkout. */
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +37,7 @@
 #endif /* MBEDTLS_THREADING_C */
 
 #include <psa/crypto.h>
+#include <mbedtls/oid.h>
 #include <mbedtls/x509_crt.h>
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/memory.h>
@@ -265,6 +267,15 @@ static int BadInput(void)
     fails += Expect("parse_der, empty",
         mbedtls_x509_crt_parse_der(&crt, nul, 0),
         MBEDTLS_ERR_X509_INVALID_FORMAT);
+    fails += Expect("parse_der_nocopy, NULL chain",
+        mbedtls_x509_crt_parse_der_nocopy(NULL, nul, sizeof(nul)),
+        MBEDTLS_ERR_X509_BAD_INPUT_DATA);
+    fails += Expect("parse_der_nocopy, NULL buf",
+        mbedtls_x509_crt_parse_der_nocopy(&crt, NULL, 0),
+        MBEDTLS_ERR_X509_BAD_INPUT_DATA);
+    fails += Expect("parse_der_nocopy, empty",
+        mbedtls_x509_crt_parse_der_nocopy(&crt, nul, 0),
+        MBEDTLS_ERR_X509_INVALID_FORMAT);
     fails += Expect("parse_file, NULL chain",
         mbedtls_x509_crt_parse_file(NULL, "test-ca.der"),
         MBEDTLS_ERR_X509_BAD_INPUT_DATA);
@@ -365,11 +376,16 @@ static int ParseDerBuffer(void)
         const char* what;
         ParseBuf parse;
         size_t extra;
+        int nocopy; /* raw points into buf */
     } parses[] = {
-        { "parse, DER", mbedtls_x509_crt_parse, 0 },
-        { "parse, DER and a NUL", mbedtls_x509_crt_parse, 1 },
-        { "parse_der, DER and a NUL", mbedtls_x509_crt_parse_der, 1 }
+        { "parse, DER", mbedtls_x509_crt_parse, 0, 0 },
+        { "parse, DER and a NUL", mbedtls_x509_crt_parse, 1, 0 },
+        { "parse_der, DER and a NUL", mbedtls_x509_crt_parse_der, 1, 0 },
+        { "parse_der_nocopy, DER and a NUL",
+            mbedtls_x509_crt_parse_der_nocopy, 1, 1 }
     };
+    /* A SEQUENCE that is not a certificate */
+    static const unsigned char notCert[] = { 0x30, 0x03, 0x02, 0x01, 0x00 };
     mbedtls_x509_crt ca;
     mbedtls_x509_crt crt;
     unsigned char buf[2048];
@@ -394,12 +410,31 @@ static int ParseDerBuffer(void)
     for (i = 0; i < sizeof(parses) / sizeof(parses[0]); i++) {
         mbedtls_x509_crt_init(&crt);
         ret = parses[i].parse(&crt, buf, len + parses[i].extra);
-        if (ret == 0 && (CountCerts(&crt) != 1 || crt.raw.len != len)) {
+        if (ret == 0 && (CountCerts(&crt) != 1 || crt.raw.len != len ||
+                (crt.raw.p == buf) != parses[i].nocopy)) {
             ret = ERR;
         }
         mbedtls_x509_crt_free(&crt);
         fails += Expect(parses[i].what, ret, 0);
     }
+
+    /* Each node frees only its own copy */
+    mbedtls_x509_crt_init(&crt);
+    ret = mbedtls_x509_crt_parse_der_nocopy(&crt, buf, len);
+    if (ret == 0) {
+        ret = mbedtls_x509_crt_parse_der(&crt, buf, len);
+    }
+    if (ret == 0 && (CountCerts(&crt) != 2 || crt.raw.p != buf ||
+            crt.next->raw.p == buf)) {
+        ret = ERR;
+    }
+    if (ret == 0) {
+        ret = mbedtls_x509_crt_parse_der_nocopy(&crt, notCert,
+            sizeof(notCert));
+    }
+    mbedtls_x509_crt_free(&crt);
+    fails += Expect("parse_der_nocopy and parse_der, then not a certificate",
+        ret, MBEDTLS_ERR_X509_INVALID_FORMAT);
     return fails;
 }
 
@@ -429,16 +464,24 @@ static const char mvrdnHex[] = MVRDN("0C");
 /* BUILT_TBS(from) and no extensions */
 #define DATED(from) "3081CB3081B1" BUILT_TBS(from) BUILT_SIG
 
-static int ParseHex(mbedtls_x509_crt* crt, const char* hex)
+/* Decodes hex into out, and returns the length */
+static size_t FromHex(const char* hex, unsigned char* out, size_t size)
 {
-    unsigned char der[512];
     unsigned int b;
     size_t n = 0;
 
-    while (n < sizeof(der) && sscanf(hex + 2 * n, "%2x", &b) == 1) {
-        der[n++] = (unsigned char)b;
+    while (n < size && sscanf(hex + 2 * n, "%2x", &b) == 1) {
+        out[n++] = (unsigned char)b;
     }
-    return mbedtls_x509_crt_parse_der(crt, der, n);
+    return n;
+}
+
+static int ParseHex(mbedtls_x509_crt* crt, const char* hex)
+{
+    unsigned char der[512];
+
+    return mbedtls_x509_crt_parse_der(crt, der,
+        FromHex(hex, der, sizeof(der)));
 }
 
 /* From Mbed TLS's x509_cert_info and mbedtls_x509_dn_gets cases */
@@ -886,6 +929,61 @@ static int Names(void)
     fails += Expect("empty serial",
         mbedtls_x509_serial_gets(buf, sizeof(buf), &sn), 0);
     fails += ExpectStr("empty serial", buf, "");
+    return fails;
+}
+
+/* The first five are Mbed TLS's x509_oid_numstr cases */
+static int OidNumeric(void)
+{
+    static const struct {
+        const char* hex;
+        size_t size;
+        int ret;
+        const char* want;
+    } oids[] = {
+        { "2B06010505070301", 20, 17, "1.3.6.1.5.5.7.3.1" },
+        { "2B06010505070301", 18, 17, "1.3.6.1.5.5.7.3.1" },
+        { "2B06010505070301", 17, PSA_ERROR_BUFFER_TOO_SMALL, NULL },
+        { "2A864886F70D", 15, 14, "1.2.840.113549" },
+        /* An arc over 32 bits */
+        { "2A8648F9F8F7F6F5F4F3F2F1F001", 100, MBEDTLS_ERR_ASN1_INVALID_DATA,
+            NULL },
+        { "", 100, MBEDTLS_ERR_ASN1_OUT_OF_DATA, NULL },
+        /* The last byte has the continuation bit */
+        { "2A86", 100, MBEDTLS_ERR_ASN1_OUT_OF_DATA, NULL },
+        /* An arc with a leading 0x80 */
+        { "2A8048", 100, MBEDTLS_ERR_ASN1_INVALID_DATA, NULL },
+        /* The first byte has the first two arcs */
+        { "00", 100, 3, "0.0" },
+        { "27", 100, 4, "0.39" },
+        { "28", 100, 3, "1.0" },
+        { "4F", 100, 4, "1.39" },
+        { "50", 100, 3, "2.0" },
+        { "8837", 100, 5, "2.999" },
+        { "2A", 0, PSA_ERROR_BUFFER_TOO_SMALL, NULL }
+    };
+    unsigned char der[16];
+    mbedtls_asn1_buf oid = { MBEDTLS_ASN1_OID, 0, der };
+    char buf[100];
+    char what[64];
+    size_t i;
+    int fails = 0;
+    int ret;
+
+    for (i = 0; i < sizeof(oids) / sizeof(oids[0]); i++) {
+        (void)snprintf(what, sizeof(what), "numeric OID \"%s\", size %zu",
+            oids[i].hex, oids[i].size);
+        oid.len = FromHex(oids[i].hex, der, sizeof(der));
+        memset(buf, '*', sizeof(buf));
+        ret = mbedtls_oid_get_numeric_string(buf, oids[i].size, &oid);
+        fails += Expect(what, ret, oids[i].ret);
+        if (ret >= 0 && oids[i].want != NULL) {
+            fails += ExpectStr(what, buf, oids[i].want);
+        }
+    }
+    fails += Expect("numeric OID, size over INT_MAX",
+        mbedtls_oid_get_numeric_string(buf, (size_t)INT_MAX + 1, &oid),
+        MBEDTLS_ERR_ASN1_INVALID_LENGTH);
     return fails;
 }
 
@@ -1339,6 +1437,7 @@ static void* FailAtMalloc(size_t size)
 static int FailEachAlloc(void)
 {
     mbedtls_x509_crt crt;
+    mbedtls_x509_crt nocopy;
     wolfSSL_Malloc_cb mf;
     wolfSSL_Free_cb ff;
     wolfSSL_Realloc_cb rf;
@@ -1346,6 +1445,7 @@ static int FailEachAlloc(void)
     int ret;
 
     mbedtls_x509_crt_init(&crt);
+    mbedtls_x509_crt_init(&nocopy);
     if (mbedtls_x509_crt_parse_file(&crt, "test-ca.der") != 0) {
         printf("FAIL: reading test-ca.der\n");
         return 1;
@@ -1361,12 +1461,26 @@ static int FailEachAlloc(void)
             fails++;
         }
     }
+    /* A failure must not free the DER, which crt owns */
+    for (failAt = 1, ret = -1; ret != 0 && failAt < 100; failAt++) {
+        allocs = 0;
+        ret = mbedtls_x509_crt_parse_der_nocopy(&nocopy, crt.raw.p,
+            crt.raw.len);
+        if (ret != 0 && (ret != MBEDTLS_ERR_X509_ALLOC_FAILED ||
+                CountCerts(&nocopy) != 0)) {
+            printf("FAIL: allocation %d failed, nocopy: returned %d\n",
+                failAt, ret);
+            fails++;
+        }
+    }
     (void)wolfSSL_SetAllocators(mf, ff, rf);
     fails += Expect("each allocation fails", CountCerts(&crt), 2);
     /* A failed allocation does not leave the key empty */
     fails += Expect("each allocation fails, key",
         (crt.next != NULL) ? (int)mbedtls_pk_get_bitlen(&crt.next->pk) : 0,
         2048);
+    fails += Expect("each allocation fails, nocopy", CountCerts(&nocopy), 1);
+    mbedtls_x509_crt_free(&nocopy);
     mbedtls_x509_crt_free(&crt);
     return fails;
 }
@@ -1406,6 +1520,7 @@ int main(void)
     fails += Usage();
     fails += Extensions();
     fails += Names();
+    fails += OidNumeric();
     fails += Dates();
     fails += Times();
 #if !defined(MBEDTLS_X509_REMOVE_INFO)

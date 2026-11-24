@@ -21,6 +21,9 @@
 
 /* Mbed TLS 4.x TLS API on wolfSSL (MBEDTLS_COMPAT=1). */
 
+/* Plain names for the fields Mbed TLS makes private */
+#define MBEDTLS_ALLOW_PRIVATE_ACCESS
+
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif /* HAVE_CONFIG_H */
@@ -122,7 +125,7 @@ int MbedIoLen(size_t len, int max)
     (MBEDTLS_X509_BADCERT_KEY_USAGE | MBEDTLS_X509_BADCERT_EXT_KEY_USAGE)
 
 /* Map the wolfSSL error behind a failed call to an Mbed TLS return code */
-static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
+static int MbedSslCallErr(const mbedtls_ssl_context* ssl, int ret)
 {
     static const struct {
         int wolf;
@@ -139,16 +142,6 @@ static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
     int err = wolfSSL_get_error(ssl->ssl, ret);
     size_t i;
 
-    if (ssl->verify_ret != 0) {
-        return ssl->verify_ret;
-    }
-    /* A failed verify with VERIFY_REQUIRED is what ended the handshake */
-    if (ssl->verify_flags != 0 &&
-            ssl->authmode == MBEDTLS_SSL_VERIFY_REQUIRED) {
-        return ((ssl->verify_flags & ~MBED_USAGE_FLAGS) != 0) ?
-            MBEDTLS_ERR_X509_CERT_VERIFY_FAILED :
-            MBEDTLS_ERR_SSL_BAD_CERTIFICATE;
-    }
     /* wolfSSL's error for any failed BIO call */
     if (err == WC_NO_ERR_TRACE(SOCKET_ERROR_E) && ssl->io_err != 0) {
         return ssl->io_err;
@@ -165,6 +158,22 @@ static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
     }
     /* wolfSSL codes overlap Mbed TLS and PSA codes */
     return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+}
+
+/* As MbedSslCallErr(), but prioritize failed verification */
+static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
+{
+    if (ssl->verify_ret != 0) {
+        return ssl->verify_ret;
+    }
+    /* A failed verify with VERIFY_REQUIRED is what ended the handshake */
+    if (ssl->verify_flags != 0 &&
+            ssl->authmode == MBEDTLS_SSL_VERIFY_REQUIRED) {
+        return ((ssl->verify_flags & ~MBED_USAGE_FLAGS) != 0) ?
+            MBEDTLS_ERR_X509_CERT_VERIFY_FAILED :
+            MBEDTLS_ERR_SSL_BAD_CERTIFICATE;
+    }
+    return MbedSslCallErr(ssl, ret);
 }
 
 /* WOLFSSL_SUCCESS becomes 0. WOLFSSL_FAILURE is 0, a success for
@@ -833,6 +842,7 @@ void mbedtls_ssl_conf_verify(mbedtls_ssl_config* conf,
 
 static int mbedSuiteIds[MBED_SUITES_MAX + 1];
 static char mbedSuiteNames[MBED_SUITES_MAX][MBED_SUITE_NAME_SZ];
+static mbedtls_ssl_ciphersuite_t mbedSuites[MBED_SUITES_MAX];
 static int mbedSuitesSet = 0;
 
 /* MBEDTLS_THREADING_C is on pthreads, which have a static initializer */
@@ -877,6 +887,7 @@ static void MbedSuitesFill(void)
 #else
     const ProtocolVersion pv = MakeTLSv1_2();
 #endif /* WOLFSSL_TLS13 */
+    mbedtls_ssl_ciphersuite_t* info;
     size_t n = 0;
     word16 i;
     byte cs0;
@@ -892,8 +903,14 @@ static void MbedSuitesFill(void)
         if (cs0 == CIPHER_BYTE && cs == TLS_EMPTY_RENEGOTIATION_INFO_SCSV) {
             continue;
         }
+        info = &mbedSuites[n];
         mbedSuiteIds[n] = (cs0 << 8) | cs;
         MbedSuiteName(cs0, cs, mbedSuiteNames[n], sizeof(mbedSuiteNames[n]));
+        info->id = mbedSuiteIds[n];
+        info->name = mbedSuiteNames[n];
+        info->min_tls_version = (cs0 == TLS13_BYTE) ?
+            MBEDTLS_SSL_VERSION_TLS1_3 : MBEDTLS_SSL_VERSION_TLS1_2;
+        info->max_tls_version = info->min_tls_version;
         n++;
     }
     mbedSuiteIds[n] = 0;
@@ -913,34 +930,56 @@ const int* mbedtls_ssl_list_ciphersuites(void)
     return mbedSuiteIds;
 }
 
-const char* mbedtls_ssl_get_ciphersuite_name(const int ciphersuite_id)
+const mbedtls_ssl_ciphersuite_t* mbedtls_ssl_ciphersuite_from_id(
+    int ciphersuite_id)
 {
     const int* ids = mbedtls_ssl_list_ciphersuites();
     size_t i;
 
-    WOLFSSL_ENTER("mbedtls_ssl_get_ciphersuite_name");
+    WOLFSSL_ENTER("mbedtls_ssl_ciphersuite_from_id");
 
     for (i = 0; ids[i] != 0; i++) {
         if (ids[i] == ciphersuite_id) {
-            return mbedSuiteNames[i];
+            return &mbedSuites[i];
         }
     }
-    return "unknown";
+    return NULL;
+}
+
+const mbedtls_ssl_ciphersuite_t* mbedtls_ssl_ciphersuite_from_string(
+    const char* ciphersuite_name)
+{
+    const int* ids = mbedtls_ssl_list_ciphersuites();
+    size_t i;
+
+    WOLFSSL_ENTER("mbedtls_ssl_ciphersuite_from_string");
+
+    for (i = 0; ciphersuite_name != NULL && ids[i] != 0; i++) {
+        if (XSTRCMP(mbedSuiteNames[i], ciphersuite_name) == 0) {
+            return &mbedSuites[i];
+        }
+    }
+    return NULL;
+}
+
+const char* mbedtls_ssl_get_ciphersuite_name(const int ciphersuite_id)
+{
+    const mbedtls_ssl_ciphersuite_t* info =
+        mbedtls_ssl_ciphersuite_from_id(ciphersuite_id);
+
+    WOLFSSL_ENTER("mbedtls_ssl_get_ciphersuite_name");
+
+    return (info != NULL) ? info->name : "unknown";
 }
 
 int mbedtls_ssl_get_ciphersuite_id(const char* ciphersuite_name)
 {
-    const int* ids = mbedtls_ssl_list_ciphersuites();
-    size_t i;
+    const mbedtls_ssl_ciphersuite_t* info =
+        mbedtls_ssl_ciphersuite_from_string(ciphersuite_name);
 
     WOLFSSL_ENTER("mbedtls_ssl_get_ciphersuite_id");
 
-    for (i = 0; ciphersuite_name != NULL && ids[i] != 0; i++) {
-        if (XSTRCMP(mbedSuiteNames[i], ciphersuite_name) == 0) {
-            return ids[i];
-        }
-    }
-    return 0;
+    return (info != NULL) ? info->id : 0;
 }
 
 void mbedtls_ssl_init(mbedtls_ssl_context* ssl)
@@ -1412,6 +1451,13 @@ size_t mbedtls_ssl_get_bytes_avail(const mbedtls_ssl_context* ssl)
     return (ret > 0) ? (size_t)ret : 0;
 }
 
+int mbedtls_ssl_check_pending(const mbedtls_ssl_context* ssl)
+{
+    WOLFSSL_ENTER("mbedtls_ssl_check_pending");
+
+    return ssl != NULL && ssl->ssl != NULL && wolfSSL_has_pending(ssl->ssl);
+}
+
 int mbedtls_ssl_read(mbedtls_ssl_context* ssl, unsigned char* buf, size_t len)
 {
     int ret;
@@ -1470,6 +1516,51 @@ int mbedtls_ssl_get_max_out_record_payload(const mbedtls_ssl_context* ssl)
     /* An error until the handshake is done */
     negotiated = wolfSSL_GetMaxOutputSize(ssl->ssl);
     return (negotiated > 0 && negotiated < max) ? negotiated : max;
+}
+
+/* The header, and once encrypted, the IV, MAC and padding or the tag */
+int mbedtls_ssl_get_record_expansion(const mbedtls_ssl_context* ssl)
+{
+    WOLFSSL* s;
+    int hdrSz;
+
+    WOLFSSL_ENTER("mbedtls_ssl_get_record_expansion");
+
+    if (ssl == NULL || ssl->ssl == NULL) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    s = ssl->ssl;
+    hdrSz = s->options.dtls ? DTLS_RECORD_HEADER_SZ : RECORD_HEADER_SZ;
+    if (!IsEncryptionOn(s, 1)) {
+        return hdrSz;
+    }
+    if (IsAtLeastTLSv1_3(s->version)) {
+        /* The inner content type and the tag */
+        return hdrSz + 1 + s->specs.aead_mac_size;
+    }
+    return hdrSz + cipherExtraData(s);
+}
+
+/* As in Mbed TLS, after WANT_WRITE the next call sends only what is left */
+int mbedtls_ssl_send_alert_message(mbedtls_ssl_context* ssl,
+    unsigned char level, unsigned char message)
+{
+    WOLFSSL* s;
+    int ret;
+
+    WOLFSSL_ENTER("mbedtls_ssl_send_alert_message");
+
+    if (ssl == NULL || ssl->ssl == NULL) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    s = ssl->ssl;
+    ret = (s->buffers.outputBuffer.length > 0) ? SendBuffered(s) :
+        SendAlert(s, level, message);
+    if (ret != 0) {
+        s->error = ret;
+        ret = MbedSslCallErr(ssl, WOLFSSL_FATAL_ERROR);
+    }
+    return ret;
 }
 
 /* Mbed TLS sends close_notify without waiting for the peer's reply */
