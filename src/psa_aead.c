@@ -2138,6 +2138,47 @@ static psa_status_t wolfpsa_aead_borrow(psa_aead_operation_t *operation,
     return PSA_SUCCESS;
 }
 
+/* One-shot middle: lengths, nonce and all input; aborts on failure. The
+ * update leaves the data buffered, so out_len is always 0. */
+static psa_status_t wolfpsa_aead_oneshot_feed(psa_aead_operation_t *operation,
+                                              psa_algorithm_t alg,
+                                              const uint8_t *nonce,
+                                              size_t nonce_length,
+                                              const uint8_t *ad,
+                                              size_t ad_length,
+                                              const uint8_t *input,
+                                              size_t input_length,
+                                              uint8_t *output,
+                                              size_t output_size,
+                                              size_t *out_len)
+{
+    psa_status_t status = PSA_SUCCESS;
+
+    if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM)) {
+        status = psa_aead_set_lengths(operation, ad_length, input_length);
+    }
+    if (status == PSA_SUCCESS) {
+        status = psa_aead_set_nonce(operation, nonce, nonce_length);
+    }
+    if (status == PSA_SUCCESS &&
+        wolfpsa_aead_can_borrow(alg, ad, ad_length, input, input_length,
+                                output, output_size)) {
+        status = wolfpsa_aead_borrow(operation, ad, ad_length, input,
+                                     input_length);
+    }
+    else if (status == PSA_SUCCESS) {
+        status = psa_aead_update_ad(operation, ad, ad_length);
+        if (status == PSA_SUCCESS) {
+            status = psa_aead_update(operation, input, input_length, NULL, 0,
+                                     out_len);
+        }
+    }
+    if (status != PSA_SUCCESS) {
+        psa_aead_abort(operation);
+    }
+    return status;
+}
+
 psa_status_t psa_aead_encrypt(psa_key_id_t key,
                               psa_algorithm_t alg,
                               const uint8_t *nonce,
@@ -2178,38 +2219,11 @@ psa_status_t psa_aead_encrypt(psa_key_id_t key,
         return status;
     }
 
-    if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM)) {
-        status = psa_aead_set_lengths(&operation, additional_data_length,
-                                      plaintext_length);
-        if (status != PSA_SUCCESS) {
-            psa_aead_abort(&operation);
-            return status;
-        }
-    }
-
-    status = psa_aead_set_nonce(&operation, nonce, nonce_length);
+    status = wolfpsa_aead_oneshot_feed(&operation, alg, nonce, nonce_length,
+                                       additional_data, additional_data_length,
+                                       plaintext, plaintext_length, ciphertext,
+                                       ciphertext_size, &out_len);
     if (status != PSA_SUCCESS) {
-        psa_aead_abort(&operation);
-        return status;
-    }
-
-    if (wolfpsa_aead_can_borrow(alg, additional_data, additional_data_length,
-                                plaintext, plaintext_length, ciphertext,
-                                ciphertext_size)) {
-        status = wolfpsa_aead_borrow(&operation, additional_data,
-                                     additional_data_length, plaintext,
-                                     plaintext_length);
-    }
-    else {
-        status = psa_aead_update_ad(&operation, additional_data,
-                                    additional_data_length);
-        if (status == PSA_SUCCESS) {
-            status = psa_aead_update(&operation, plaintext, plaintext_length,
-                                     NULL, 0, &out_len);
-        }
-    }
-    if (status != PSA_SUCCESS) {
-        psa_aead_abort(&operation);
         return status;
     }
 
@@ -2287,38 +2301,11 @@ psa_status_t psa_aead_decrypt(psa_key_id_t key,
     /* Plaintext written over a partly overlapping tag must not change it. */
     XMEMCPY(tag, ciphertext + ct_len, tag_length);
 
-    if (PSA_ALG_AEAD_EQUAL(alg, PSA_ALG_CCM)) {
-        status = psa_aead_set_lengths(&operation, additional_data_length,
-                                      ct_len);
-        if (status != PSA_SUCCESS) {
-            psa_aead_abort(&operation);
-            return status;
-        }
-    }
-
-    status = psa_aead_set_nonce(&operation, nonce, nonce_length);
+    status = wolfpsa_aead_oneshot_feed(&operation, alg, nonce, nonce_length,
+                                       additional_data, additional_data_length,
+                                       ciphertext, ct_len, plaintext,
+                                       plaintext_size, plaintext_length);
     if (status != PSA_SUCCESS) {
-        psa_aead_abort(&operation);
-        return status;
-    }
-
-    if (wolfpsa_aead_can_borrow(alg, additional_data, additional_data_length,
-                                ciphertext, ct_len, plaintext,
-                                plaintext_size)) {
-        status = wolfpsa_aead_borrow(&operation, additional_data,
-                                     additional_data_length, ciphertext,
-                                     ct_len);
-    }
-    else {
-        status = psa_aead_update_ad(&operation, additional_data,
-                                    additional_data_length);
-        if (status == PSA_SUCCESS) {
-            status = psa_aead_update(&operation, ciphertext, ct_len,
-                                     NULL, 0, plaintext_length);
-        }
-    }
-    if (status != PSA_SUCCESS) {
-        psa_aead_abort(&operation);
         return status;
     }
 
