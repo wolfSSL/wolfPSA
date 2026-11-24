@@ -21,6 +21,11 @@
 
 /* Mbed TLS 4.x error strings (MBEDTLS_COMPAT=1). */
 
+/* For the 3.6-only codes too, as one mbedtls_strerror serves both APIs */
+#ifndef WOLFPSA_MBEDTLS_3
+    #define WOLFPSA_MBEDTLS_3
+#endif /* !WOLFPSA_MBEDTLS_3 */
+
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif /* HAVE_CONFIG_H */
@@ -32,6 +37,8 @@
 #include <wolfssl/wolfcrypt/types.h>
 #include <mbedtls/asn1.h>
 #include <mbedtls/base64.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
 #include <mbedtls/error.h>
 #include <mbedtls/md.h>
 #include <mbedtls/net_sockets.h>
@@ -62,7 +69,16 @@ static const struct {
         "Actual length differs from expected length"),
     MBED_ERR(ASN1, INVALID_DATA, "Data is invalid"),
     MBED_ERR(BASE64, INVALID_CHARACTER, "Invalid character in input"),
-    MBED_ERR(MD, FEATURE_UNAVAILABLE, "The selected feature is not available"),
+    MBED_ERR(CTR_DRBG, ENTROPY_SOURCE_FAILED, "The entropy source failed"),
+    MBED_ERR(CTR_DRBG, REQUEST_TOO_BIG,
+        "The requested random buffer length is too big"),
+    MBED_ERR(CTR_DRBG, INPUT_TOO_BIG,
+        "The input (entropy + additional data) is too large"),
+    MBED_ERR(ENTROPY, SOURCE_FAILED, "Critical entropy source failure"),
+    MBED_ERR(ENTROPY, MAX_SOURCES, "No more sources can be added"),
+    MBED_ERR(ENTROPY, NO_SOURCES_DEFINED,
+        "No sources have been added to poll"),
+    MBED_ERR(MD,FEATURE_UNAVAILABLE, "The selected feature is not available"),
     MBED_ERR(NET, SOCKET_FAILED, "Failed to open a socket"),
     MBED_ERR(NET, CONNECT_FAILED,
         "The connection to the given server / port failed"),
