@@ -64,6 +64,11 @@
 #ifndef WOLFSSL_ALT_CERT_CHAINS
     #error "wolfPSA: MBEDTLS_COMPAT needs WOLFSSL_ALT_CERT_CHAINS"
 #endif /* !WOLFSSL_ALT_CERT_CHAINS */
+/* wolfSSL sends and receives records of up to MAX_RECORD_SIZE */
+#if MBEDTLS_SSL_IN_CONTENT_LEN != MAX_RECORD_SIZE || \
+        MBEDTLS_SSL_OUT_CONTENT_LEN != MAX_RECORD_SIZE
+    #error "wolfPSA: MBEDTLS_SSL_IN/OUT_CONTENT_LEN must be MAX_RECORD_SIZE"
+#endif /* MBEDTLS_SSL_IN/OUT_CONTENT_LEN != MAX_RECORD_SIZE */
 
 /* Unknown codes map to the last entry */
 int MbedIoErr(int code, int dir, int toWolf)
@@ -147,6 +152,11 @@ static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
     /* wolfSSL's error for any failed BIO call */
     if (err == WC_NO_ERR_TRACE(SOCKET_ERROR_E) && ssl->io_err != 0) {
         return ssl->io_err;
+    }
+    /* FATAL_ERROR is also wolfSSL's error after its own fatal alert */
+    if (err == WC_NO_ERR_TRACE(FATAL_ERROR) && ssl->ssl->options.fatalAlert &&
+            ssl->ssl->alert_history.last_tx.level != alert_fatal) {
+        return MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE;
     }
     for (i = 0; i < XELEM_CNT(map); i++) {
         if (map[i].wolf == err) {

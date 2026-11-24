@@ -109,20 +109,70 @@ static const struct {
     MBED_ERR(SSL, BAD_CONFIG, "Invalid value in SSL config"),
     MBED_ERR(SSL, VERSION_MISMATCH,
         "An operation failed due to an unexpected version or configuration"),
+    MBED_ERR(SSL, UNEXPECTED_CID,
+        "An encrypted DTLS-frame with an unexpected CID was received"),
+    MBED_ERR(SSL, EARLY_MESSAGE,
+        "Internal-only message signaling that a message arrived early"),
+    MBED_ERR(SSL, ASYNC_IN_PROGRESS,
+        "The asynchronous operation is not completed yet"),
+    MBED_ERR(SSL, CONTINUE_PROCESSING, "Internal-only message signaling that "
+        "further message-processing should be done"),
+    MBED_ERR(SSL, ILLEGAL_PARAMETER, "A field in a message was incorrect or "
+        "inconsistent with other fields"),
+    MBED_ERR(SSL, NON_FATAL,
+        "The alert message received indicates a non-fatal error"),
+    MBED_ERR(SSL, UNEXPECTED_RECORD,
+        "Record header looks valid but is not expected"),
+    MBED_ERR(SSL, CLIENT_RECONNECT,
+        "The client initiated a reconnect from the same port"),
     MBED_ERR(SSL, TIMEOUT, "The operation timed out"),
     MBED_ERR(SSL, WANT_WRITE, "Connection requires a write call"),
     MBED_ERR(SSL, WANT_READ, "No data of requested type currently available "
         "on underlying transport"),
+    MBED_ERR(SSL, HELLO_VERIFY_REQUIRED,
+        "DTLS client must retry for hello verification"),
+    MBED_ERR(SSL, WAITING_SERVER_HELLO_RENEGO,
+        "Unexpected message at ServerHello in renegotiation"),
+    MBED_ERR(SSL, COUNTER_WRAPPING,
+        "A counter would wrap (eg, too many messages exchanged)"),
     MBED_ERR(SSL, INTERNAL_ERROR,
         "Internal error (eg, unexpected failure in lower-level module)"),
+    MBED_ERR(SSL, UNKNOWN_IDENTITY,
+        "Unknown identity received (eg, PSK identity)"),
+    MBED_ERR(SSL, PK_TYPE_MISMATCH, "Public key type mismatch (eg, asked for "
+        "RSA key exchange and presented EC key)"),
+    MBED_ERR(SSL, SESSION_TICKET_EXPIRED, "Session ticket has expired"),
     MBED_ERR(SSL, HANDSHAKE_FAILURE, "The handshake negotiation failed"),
     MBED_ERR(SSL, BAD_PROTOCOL_VERSION,
         "Handshake protocol not within min/max boundaries"),
+    MBED_ERR(SSL, HW_ACCEL_FALLTHROUGH,
+        "Hardware acceleration function skipped / left alone data"),
+    MBED_ERR(SSL, CRYPTO_IN_PROGRESS,
+        "A cryptographic operation is in progress. Try again later"),
     MBED_ERR(SSL, FEATURE_UNAVAILABLE,
         "The requested feature is not available"),
+    MBED_ERR(SSL, INVALID_MAC, "Verification of the message MAC failed"),
+    MBED_ERR(SSL, INVALID_RECORD, "An invalid SSL record was received"),
     MBED_ERR(SSL, CONN_EOF, "The connection indicated an EOF"),
+    MBED_ERR(SSL, DECODE_ERROR,
+        "A message could not be parsed due to a syntactic error"),
+    MBED_ERR(SSL, NO_RNG, "No RNG was provided to the SSL module"),
     MBED_ERR(SSL, NO_CLIENT_CERTIFICATE, "No client certification received "
         "from the client, but required by the authentication mode"),
+    MBED_ERR(SSL, UNSUPPORTED_EXTENSION, "Client received an extended server "
+        "hello containing an unsupported extension"),
+    MBED_ERR(SSL, NO_APPLICATION_PROTOCOL,
+        "No ALPN protocols supported that the client advertises"),
+    MBED_ERR(SSL, PRIVATE_KEY_REQUIRED,
+        "The own private key or pre-shared key is not set, but needed"),
+    MBED_ERR(SSL, CA_CHAIN_REQUIRED,
+        "No CA Chain is set, but required to operate"),
+    MBED_ERR(SSL, UNEXPECTED_MESSAGE,
+        "An unexpected message was received from our peer"),
+    MBED_ERR(SSL, FATAL_ALERT_MESSAGE,
+        "A fatal alert message was received from our peer"),
+    MBED_ERR(SSL, UNRECOGNIZED_NAME,
+        "No server could be identified matching the client's SNI"),
     MBED_ERR(SSL, PEER_CLOSE_NOTIFY,
         "The peer notified us that the connection is going to be closed"),
     MBED_ERR(SSL, BAD_CERTIFICATE,
@@ -130,6 +180,11 @@ static const struct {
     MBED_ERR(SSL, RECEIVED_NEW_SESSION_TICKET,
         "Received NewSessionTicket Post Handshake Message. This error code "
         "is experimental and may be changed or removed without notice"),
+    MBED_ERR(SSL, CANNOT_READ_EARLY_DATA, "Not possible to read early data"),
+    MBED_ERR(SSL, RECEIVED_EARLY_DATA,
+        "Early data has been received as part of an on-going handshake"),
+    MBED_ERR(SSL, CANNOT_WRITE_EARLY_DATA, "Not possible to write early data"),
+    MBED_ERR(SSL, CACHE_ENTRY_NOT_FOUND, "Cache entry not found"),
     MBED_ERR(SSL, HW_ACCEL_FAILED,
         "Hardware acceleration function returned with error"),
     MBED_ERR(THREADING, USAGE_ERROR,
@@ -198,6 +253,10 @@ void mbedtls_strerror(int errnum, char* buffer, size_t buflen)
     if (high != 0) {
         MbedErrPart(high, buffer, buflen);
         len = XSTRLEN(buffer);
+    }
+    /* As Mbed TLS: no low-level part with a fatal alert */
+    if (high == (unsigned int)-(MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)) {
+        low = 0;
     }
     /* As Mbed TLS: only with room for " : " and one character */
     if (low != 0 && len > 0) {

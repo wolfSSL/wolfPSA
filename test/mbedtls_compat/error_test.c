@@ -28,6 +28,7 @@
 #include <mbedtls/error.h>
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pk.h>
+#include <mbedtls/ssl.h>
 #include <mbedtls/x509.h>
 
 #define UNKNOWN_BOTH "UNKNOWN ERROR CODE (8880) : UNKNOWN ERROR CODE (007F)"
@@ -49,6 +50,9 @@ static const struct {
     { "high and low-level code",
         MBEDTLS_ERR_PK_FILE_IO_ERROR + MBEDTLS_ERR_NET_SOCKET_FAILED, 500,
         "PK - Read/write of file failed : NET - Failed to open a socket" },
+    { "fatal alert, low-level part left out",
+        MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE + MBEDTLS_ERR_NET_SOCKET_FAILED,
+        500, "SSL - A fatal alert message was received from our peer" },
     { "positive code", -(MBEDTLS_ERR_NET_SOCKET_FAILED), 500,
         "NET - Failed to open a socket" },
     { "0", 0, 500, "" },
