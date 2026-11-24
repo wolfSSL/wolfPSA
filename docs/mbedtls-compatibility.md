@@ -71,9 +71,10 @@ TLS:
 - The two macros above need wolfSSL's `HAVE_MAX_FRAGMENT` and
   `HAVE_KEYING_MATERIAL`, which wolfPSA's `user_settings.h` defines.
 - Every `MBEDTLS_ERR_SSL_*` code, and `MBEDTLS_SSL_IN_CONTENT_LEN` and
-  `MBEDTLS_SSL_OUT_CONTENT_LEN`. A fatal alert from the peer returns
-  `MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE`. The codes of features wolfPSA does
-  not have, such as `MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS`, are not returned.
+  `MBEDTLS_SSL_OUT_CONTENT_LEN`, so clients compile. Most of the codes are
+  not returned. A fatal alert from the peer returns
+  `MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE`, but a bad MAC, a decode error and
+  the other failures wolfSSL finds return `MBEDTLS_ERR_SSL_INTERNAL_ERROR`.
 
 X.509:
 
@@ -214,8 +215,8 @@ TLS:
   handshake secrets and randoms, among them the TLS 1.3 master secret, until
   it is freed or reset. Mbed TLS keeps only what the export needs.
 - `MBEDTLS_SSL_IN_CONTENT_LEN` and `MBEDTLS_SSL_OUT_CONTENT_LEN` are 16384,
-  wolfSSL's record limit, and the library does not build with other
-  values. Mbed TLS takes smaller ones to save memory.
+  wolfSSL's record limit, and neither the library nor an app builds with
+  other values. Mbed TLS takes smaller ones to save memory.
 - In TLS 1.3, a client sends the max fragment length extension, and a
   server sends records of at most the length its client asks for. Mbed TLS
   uses the extension in TLS 1.2 only.
