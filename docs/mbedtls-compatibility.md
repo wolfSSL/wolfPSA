@@ -1,7 +1,7 @@
 # Mbed TLS compatibility
 
-Details of the Mbed TLS 4.x API that `MBEDTLS_COMPAT=1` adds, and of the
-TF-PSA-Crypto parts that every build has. See
+Details of the Mbed TLS 4.x and 3.6 API that `MBEDTLS_COMPAT=1` adds, and
+of the TF-PSA-Crypto parts that every build has. See
 [README.md](../README.md#mbed-tls-compatibility) to build and use it.
 
 ## Build and configuration
@@ -12,6 +12,11 @@ TF-PSA-Crypto parts that every build has. See
 - The feature macros, such as `MBEDTLS_SSL_TLS_C`, `MBEDTLS_NET_C` and
   `MBEDTLS_PEM_PARSE_C`, are in the generated config in `build/include`, so
   a build without the option does not define them.
+- The same library has the Mbed TLS 3.6 API, for applications that support
+  only 3.x. They define `WOLFPSA_MBEDTLS_3` when they compile, which gives
+  the 3.6 names and version macros (3.6.8) in place of 4.x. Files compiled
+  with and without it can be linked into one program. Most of the 3.6-only
+  API is still to come (see Coming soon).
 - The functions have the Mbed TLS names, so code that finds them by symbol
   name (`dlsym`, language bindings) works too.
 - With `MBEDTLS_THREADING_C=1`, TLS is thread safe too.
@@ -94,6 +99,13 @@ Other:
 - The version macros, such as `MBEDTLS_VERSION_NUMBER`, but not the
   `mbedtls/version.h` functions (`MBEDTLS_VERSION_C`)
 
+Mbed TLS 3.6, with `WOLFPSA_MBEDTLS_3`:
+
+- `mbedtls_ssl_conf_min_version` and `mbedtls_ssl_conf_max_version`, with
+  `MBEDTLS_SSL_MAJOR_VERSION_3`, `MBEDTLS_SSL_MINOR_VERSION_3` and
+  `MBEDTLS_SSL_MINOR_VERSION_4`. As in 3.6, `MBEDTLS_DEPRECATED_WARNING`
+  warns on them and `MBEDTLS_DEPRECATED_REMOVED` removes them.
+
 TF-PSA-Crypto, in every build:
 
 - `mbedtls_pk_*`: init, free, parse_key, parse_keyfile, parse_public_key,
@@ -160,6 +172,14 @@ Other:
 - Build files: pkg-config, a CMake package and Mbed TLS's library names
   (`libmbedtls`, `libmbedx509`, `libtfpsacrypto`)
 - A Zephyr option for the compatibility layer
+
+Mbed TLS 3.6:
+
+- `mbedtls_ssl_conf_rng`, `mbedtls/ctr_drbg.h` and `mbedtls/entropy.h`
+- The `f_rng` and `p_rng` arguments of `mbedtls_pk_parse_key` and
+  `mbedtls_pk_parse_keyfile`
+- `mbedtls_pk_ec`, `mbedtls_pk_rsa`, `mbedtls_ssl_conf_curves` and the
+  other names that 4.x removed
 
 ## Known differences from Mbed TLS
 
@@ -318,6 +338,13 @@ Other:
   one's address and, except on Windows, its blocking mode. Mbed TLS binds
   it to the accepted socket's address, which for a socket bound to every
   address is a single one, such as `127.0.0.1`, and leaves it blocking.
+
+Mbed TLS 3.6:
+
+- With `WOLFPSA_MBEDTLS_3`, the error codes that are PSA values in 4.x,
+  such as `MBEDTLS_ERR_SSL_BAD_INPUT_DATA`, keep those values, so that one
+  library serves both APIs. Code that compares with the names works, but the
+  numbers differ from 3.6 and `mbedtls_strerror` reports them as unknown.
 
 ## Tests
 
