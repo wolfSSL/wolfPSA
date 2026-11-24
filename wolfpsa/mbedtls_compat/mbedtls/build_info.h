@@ -27,13 +27,23 @@
 
 #include "tf-psa-crypto/build_info.h"
 
-/* The Mbed TLS API version this layer follows */
+/* Mbed TLS API version reported by wolfPSA. Applications enable 3.6 with
+ * WOLFPSA_MBEDTLS_3 (eg. in CFLAGS). */
+#ifdef WOLFPSA_MBEDTLS_3
+#define MBEDTLS_VERSION_MAJOR  3
+#define MBEDTLS_VERSION_MINOR  6
+#define MBEDTLS_VERSION_PATCH  8
+#define MBEDTLS_VERSION_NUMBER         0x03060800
+#define MBEDTLS_VERSION_STRING         "3.6.8"
+#define MBEDTLS_VERSION_STRING_FULL    "Mbed TLS 3.6.8"
+#else
 #define MBEDTLS_VERSION_MAJOR  4
 #define MBEDTLS_VERSION_MINOR  2
 #define MBEDTLS_VERSION_PATCH  0
 #define MBEDTLS_VERSION_NUMBER         0x04020000
 #define MBEDTLS_VERSION_STRING         "4.2.0"
 #define MBEDTLS_VERSION_STRING_FULL    "Mbed TLS 4.2.0"
+#endif /* WOLFPSA_MBEDTLS_3 */
 
 /* MBEDTLS_X509_CRT_PARSE_C and MBEDTLS_SSL_* are in the generated config */
 #if defined(MBEDTLS_SSL_PROTO_TLS1_3) && defined(PSA_WANT_ALG_ECDH)

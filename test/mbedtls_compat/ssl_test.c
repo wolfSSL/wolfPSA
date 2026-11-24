@@ -1632,26 +1632,47 @@ static int AuthmodeAfterSetup(void)
     return ok;
 }
 
-/* Ranges other than TLS 1.2, TLS 1.3 or both fail the handshake */
-static int VersionsAfterSetup(void)
+/* Ranges other than TLS 1.2, TLS 1.3 or both */
+static const mbedtls_ssl_protocol_version badRanges[][2] = {
+    { MBEDTLS_SSL_VERSION_TLS1_3, MBEDTLS_SSL_VERSION_TLS1_2 },
+    { MBEDTLS_SSL_VERSION_UNKNOWN, MBEDTLS_SSL_VERSION_TLS1_2 },
+    { MBEDTLS_SSL_VERSION_UNKNOWN, MBEDTLS_SSL_VERSION_TLS1_3 }
+};
+
+static int VersionsAtSetup(void)
 {
-    static const mbedtls_ssl_protocol_version ranges[][2] = {
-        { MBEDTLS_SSL_VERSION_TLS1_3, MBEDTLS_SSL_VERSION_TLS1_2 },
-        { MBEDTLS_SSL_VERSION_UNKNOWN, MBEDTLS_SSL_VERSION_TLS1_2 },
-        { MBEDTLS_SSL_VERSION_UNKNOWN, MBEDTLS_SSL_VERSION_TLS1_3 }
-    };
     size_t i;
     int ok = 1;
 
-    for (i = 0; ok && i < sizeof(ranges) / sizeof(ranges[0]); i++) {
+    for (i = 0; ok && i < sizeof(badRanges) / sizeof(badRanges[0]); i++) {
+        PeerInit(&cli, MBEDTLS_SSL_IS_CLIENT);
+        ok = mbedtls_ssl_config_defaults(&cli.conf, MBEDTLS_SSL_IS_CLIENT,
+            MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) == 0;
+        if (ok) {
+            mbedtls_ssl_conf_min_tls_version(&cli.conf, badRanges[i][0]);
+            mbedtls_ssl_conf_max_tls_version(&cli.conf, badRanges[i][1]);
+            ok = mbedtls_ssl_setup(&cli.ssl, &cli.conf) ==
+                MBEDTLS_ERR_SSL_BAD_CONFIG;
+        }
+        PeerFree(&cli);
+    }
+    return ok;
+}
+
+static int VersionsAfterSetup(void)
+{
+    size_t i;
+    int ok = 1;
+
+    for (i = 0; ok && i < sizeof(badRanges) / sizeof(badRanges[0]); i++) {
         ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
             1, HOST_NAME) == 0;
         if (ok) {
-            mbedtls_ssl_conf_min_tls_version(&cli.conf, ranges[i][0]);
-            mbedtls_ssl_conf_max_tls_version(&cli.conf, ranges[i][1]);
+            mbedtls_ssl_conf_min_tls_version(&cli.conf, badRanges[i][0]);
+            mbedtls_ssl_conf_max_tls_version(&cli.conf, badRanges[i][1]);
             /* No connection is left to use */
             ok = mbedtls_ssl_handshake(&cli.ssl) ==
-                    MBEDTLS_ERR_SSL_BAD_INPUT_DATA &&
+                    MBEDTLS_ERR_SSL_BAD_CONFIG &&
                 mbedtls_ssl_close_notify(&cli.ssl) ==
                     MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
         }
@@ -2572,6 +2593,7 @@ static const struct {
     { "server certificate replaced after setup", ServerCertReplaced },
     { "cipher suites set after setup", SuitesAfterSetup },
     { "authmode set after setup", AuthmodeAfterSetup },
+    { "bad version range at setup", VersionsAtSetup },
     { "bad version range set after setup", VersionsAfterSetup },
     { "version ranges", VersionRanges },
     { "VERIFY_NONE set after setup, no host name", AuthmodeNoneAfterSetup },

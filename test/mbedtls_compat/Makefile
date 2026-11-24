@@ -37,7 +37,7 @@ DATA := $(MBEDTLS_PATH)/framework/data_files
 # Parsing, TLS return codes and verify results in one process, timers and
 # error strings
 UNIT := $(addprefix $(BUILD_DIR)/,x509_crt_test pk_test pem_test ssl_test \
-	timing_test error_test)
+	timing_test error_test mbedtls3_test)
 
 # The peers are the wolfSSL example server and client, from a wolfSSL
 # configured out of tree from WOLFSSL_PATH, so they do not depend on wolfPSA's
@@ -181,6 +181,9 @@ data-check:
 $(addprefix $(BUILD_DIR)/,x509_crt_test ssl_test): \
 	LAYER_FLAGS += $(WOLFSSL_FLAGS) -I$(WOLFPSA_PATH) \
 	-DWOLFSSL_CERTS_DIR='"$(WOLFSSL_PATH)/certs"'
+
+# The Mbed TLS 3.6 API, which applications choose with WOLFPSA_MBEDTLS_3
+$(BUILD_DIR)/mbedtls3_test: LAYER_FLAGS += -DWOLFPSA_MBEDTLS_3
 
 $(CLIENT): client-tls-mbedtls.c
 $(UNIT): $(BUILD_DIR)/%: %.c

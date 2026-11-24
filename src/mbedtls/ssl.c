@@ -1024,7 +1024,7 @@ static int MbedSetVersion(WOLFSSL* ssl, const mbedtls_ssl_config* conf)
     };
     int minVer = -1;
     int maxVer = -1;
-    int ret = MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    int ret = MBEDTLS_ERR_SSL_BAD_CONFIG;
     size_t i;
 
     for (i = 0; i < XELEM_CNT(map); i++) {
@@ -1037,11 +1037,11 @@ static int MbedSetVersion(WOLFSSL* ssl, const mbedtls_ssl_config* conf)
     }
     if (minVer >= 0 && minVer <= maxVer) {
         ret = MbedRet(wolfSSL_SetMinVersion(ssl, minVer),
-            MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+            MBEDTLS_ERR_SSL_BAD_CONFIG);
     }
     if (ret == 0) {
         ret = MbedRet(wolfSSL_SetVersion(ssl, maxVer),
-            MBEDTLS_ERR_SSL_BAD_INPUT_DATA);
+            MBEDTLS_ERR_SSL_BAD_CONFIG);
     }
     return ret;
 }

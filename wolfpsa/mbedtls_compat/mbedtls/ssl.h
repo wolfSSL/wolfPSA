@@ -254,6 +254,16 @@ void mbedtls_ssl_conf_min_tls_version(mbedtls_ssl_config* conf,
     mbedtls_ssl_protocol_version tls_version);
 void mbedtls_ssl_conf_max_tls_version(mbedtls_ssl_config* conf,
     mbedtls_ssl_protocol_version tls_version);
+#if defined(WOLFPSA_MBEDTLS_3) && !defined(MBEDTLS_DEPRECATED_REMOVED)
+#define MBEDTLS_SSL_MAJOR_VERSION_3  3
+#define MBEDTLS_SSL_MINOR_VERSION_3  3 /* TLS 1.2 */
+#define MBEDTLS_SSL_MINOR_VERSION_4  4 /* TLS 1.3 */
+
+void MBEDTLS_DEPRECATED mbedtls_ssl_conf_min_version(mbedtls_ssl_config* conf,
+    int major, int minor);
+void MBEDTLS_DEPRECATED mbedtls_ssl_conf_max_version(mbedtls_ssl_config* conf,
+    int major, int minor);
+#endif /* WOLFPSA_MBEDTLS_3 && !MBEDTLS_DEPRECATED_REMOVED */
 #ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
 int mbedtls_ssl_conf_max_frag_len(mbedtls_ssl_config* conf,
     unsigned char mfl_code);

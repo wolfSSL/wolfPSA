@@ -81,7 +81,7 @@ WOLFCRYPT_SRC := \
 WOLFCRYPT_OBJ := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 WOLFCRYPT_OBJ_PIC := $(patsubst $(WOLFSSL_PATH)/wolfcrypt/src/%.c,$(OBJDIR_PIC)/wolfcrypt_%.o,$(WOLFCRYPT_SRC))
 
-## MBEDTLS_COMPAT=1: add the Mbed TLS 4.x API, for mbedtls-compat-*
+## MBEDTLS_COMPAT=1: add the Mbed TLS 4.x and 3.6 API, for mbedtls-compat-*
 # The TLS, X.509 and network API, on wolfSSL's TLS compiled from WOLFSSL_PATH
 # like wolfCrypt. See src/mbedtls/.
 WOLFSSL_TLS_SRC :=
