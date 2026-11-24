@@ -1464,7 +1464,7 @@ static int RecordExpansionSuite(size_t i)
     for (len = 1; ok && len <= sizeof(data); len++) {
         before = toServer.len;
         ok = mbedtls_ssl_write(&cli.ssl, data, len) == (int)len;
-        if (toServer.len - before - len > most) {
+        if (ok && toServer.len - before - len > most) {
             most = toServer.len - before - len;
         }
     }
@@ -1484,8 +1484,10 @@ static int RecordExpansion(void)
     int ok = mbedtls_ssl_get_record_expansion(NULL) ==
         MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
 
+    /* Suites wolfSSL is built without are skipped */
     for (i = 0; ok && i < sizeof(expansions) / sizeof(expansions[0]); i++) {
-        ok = RecordExpansionSuite(i);
+        ok = mbedtls_ssl_ciphersuite_from_id(expansions[i].suite) == NULL ||
+            RecordExpansionSuite(i);
     }
     return ok;
 }
@@ -1542,6 +1544,33 @@ static int SendAlertPeer(void)
             mbedtls_ssl_write(&srv.ssl, (const unsigned char*)"x", 1) ==
                 MBEDTLS_ERR_SSL_CONN_EOF;
     }
+    PeerFree(&cli);
+    PeerFree(&srv);
+    return ok;
+}
+
+/* WANT_WRITE, not the verify error, from an alert after a failed verify */
+static int SendAlertVerifyFailed(void)
+{
+    size_t before = 0;
+    int s;
+    int ok = PeerNew(&cli, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_VERIFY_REQUIRED,
+            1, "wrong.example.org") == 0 &&
+        PeerNew(&srv, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_VERIFY_NONE, 0,
+            NULL) == 0 &&
+        Handshake(&s) == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
+
+    if (ok) {
+        before = toServer.len;
+        cli.sendErr = MBEDTLS_ERR_SSL_WANT_WRITE;
+        ok = mbedtls_ssl_send_alert_message(&cli.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_FATAL, MBEDTLS_SSL_ALERT_MSG_BAD_CERT) ==
+            MBEDTLS_ERR_SSL_WANT_WRITE && toServer.len == before;
+        cli.sendErr = 0;
+    }
+    ok = ok && mbedtls_ssl_send_alert_message(&cli.ssl,
+            MBEDTLS_SSL_ALERT_LEVEL_FATAL, MBEDTLS_SSL_ALERT_MSG_BAD_CERT) ==
+            0 && toServer.len > before;
     PeerFree(&cli);
     PeerFree(&srv);
     return ok;
@@ -2792,6 +2821,7 @@ static const struct {
     { "close_notify", ReadCloseNotify },
     { "alert before the handshake, and after WANT_WRITE", SendAlertPlain },
     { "alerts after the handshake", SendAlertPeer },
+    { "alert after a failed verify", SendAlertVerifyFailed },
     { "BIO errors", BioErrors },
     { "length over INT_MAX", LargeLength },
     { "record expansion", RecordExpansion },

@@ -120,7 +120,7 @@ int MbedIoLen(size_t len, int max)
     (MBEDTLS_X509_BADCERT_KEY_USAGE | MBEDTLS_X509_BADCERT_EXT_KEY_USAGE)
 
 /* Map the wolfSSL error behind a failed call to an Mbed TLS return code */
-static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
+static int MbedSslCallErr(const mbedtls_ssl_context* ssl, int ret)
 {
     static const struct {
         int wolf;
@@ -137,16 +137,6 @@ static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
     int err = wolfSSL_get_error(ssl->ssl, ret);
     size_t i;
 
-    if (ssl->verify_ret != 0) {
-        return ssl->verify_ret;
-    }
-    /* A failed verify with VERIFY_REQUIRED is what ended the handshake */
-    if (ssl->verify_flags != 0 &&
-            ssl->authmode == MBEDTLS_SSL_VERIFY_REQUIRED) {
-        return ((ssl->verify_flags & ~MBED_USAGE_FLAGS) != 0) ?
-            MBEDTLS_ERR_X509_CERT_VERIFY_FAILED :
-            MBEDTLS_ERR_SSL_BAD_CERTIFICATE;
-    }
     /* wolfSSL's error for any failed BIO call */
     if (err == WC_NO_ERR_TRACE(SOCKET_ERROR_E) && ssl->io_err != 0) {
         return ssl->io_err;
@@ -158,6 +148,22 @@ static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
     }
     /* wolfSSL codes overlap Mbed TLS and PSA codes */
     return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+}
+
+/* As MbedSslCallErr(), but prioritize failed verification */
+static int MbedSslErr(const mbedtls_ssl_context* ssl, int ret)
+{
+    if (ssl->verify_ret != 0) {
+        return ssl->verify_ret;
+    }
+    /* A failed verify with VERIFY_REQUIRED is what ended the handshake */
+    if (ssl->verify_flags != 0 &&
+            ssl->authmode == MBEDTLS_SSL_VERIFY_REQUIRED) {
+        return ((ssl->verify_flags & ~MBED_USAGE_FLAGS) != 0) ?
+            MBEDTLS_ERR_X509_CERT_VERIFY_FAILED :
+            MBEDTLS_ERR_SSL_BAD_CERTIFICATE;
+    }
+    return MbedSslCallErr(ssl, ret);
 }
 
 /* WOLFSSL_SUCCESS becomes 0. WOLFSSL_FAILURE is 0, a success for
@@ -1506,6 +1512,7 @@ int mbedtls_ssl_get_max_out_record_payload(const mbedtls_ssl_context* ssl)
 int mbedtls_ssl_get_record_expansion(const mbedtls_ssl_context* ssl)
 {
     WOLFSSL* s;
+    int hdrSz;
 
     WOLFSSL_ENTER("mbedtls_ssl_get_record_expansion");
 
@@ -1513,14 +1520,15 @@ int mbedtls_ssl_get_record_expansion(const mbedtls_ssl_context* ssl)
         return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
     }
     s = ssl->ssl;
+    hdrSz = s->options.dtls ? DTLS_RECORD_HEADER_SZ : RECORD_HEADER_SZ;
     if (!IsEncryptionOn(s, 1)) {
-        return RECORD_HEADER_SZ;
+        return hdrSz;
     }
     if (IsAtLeastTLSv1_3(s->version)) {
         /* The inner content type and the tag */
-        return RECORD_HEADER_SZ + 1 + s->specs.aead_mac_size;
+        return hdrSz + 1 + s->specs.aead_mac_size;
     }
-    return RECORD_HEADER_SZ + cipherExtraData(s);
+    return hdrSz + cipherExtraData(s);
 }
 
 /* As in Mbed TLS, after WANT_WRITE the next call sends only what is left */
@@ -1540,7 +1548,7 @@ int mbedtls_ssl_send_alert_message(mbedtls_ssl_context* ssl,
         SendAlert(s, level, message);
     if (ret != 0) {
         s->error = ret;
-        ret = MbedSslErr(ssl, WOLFSSL_FATAL_ERROR);
+        ret = MbedSslCallErr(ssl, WOLFSSL_FATAL_ERROR);
     }
     return ret;
 }
