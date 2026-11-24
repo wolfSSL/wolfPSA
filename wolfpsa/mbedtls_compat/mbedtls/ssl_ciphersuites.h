@@ -23,6 +23,9 @@
 #define MBEDTLS_SSL_CIPHERSUITES_H
 
 #include "mbedtls/build_info.h"
+#include "mbedtls/private_access.h"
+
+#include <stdint.h>
 
 /* Not all are offered, see mbedtls_ssl_list_ciphersuites() */
 #define MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA          0xC009
@@ -60,5 +63,38 @@
     #define MBEDTLS_SSL_HANDSHAKE_WITH_CERT_ENABLED
 #endif /* MBEDTLS_KEY_EXCHANGE_WITH_CERT_ENABLED ||
         * MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED */
+
+#ifdef __cplusplus
+    extern "C" {
+#endif /* __cplusplus */
+
+/* Mbed TLS's fields without the cipher, MAC, key exchange and flags */
+typedef struct mbedtls_ssl_ciphersuite_t {
+    int MBEDTLS_PRIVATE(id);
+    const char* MBEDTLS_PRIVATE(name);
+    uint16_t MBEDTLS_PRIVATE(min_tls_version);
+    uint16_t MBEDTLS_PRIVATE(max_tls_version);
+} mbedtls_ssl_ciphersuite_t;
+
+const mbedtls_ssl_ciphersuite_t* mbedtls_ssl_ciphersuite_from_string(
+    const char* ciphersuite_name);
+const mbedtls_ssl_ciphersuite_t* mbedtls_ssl_ciphersuite_from_id(
+    int ciphersuite_id);
+
+static inline const char* mbedtls_ssl_ciphersuite_get_name(
+    const mbedtls_ssl_ciphersuite_t* info)
+{
+    return info->MBEDTLS_PRIVATE(name);
+}
+
+static inline int mbedtls_ssl_ciphersuite_get_id(
+    const mbedtls_ssl_ciphersuite_t* info)
+{
+    return info->MBEDTLS_PRIVATE(id);
+}
+
+#ifdef __cplusplus
+    } /* extern "C" */
+#endif /* __cplusplus */
 
 #endif /* MBEDTLS_SSL_CIPHERSUITES_H */

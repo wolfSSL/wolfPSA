@@ -63,10 +63,13 @@ TLS:
   set_bio, set_timer_cb, set_verify, set_hostname, set_session, get_session,
   handshake, is_handshake_over, get_verify_result, get_ciphersuite,
   get_ciphersuite_id_from_ssl, get_version, get_version_number,
-  get_bytes_avail, read, write, close_notify, set_user_data_p,
-  set_user_data_n, get_user_data_p, get_user_data_n
+  get_bytes_avail, check_pending, read, write, get_record_expansion,
+  send_alert_message, close_notify, set_user_data_p, set_user_data_n,
+  get_user_data_p, get_user_data_n
 - Cipher suite lookup: `mbedtls_ssl_list_ciphersuites`,
-  `mbedtls_ssl_get_ciphersuite_name`, `mbedtls_ssl_get_ciphersuite_id`
+  `mbedtls_ssl_get_ciphersuite_name`, `mbedtls_ssl_get_ciphersuite_id`,
+  `mbedtls_ssl_ciphersuite_from_id`, `mbedtls_ssl_ciphersuite_from_string`,
+  `mbedtls_ssl_ciphersuite_get_name`, `mbedtls_ssl_ciphersuite_get_id`
 - `mbedtls_ssl_session_*`: init, free, save, load
 - `mbedtls_ssl_conf_max_frag_len` and
   `mbedtls_ssl_get_max_out_record_payload`, with
@@ -78,12 +81,14 @@ TLS:
 
 X.509:
 
-- `mbedtls_x509_crt_*`: init, free, parse, parse_der, parse_file,
-  parse_path, info, verify_info, get_ca_istrue, check_key_usage,
+- `mbedtls_x509_crt_*`: init, free, parse, parse_der, parse_der_nocopy,
+  parse_file, parse_path, info, verify_info, get_ca_istrue, check_key_usage,
   check_extended_key_usage, has_ext_type
 - `mbedtls_x509_*`: dn_gets, dn_get_next, serial_gets, time_is_past,
   time_is_future
 - `mbedtls_x509_crt_profile_default`, `_next` and `_suiteb`, as names only
+- `mbedtls_oid_get_numeric_string`. `mbedtls/oid.h` has no `MBEDTLS_OID_*`
+  values.
 
 Other:
 
@@ -97,8 +102,9 @@ Other:
 - The timers and `mbedtls_ms_time` use a monotonic clock.
   `MBEDTLS_TIMING_C` and `MBEDTLS_HAVE_TIME` need Windows or a Unix-like
   system.
-- The version macros, such as `MBEDTLS_VERSION_NUMBER`, but not the
-  `mbedtls/version.h` functions (`MBEDTLS_VERSION_C`)
+- The version macros, such as `MBEDTLS_VERSION_NUMBER`, and
+  `mbedtls_version_*`: get_number, get_string, get_string_full
+  (`MBEDTLS_VERSION_C`)
 
 Mbed TLS 3.6, with `WOLFPSA_MBEDTLS_3`:
 
@@ -149,15 +155,13 @@ TLS:
   `mbedtls_ssl_set_hs_*` functions
 - A session cache (`mbedtls_ssl_conf_session_cache`, `mbedtls/ssl_cache.h`)
 - TLS 1.3 early data
-- `mbedtls_ssl_check_pending`, `mbedtls_ssl_get_record_expansion`,
-  `mbedtls_ssl_get_max_in_record_payload`, `mbedtls_ssl_send_alert_message`
-  and `mbedtls_ssl_set_export_keys_cb`
+- `mbedtls_ssl_get_max_in_record_payload` and
+  `mbedtls_ssl_set_export_keys_cb`
 
 X.509:
 
 - `mbedtls_x509_crt_verify` and `mbedtls_x509_crt_verify_with_profile`
-- `mbedtls_x509_crt_parse_der_nocopy` and
-  `mbedtls_x509_parse_subject_alt_name`
+- `mbedtls_x509_parse_subject_alt_name`
 - CRL and CSR parsing (`mbedtls/x509_crl.h`, `mbedtls/x509_csr.h`)
 - Certificate and CSR writing (`mbedtls_x509write_crt_*`,
   `mbedtls_x509write_csr_*`)
@@ -236,6 +240,15 @@ TLS:
 - `mbedtls_ssl_conf_dbg`, `mbedtls_debug_set_threshold` and
   `mbedtls_ssl_conf_cert_profile` are accepted and ignored.
   `MBEDTLS_DEBUG_C` is not defined, and the debug callback is never called.
+- In TLS 1.3, `mbedtls_ssl_get_record_expansion` counts no padding, as
+  wolfSSL adds none: 22 bytes with a 16-byte tag. Mbed TLS pads to
+  `MBEDTLS_SSL_CID_TLS1_3_PADDING_GRANULARITY` bytes, 16 by default, and
+  returns 37.
+- After a fatal alert from `mbedtls_ssl_send_alert_message`, wolfSSL sends
+  nothing more, and `mbedtls_ssl_write` returns `MBEDTLS_ERR_SSL_CONN_EOF`.
+  Mbed TLS leaves the connection as it was.
+- `mbedtls_ssl_ciphersuite_t` has the ID, name and TLS versions only, not the
+  cipher, MAC, key exchange or flags.
 - The timers of `mbedtls_ssl_set_timer_cb` are not used. Mbed TLS uses them
   for DTLS and for `mbedtls_ssl_conf_read_timeout`.
 
@@ -362,7 +375,8 @@ runs these against `libwolfpsa.a`. Each is also a target of its own;
   Mbed TLS's test certificates and keys. `x509_crt_test.c` also runs the
   `x509_cert_info` cases of Mbed TLS's x509parse suite. `ssl_test.c` checks
   return codes, verify results and the verify callbacks, client and server
-  in one process. `timing_test.c` checks the timers and `mbedtls_ms_time`.
+  in one process. `timing_test.c` checks the timers and `mbedtls_ms_time`,
+  and `version_test.c` the version macros and functions.
   `mbedtls3_test.c` checks the Mbed TLS 3.6 API, built with
   `WOLFPSA_MBEDTLS_3`.
 - `mbedtls-compat-programs`: the Mbed TLS migration guide client

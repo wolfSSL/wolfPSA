@@ -32,10 +32,12 @@
 
 #if defined(WOLFSSL_PSA_ENGINE) && defined(WOLFPSA_MBEDTLS_COMPAT)
 
+#include <limits.h>
 #include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/logging.h>
 #include <wolfpsa/psa_engine.h>
+#include <mbedtls/oid.h>
 #include <mbedtls/x509_crt.h>
 #include "psa_tf_psa_internal.h"
 #include "mbedtls_compat_internal.h"
@@ -171,7 +173,9 @@ static void MbedSeqFree(mbedtls_x509_sequence* seq)
 /* Frees what crt owns, but not crt */
 static void MbedCertFreeFields(mbedtls_x509_crt* crt)
 {
-    XFREE(crt->raw.p, NULL, DYNAMIC_TYPE_CERT);
+    if (crt->own_buffer) {
+        XFREE(crt->raw.p, NULL, DYNAMIC_TYPE_CERT);
+    }
     mbedtls_pk_free(&crt->pk);
     MbedNameFree(&crt->issuer);
     MbedNameFree(&crt->subject);
@@ -751,21 +755,25 @@ static int MbedCertFields(mbedtls_x509_crt* crt, const DecodedCert* cert)
     return ret;
 }
 
-/* Copies buf to crt and sets its fields, freeing them on failure */
+/* Sets crt's fields from buf, or a copy of it, freeing them on failure */
 static int MbedCertLoad(mbedtls_x509_crt* crt, const unsigned char* buf,
-    size_t len)
+    size_t len, int copy)
 {
     DecodedCert* cert;
     int ret;
 
     XMEMSET(crt, 0, sizeof(*crt));
-    crt->raw.p = (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_CERT);
+    crt->own_buffer = copy;
+    crt->raw.p = copy ? (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_CERT) :
+        (unsigned char*)buf;
     cert = (DecodedCert*)XMALLOC(sizeof(*cert), NULL, DYNAMIC_TYPE_DCERT);
     if (crt->raw.p == NULL || cert == NULL) {
         ret = MBEDTLS_ERR_X509_ALLOC_FAILED;
     }
     else {
-        XMEMCPY(crt->raw.p, buf, len);
+        if (copy) {
+            XMEMCPY(crt->raw.p, buf, len);
+        }
         crt->raw.len = len;
         crt->raw.tag = MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE;
         ret = MbedCertDecode(cert, crt->raw.p, (word32)len);
@@ -898,14 +906,13 @@ int mbedtls_x509_crt_parse(mbedtls_x509_crt* chain,
     return ret;
 }
 
-int mbedtls_x509_crt_parse_der(mbedtls_x509_crt* chain,
-    const unsigned char* buf, size_t buflen)
+/* Adds the certificate at the start of buf to chain, copied if copy is set */
+static int MbedCertParseDer(mbedtls_x509_crt* chain, const unsigned char* buf,
+    size_t buflen, int copy)
 {
     mbedtls_x509_crt* crt = chain;
     mbedtls_x509_crt loaded;
     int ret;
-
-    WOLFSSL_ENTER("mbedtls_x509_crt_parse_der");
 
     ret = MbedParseCheck(chain, buf);
     if (ret == 0 && (word32)buflen != buflen) {
@@ -915,7 +922,7 @@ int mbedtls_x509_crt_parse_der(mbedtls_x509_crt* chain,
         ret = MbedCertLen(buf, &buflen);
     }
     if (ret == 0) {
-        ret = MbedCertLoad(&loaded, buf, buflen);
+        ret = MbedCertLoad(&loaded, buf, buflen, copy);
     }
     if (ret != 0) {
         return ret;
@@ -938,6 +945,23 @@ int mbedtls_x509_crt_parse_der(mbedtls_x509_crt* chain,
     /* The lists start in the struct and point only forward, so it copies */
     *crt = loaded;
     return 0;
+}
+
+int mbedtls_x509_crt_parse_der(mbedtls_x509_crt* chain,
+    const unsigned char* buf, size_t buflen)
+{
+    WOLFSSL_ENTER("mbedtls_x509_crt_parse_der");
+
+    return MbedCertParseDer(chain, buf, buflen, 1);
+}
+
+/* As in Mbed TLS, buf must stay valid and unchanged while chain is used */
+int mbedtls_x509_crt_parse_der_nocopy(mbedtls_x509_crt* chain,
+    const unsigned char* buf, size_t buflen)
+{
+    WOLFSSL_ENTER("mbedtls_x509_crt_parse_der_nocopy");
+
+    return MbedCertParseDer(chain, buf, buflen, 0);
 }
 
 #if defined(MBEDTLS_FS_IO)
@@ -1073,8 +1097,8 @@ static int MbedOidPrint(char** p, size_t* n, const mbedtls_x509_buf* oid)
     int first = 1;
     int ret = 0;
 
-    if (oid->len == 0 || (oid->p[oid->len - 1] & 0x80) != 0) {
-        return MBEDTLS_ERR_ASN1_INVALID_DATA;
+    if (oid->len == 0) {
+        return MBEDTLS_ERR_ASN1_OUT_OF_DATA;
     }
     for (i = 0; ret == 0 && i < oid->len; i++) {
         if ((value == 0 && oid->p[i] == 0x80) || value > (0xFFFFFFFFU >> 7)) {
@@ -1095,11 +1119,32 @@ static int MbedOidPrint(char** p, size_t* n, const mbedtls_x509_buf* oid)
         }
         value = 0;
     }
+    /* The last byte has the continuation bit */
+    if (ret == 0 && value != 0) {
+        ret = MBEDTLS_ERR_ASN1_OUT_OF_DATA;
+    }
     if (ret == 0) {
         *p = q;
         *n = m;
     }
     return ret;
+}
+
+int mbedtls_oid_get_numeric_string(char* buf, size_t size,
+    const mbedtls_asn1_buf* oid)
+{
+    char* p = buf;
+    size_t n = size;
+    int ret;
+
+    WOLFSSL_ENTER("mbedtls_oid_get_numeric_string");
+
+    /* As in Mbed TLS, so that the length fits in the return value */
+    if (size > INT_MAX) {
+        return MBEDTLS_ERR_ASN1_INVALID_LENGTH;
+    }
+    ret = MbedOidPrint(&p, &n, oid);
+    return (ret == 0) ? (int)(size - n) : ret;
 }
 
 /* Whether RFC 4514 escapes c anywhere in a value */

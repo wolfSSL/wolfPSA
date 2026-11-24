@@ -66,7 +66,39 @@
 #define MBEDTLS_SSL_MSG_CID                 25
 #define MBEDTLS_SSL_ALERT_LEVEL_WARNING     1
 #define MBEDTLS_SSL_ALERT_LEVEL_FATAL       2
-#define MBEDTLS_SSL_ALERT_MSG_NO_RENEGOTIATION 100
+
+#define MBEDTLS_SSL_ALERT_MSG_CLOSE_NOTIFY             0
+#define MBEDTLS_SSL_ALERT_MSG_UNEXPECTED_MESSAGE      10
+#define MBEDTLS_SSL_ALERT_MSG_BAD_RECORD_MAC          20
+#define MBEDTLS_SSL_ALERT_MSG_DECRYPTION_FAILED       21
+#define MBEDTLS_SSL_ALERT_MSG_RECORD_OVERFLOW         22
+#define MBEDTLS_SSL_ALERT_MSG_DECOMPRESSION_FAILURE   30
+#define MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE       40
+#define MBEDTLS_SSL_ALERT_MSG_NO_CERT                 41
+#define MBEDTLS_SSL_ALERT_MSG_BAD_CERT                42
+#define MBEDTLS_SSL_ALERT_MSG_UNSUPPORTED_CERT        43
+#define MBEDTLS_SSL_ALERT_MSG_CERT_REVOKED            44
+#define MBEDTLS_SSL_ALERT_MSG_CERT_EXPIRED            45
+#define MBEDTLS_SSL_ALERT_MSG_CERT_UNKNOWN            46
+#define MBEDTLS_SSL_ALERT_MSG_ILLEGAL_PARAMETER       47
+#define MBEDTLS_SSL_ALERT_MSG_UNKNOWN_CA              48
+#define MBEDTLS_SSL_ALERT_MSG_ACCESS_DENIED           49
+#define MBEDTLS_SSL_ALERT_MSG_DECODE_ERROR            50
+#define MBEDTLS_SSL_ALERT_MSG_DECRYPT_ERROR           51
+#define MBEDTLS_SSL_ALERT_MSG_EXPORT_RESTRICTION      60
+#define MBEDTLS_SSL_ALERT_MSG_PROTOCOL_VERSION        70
+#define MBEDTLS_SSL_ALERT_MSG_INSUFFICIENT_SECURITY   71
+#define MBEDTLS_SSL_ALERT_MSG_INTERNAL_ERROR          80
+/* Spelled as in Mbed TLS */
+#define MBEDTLS_SSL_ALERT_MSG_INAPROPRIATE_FALLBACK   86
+#define MBEDTLS_SSL_ALERT_MSG_USER_CANCELED           90
+#define MBEDTLS_SSL_ALERT_MSG_NO_RENEGOTIATION       100
+#define MBEDTLS_SSL_ALERT_MSG_MISSING_EXTENSION      109
+#define MBEDTLS_SSL_ALERT_MSG_UNSUPPORTED_EXT        110
+#define MBEDTLS_SSL_ALERT_MSG_UNRECOGNIZED_NAME      112
+#define MBEDTLS_SSL_ALERT_MSG_UNKNOWN_PSK_IDENTITY   115
+#define MBEDTLS_SSL_ALERT_MSG_CERT_REQUIRED          116
+#define MBEDTLS_SSL_ALERT_MSG_NO_APPLICATION_PROTOCOL 120
 
 #define MBEDTLS_SSL_HS_HELLO_REQUEST          0
 #define MBEDTLS_SSL_HS_CLIENT_HELLO           1
@@ -325,10 +357,14 @@ const char* mbedtls_ssl_get_version(const mbedtls_ssl_context* ssl);
 mbedtls_ssl_protocol_version mbedtls_ssl_get_version_number(
     const mbedtls_ssl_context* ssl);
 size_t mbedtls_ssl_get_bytes_avail(const mbedtls_ssl_context* ssl);
+int mbedtls_ssl_check_pending(const mbedtls_ssl_context* ssl);
 int mbedtls_ssl_read(mbedtls_ssl_context* ssl, unsigned char* buf, size_t len);
 int mbedtls_ssl_write(mbedtls_ssl_context* ssl,
     const unsigned char* buf, size_t len);
 int mbedtls_ssl_get_max_out_record_payload(const mbedtls_ssl_context* ssl);
+int mbedtls_ssl_get_record_expansion(const mbedtls_ssl_context* ssl);
+int mbedtls_ssl_send_alert_message(mbedtls_ssl_context* ssl,
+    unsigned char level, unsigned char message);
 int mbedtls_ssl_close_notify(mbedtls_ssl_context* ssl);
 
 #ifdef MBEDTLS_SSL_KEYING_MATERIAL_EXPORT

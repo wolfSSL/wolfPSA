@@ -38,6 +38,7 @@
 
 /* One certificate per node. The buffers point into raw, the DER. */
 typedef struct mbedtls_x509_crt {
+    int MBEDTLS_PRIVATE(own_buffer); /* raw is a copy, freed with the node */
     mbedtls_x509_buf raw;
     mbedtls_x509_buf tbs;
 
@@ -157,6 +158,8 @@ void mbedtls_x509_crt_free(mbedtls_x509_crt* crt);
 int mbedtls_x509_crt_parse(mbedtls_x509_crt* chain,
     const unsigned char* buf, size_t buflen);
 int mbedtls_x509_crt_parse_der(mbedtls_x509_crt* chain,
+    const unsigned char* buf, size_t buflen);
+int mbedtls_x509_crt_parse_der_nocopy(mbedtls_x509_crt* chain,
     const unsigned char* buf, size_t buflen);
 #if defined(MBEDTLS_FS_IO)
 int mbedtls_x509_crt_parse_file(mbedtls_x509_crt* chain, const char* path);
