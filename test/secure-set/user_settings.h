@@ -55,6 +55,7 @@
 #define NO_MD5
 #define NO_PWDBASED
 #define NO_PBKDF2
+#define NO_KDF
 #define WOLFPSA_AEAD_BORROW
 #define WOLFSSL_AESGCM_STREAM
 #define WOLFPSA_GCM_ONESHOT_STREAM

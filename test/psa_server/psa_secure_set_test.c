@@ -176,6 +176,31 @@ static void test_import_families_off(void)
           "AES import still accepted");
 }
 
+static psa_status_t kdf_setup_status(psa_algorithm_t alg)
+{
+    psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
+    psa_status_t st = psa_key_derivation_setup(&op, alg);
+
+    (void)psa_key_derivation_abort(&op);
+    return st;
+}
+
+static void test_kdf_families_off(void)
+{
+#ifndef WOLFSSL_HAVE_PRF
+    check(kdf_setup_status(PSA_ALG_TLS12_PRF(PSA_ALG_SHA_256)) ==
+          PSA_ERROR_NOT_SUPPORTED, "TLS 1.2 PRF refused under NO_KDF");
+    check(kdf_setup_status(PSA_ALG_TLS12_PSK_TO_MS(PSA_ALG_SHA_256)) ==
+          PSA_ERROR_NOT_SUPPORTED, "TLS 1.2 PSK-to-MS refused under NO_KDF");
+#else
+    check(0, "secure-set builds without the TLS 1.2 PRF");
+#endif
+    check(kdf_setup_status(PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256)) ==
+          PSA_ERROR_NOT_SUPPORTED, "PBKDF2 refused under NO_PBKDF2");
+    check(kdf_setup_status(PSA_ALG_HKDF(PSA_ALG_SHA_256)) == PSA_SUCCESS,
+          "HKDF still accepted");
+}
+
 static psa_status_t import_p256_pub(const uint8_t* data, size_t len,
                                     size_t bits)
 {
@@ -853,6 +878,7 @@ int main(void)
     check(psa_crypto_init() == PSA_SUCCESS, "psa_crypto_init");
     test_ecdsa_raw();
     test_import_families_off();
+    test_kdf_families_off();
     test_import_ecc_checked();
     aead_overlap(PSA_ALG_GCM, "GCM");
     aead_overlap(PSA_ALG_CCM, "CCM");
