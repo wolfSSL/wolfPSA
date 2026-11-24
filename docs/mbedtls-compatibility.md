@@ -56,8 +56,8 @@ TLS:
 
 - `mbedtls_ssl_config_*`: init, free, defaults
 - `mbedtls_ssl_conf_*`: authmode, ca_chain, own_cert, min_tls_version,
-  max_tls_version, ciphersuites, cert_profile, dbg, verify, endpoint,
-  transport, get_endpoint, set_user_data_p, set_user_data_n,
+  max_tls_version, ciphersuites, cert_profile, dbg, verify, read_timeout,
+  endpoint, transport, get_endpoint, set_user_data_p, set_user_data_n,
   get_user_data_p, get_user_data_n
 - `mbedtls_ssl_*`: init, free, setup, context_get_config, session_reset,
   set_bio, set_timer_cb, set_verify, set_hostname, set_session, get_session,
@@ -100,7 +100,7 @@ Other:
 - `mbedtls_strerror`
 - `mbedtls_debug_set_threshold`
 - `mbedtls_net_*`: init, connect, bind, accept (TCP and UDP), close, free,
-  recv, send, usleep
+  recv, recv_timeout, send, set_block, set_nonblock, poll, usleep
 - `mbedtls_pem_*`: init, read_buffer, get_buffer, free
 - `mbedtls_timing_*`: get_timer, set_delay, get_delay, get_final_delay
 - `mbedtls_ms_time` and `mbedtls_time`
@@ -151,9 +151,6 @@ TLS:
 - Renegotiation (`mbedtls_ssl_conf_renegotiation`,
   `mbedtls_ssl_renegotiate`)
 - A config without `mbedtls_ssl_config_defaults`
-- Read timeouts (`mbedtls_ssl_conf_read_timeout`,
-  `mbedtls_net_recv_timeout`) and non-blocking sockets
-  (`mbedtls_net_set_nonblock`, `mbedtls_net_set_block`, `mbedtls_net_poll`)
 - Groups and signature algorithms (`mbedtls_ssl_conf_groups`,
   `mbedtls_ssl_conf_sig_algs`)
 - The server name callback (`mbedtls_ssl_conf_sni`) and the
@@ -257,8 +254,9 @@ TLS:
   Mbed TLS leaves the connection as it was.
 - `mbedtls_ssl_ciphersuite_t` has the ID, name and TLS versions only, not the
   cipher, MAC, key exchange or flags.
-- The timers of `mbedtls_ssl_set_timer_cb` are not used. Mbed TLS uses them
-  for DTLS and for `mbedtls_ssl_conf_read_timeout`.
+- The timers of `mbedtls_ssl_set_timer_cb` are used only for
+  `mbedtls_ssl_conf_read_timeout`. Mbed TLS also uses them for DTLS
+  retransmission.
 
 Certificate verification:
 
@@ -357,6 +355,10 @@ Other:
   `mbedtls_md_hmac`, `mbedtls_md_file`, `mbedtls_md_list` and
   `mbedtls_md_info_from_string`. For HMAC, use `psa_mac_*`.
 - No global mutexes such as `mbedtls_threading_gmtime_mutex`.
+- `mbedtls_net_set_block` and `mbedtls_net_set_nonblock` return
+  `MBEDTLS_ERR_NET_INVALID_CONTEXT` without a socket and
+  `MBEDTLS_ERR_NET_SOCKET_FAILED` when the system call fails. Mbed TLS
+  returns the system call's result, -1 on failure.
 - After a UDP `mbedtls_net_accept`, the new listening socket has the old
   one's address and, except on Windows, its blocking mode. Mbed TLS binds
   it to the accepted socket's address, which for a socket bound to every

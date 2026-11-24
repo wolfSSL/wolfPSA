@@ -49,6 +49,7 @@
 #if defined(MBEDTLS_NET_C)
 
 #include <limits.h>
+#include <mbedtls/platform_time.h>
 #include "mbedtls_compat_internal.h"
 #ifndef USE_WINDOWS_API
     #include <fcntl.h>
@@ -56,6 +57,13 @@
     #include <signal.h>
     #include <sys/select.h>
 #endif /* !USE_WINDOWS_API */
+
+/* A receive that does not block, where the system has one */
+#ifdef MSG_DONTWAIT
+    #define MBED_NET_DONTWAIT MSG_DONTWAIT
+#else
+    #define MBED_NET_DONTWAIT 0
+#endif /* MSG_DONTWAIT */
 
 void mbedtls_net_init(mbedtls_net_context* ctx)
 {
@@ -183,14 +191,20 @@ int mbedtls_net_bind(mbedtls_net_context* ctx, const char* bind_ip,
     return MbedNetOpen(ctx, bind_ip, port, proto, 1);
 }
 
+/* The error of the last socket call */
+static int MbedNetError(void)
+{
+#ifdef USE_WINDOWS_API
+    return WSAGetLastError();
+#else
+    return errno;
+#endif /* USE_WINDOWS_API */
+}
+
 /* The last socket call failed only because it would block */
 static int MbedNetWouldBlock(void)
 {
-#ifdef USE_WINDOWS_API
-    int err = WSAGetLastError();
-#else
-    int err = errno;
-#endif /* USE_WINDOWS_API */
+    int err = MbedNetError();
 
     return err == SOCKET_EWOULDBLOCK || err == SOCKET_EAGAIN;
 }
@@ -243,7 +257,7 @@ static int MbedNetUdpAccept(mbedtls_net_context* bind_ctx,
 #ifndef USE_WINDOWS_API
     /* Keeps the blocking mode, which Winsock cannot read */
     flags = fcntl(client_ctx->fd, F_GETFL);
-    if (flags < 0 || fcntl(fd, F_SETFL, flags & O_NONBLOCK) != 0) {
+    if (flags < 0 || fcntl(fd, F_SETFL, flags & O_NONBLOCK) < 0) {
         ret = MBEDTLS_ERR_NET_SOCKET_FAILED;
     }
 #endif /* !USE_WINDOWS_API */
@@ -321,6 +335,135 @@ int mbedtls_net_accept(mbedtls_net_context* bind_ctx,
     return 0;
 }
 
+/* 0 when ctx has a socket that select() takes */
+static int MbedNetSelectable(const mbedtls_net_context* ctx)
+{
+    if (ctx == NULL || ctx->fd < 0) {
+        return MBEDTLS_ERR_NET_INVALID_CONTEXT;
+    }
+#ifndef USE_WINDOWS_API
+    /* FD_SET() writes past an fd_set for a larger descriptor */
+    if (ctx->fd >= FD_SETSIZE) {
+        return MBEDTLS_ERR_NET_POLL_FAILED;
+    }
+#endif /* !USE_WINDOWS_API */
+    return 0;
+}
+
+/* ms for a deadline. Without a clock, 0: each wait gets the whole timeout. */
+static mbedtls_ms_time_t MbedNetNow(void)
+{
+#ifdef MBEDTLS_HAVE_TIME
+    return mbedtls_ms_time();
+#else
+    return 0;
+#endif /* MBEDTLS_HAVE_TIME */
+}
+
+/* Events of rw ready by deadline, no limit if forever; <0 on error */
+static int MbedNetSelect(int fd, uint32_t rw, mbedtls_ms_time_t deadline,
+    int forever)
+{
+    fd_set readFds;
+    fd_set writeFds;
+    struct timeval tv;
+    mbedtls_ms_time_t left = deadline - MbedNetNow();
+    uint32_t ms = (left > 0) ? (uint32_t)left : 0;
+    int ret;
+
+    FD_ZERO(&readFds);
+    FD_ZERO(&writeFds);
+    if ((rw & MBEDTLS_NET_POLL_READ) != 0) {
+        FD_SET((SOCKET_T)fd, &readFds);
+    }
+    if ((rw & MBEDTLS_NET_POLL_WRITE) != 0) {
+        FD_SET((SOCKET_T)fd, &writeFds);
+    }
+    tv.tv_sec = ms / 1000;
+    tv.tv_usec = (ms % 1000) * 1000;
+
+    /* Winsock takes no empty set */
+    ret = select(fd + 1,
+        ((rw & MBEDTLS_NET_POLL_READ) != 0) ? &readFds : NULL,
+        ((rw & MBEDTLS_NET_POLL_WRITE) != 0) ? &writeFds : NULL,
+        NULL, forever ? NULL : &tv);
+    if (ret > 0) {
+        ret = 0;
+        if (FD_ISSET(fd, &readFds)) {
+            ret |= MBEDTLS_NET_POLL_READ;
+        }
+        if (FD_ISSET(fd, &writeFds)) {
+            ret |= MBEDTLS_NET_POLL_WRITE;
+        }
+    }
+    return ret;
+}
+
+/* A timeout of UINT32_MAX waits until an event comes */
+int mbedtls_net_poll(mbedtls_net_context* ctx, uint32_t rw, uint32_t timeout)
+{
+    const mbedtls_ms_time_t deadline = MbedNetNow() + timeout;
+    int ret;
+
+    WOLFSSL_ENTER("mbedtls_net_poll");
+
+    ret = MbedNetSelectable(ctx);
+    if (ret != 0) {
+        return ret;
+    }
+    if (rw > (MBEDTLS_NET_POLL_READ | MBEDTLS_NET_POLL_WRITE)) {
+        return MBEDTLS_ERR_NET_BAD_INPUT_DATA;
+    }
+    /* After a signal, the wait goes on to the same deadline */
+    do {
+        ret = MbedNetSelect(ctx->fd, rw, deadline, timeout == UINT32_MAX);
+    } while (ret < 0 && MbedNetError() == SOCKET_EINTR);
+
+    return (ret < 0) ? MBEDTLS_ERR_NET_POLL_FAILED : ret;
+}
+
+static int MbedNetSetNonBlock(mbedtls_net_context* ctx, int nonBlock)
+{
+#ifdef USE_WINDOWS_API
+    u_long on = (u_long)nonBlock;
+#else
+    int flags;
+#endif /* USE_WINDOWS_API */
+
+    if (ctx == NULL || ctx->fd < 0) {
+        return MBEDTLS_ERR_NET_INVALID_CONTEXT;
+    }
+#ifdef USE_WINDOWS_API
+    if (ioctlsocket(ctx->fd, FIONBIO, &on) != 0) {
+        return MBEDTLS_ERR_NET_SOCKET_FAILED;
+    }
+#else
+    flags = fcntl(ctx->fd, F_GETFL);
+    if (flags < 0) {
+        return MBEDTLS_ERR_NET_SOCKET_FAILED;
+    }
+    flags = nonBlock ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
+    if (fcntl(ctx->fd, F_SETFL, flags) < 0) {
+        return MBEDTLS_ERR_NET_SOCKET_FAILED;
+    }
+#endif /* USE_WINDOWS_API */
+    return 0;
+}
+
+int mbedtls_net_set_block(mbedtls_net_context* ctx)
+{
+    WOLFSSL_ENTER("mbedtls_net_set_block");
+
+    return MbedNetSetNonBlock(ctx, 0);
+}
+
+int mbedtls_net_set_nonblock(mbedtls_net_context* ctx)
+{
+    WOLFSSL_ENTER("mbedtls_net_set_nonblock");
+
+    return MbedNetSetNonBlock(ctx, 1);
+}
+
 void mbedtls_net_usleep(unsigned long usec)
 {
     WOLFSSL_ENTER("mbedtls_net_usleep");
@@ -357,21 +500,26 @@ void mbedtls_net_free(mbedtls_net_context* ctx)
     mbedtls_net_close(ctx);
 }
 
-int mbedtls_net_recv(void* ctx, unsigned char* buf, size_t len)
+static int MbedNetRecv(const mbedtls_net_context* net, unsigned char* buf,
+    size_t len, int flags)
 {
-    mbedtls_net_context* net = (mbedtls_net_context*)ctx;
     int ret;
-
-    WOLFSSL_ENTER("mbedtls_net_recv");
 
     if (net == NULL || net->fd < 0) {
         return MBEDTLS_ERR_NET_INVALID_CONTEXT;
     }
-    ret = wolfIO_Recv(net->fd, (char*)buf, MbedIoLen(len, INT_MAX), 0);
+    ret = wolfIO_Recv(net->fd, (char*)buf, MbedIoLen(len, INT_MAX), flags);
     if (ret >= 0) {
         return ret;
     }
     return MbedIoErr(ret, MBED_IO_RECV, 0);
+}
+
+int mbedtls_net_recv(void* ctx, unsigned char* buf, size_t len)
+{
+    WOLFSSL_ENTER("mbedtls_net_recv");
+
+    return MbedNetRecv((const mbedtls_net_context*)ctx, buf, len, 0);
 }
 
 int mbedtls_net_send(void* ctx, const unsigned char* buf, size_t len)
@@ -390,6 +538,37 @@ int mbedtls_net_send(void* ctx, const unsigned char* buf, size_t len)
         return ret;
     }
     return MbedIoErr(ret, MBED_IO_SEND, 0);
+}
+
+/* Waits for data even on a non-blocking socket, without a limit for 0 */
+int mbedtls_net_recv_timeout(void* ctx, unsigned char* buf, size_t len,
+    uint32_t timeout)
+{
+    const mbedtls_net_context* net = (const mbedtls_net_context*)ctx;
+    const mbedtls_ms_time_t deadline = MbedNetNow() + timeout;
+    int ret;
+
+    WOLFSSL_ENTER("mbedtls_net_recv_timeout");
+
+    ret = MbedNetSelectable(net);
+    if (ret != 0) {
+        return ret;
+    }
+    do {
+        ret = MbedNetSelect(net->fd, MBEDTLS_NET_POLL_READ, deadline,
+            timeout == 0);
+        if (ret == 0) {
+            return MBEDTLS_ERR_SSL_TIMEOUT;
+        }
+        if (ret < 0) {
+            return (MbedNetError() == SOCKET_EINTR) ?
+                MBEDTLS_ERR_SSL_WANT_READ : MBEDTLS_ERR_NET_RECV_FAILED;
+        }
+        /* Readable can still have no data, as on Linux: wait again */
+        ret = MbedNetRecv(net, buf, len, MBED_NET_DONTWAIT);
+    } while (ret == MBEDTLS_ERR_SSL_WANT_READ);
+
+    return ret;
 }
 
 #endif /* MBEDTLS_NET_C */

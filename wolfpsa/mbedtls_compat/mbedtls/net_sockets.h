@@ -25,6 +25,7 @@
 #include "mbedtls/ssl.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
     extern "C" {
@@ -37,7 +38,9 @@
 #define MBEDTLS_ERR_NET_CONNECT_FAILED       -0x0044
 #define MBEDTLS_ERR_NET_INVALID_CONTEXT      -0x0045
 #define MBEDTLS_ERR_NET_BIND_FAILED          -0x0046
+#define MBEDTLS_ERR_NET_POLL_FAILED          -0x0047
 #define MBEDTLS_ERR_NET_LISTEN_FAILED        -0x0048
+#define MBEDTLS_ERR_NET_BAD_INPUT_DATA       -0x0049
 #define MBEDTLS_ERR_NET_ACCEPT_FAILED        -0x004A
 #define MBEDTLS_ERR_NET_RECV_FAILED          -0x004C
 #define MBEDTLS_ERR_NET_SEND_FAILED          -0x004E
@@ -46,6 +49,9 @@
 #define MBEDTLS_ERR_NET_BUFFER_TOO_SMALL     PSA_ERROR_BUFFER_TOO_SMALL
 
 #define MBEDTLS_NET_LISTEN_BACKLOG        10
+
+#define MBEDTLS_NET_POLL_READ             1
+#define MBEDTLS_NET_POLL_WRITE            2
 
 typedef struct mbedtls_net_context {
     int fd;
@@ -59,11 +65,16 @@ int mbedtls_net_bind(mbedtls_net_context* ctx, const char* bind_ip,
 int mbedtls_net_accept(mbedtls_net_context* bind_ctx,
     mbedtls_net_context* client_ctx, void* client_ip, size_t buf_size,
     size_t* cip_len);
+int mbedtls_net_poll(mbedtls_net_context* ctx, uint32_t rw, uint32_t timeout);
+int mbedtls_net_set_block(mbedtls_net_context* ctx);
+int mbedtls_net_set_nonblock(mbedtls_net_context* ctx);
 void mbedtls_net_usleep(unsigned long usec);
 void mbedtls_net_close(mbedtls_net_context* ctx);
 void mbedtls_net_free(mbedtls_net_context* ctx);
 int mbedtls_net_recv(void* ctx, unsigned char* buf, size_t len);
 int mbedtls_net_send(void* ctx, const unsigned char* buf, size_t len);
+int mbedtls_net_recv_timeout(void* ctx, unsigned char* buf, size_t len,
+    uint32_t timeout);
 
 #ifdef __cplusplus
     } /* extern "C" */
