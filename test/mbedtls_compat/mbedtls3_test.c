@@ -112,7 +112,7 @@ static int Strerror(void)
     return ok;
 }
 
-#ifdef MBEDTLS_ENTROPY_C
+#if defined(MBEDTLS_ENTROPY_C) || defined(MBEDTLS_CTR_DRBG_C)
 /* An application's own error code */
 #define TEST_ENTROPY_ERR -1
 
@@ -123,7 +123,9 @@ typedef struct {
     size_t size;
     int ret;
 } TestEntropy;
+#endif /* MBEDTLS_ENTROPY_C || MBEDTLS_CTR_DRBG_C */
 
+#ifdef MBEDTLS_ENTROPY_C
 static int TestSource(void* data, unsigned char* output, size_t len,
     size_t* olen)
 {
@@ -212,8 +214,18 @@ static int EntropyMaxSources(void)
     mbedtls_entropy_free(&entropy);
     return ok;
 }
+#endif /* MBEDTLS_ENTROPY_C */
 
 #ifdef MBEDTLS_CTR_DRBG_C
+/* The seed reads a nonce after the entropy, if it has one */
+#if MBEDTLS_CTR_DRBG_ENTROPY_NONCE_LEN > 0
+    #define TEST_SEED_CALLS    2
+    #define TEST_SEED_LAST_LEN MBEDTLS_CTR_DRBG_ENTROPY_NONCE_LEN
+#else
+    #define TEST_SEED_CALLS    1
+    #define TEST_SEED_LAST_LEN MBEDTLS_CTR_DRBG_ENTROPY_LEN
+#endif /* MBEDTLS_CTR_DRBG_ENTROPY_NONCE_LEN > 0 */
+
 static int TestDrbgEntropy(void* data, unsigned char* output, size_t len)
 {
     TestEntropy* e = (TestEntropy*)data;
@@ -222,32 +234,6 @@ static int TestDrbgEntropy(void* data, unsigned char* output, size_t len)
     e->len = len;
     memset(output, 0x5A, len);
     return e->ret;
-}
-
-/* Seeded from the default entropy source, as most applications do */
-static int DrbgRandom(void)
-{
-    static const unsigned char pers[] = "mbedtls3_test";
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context drbg;
-    unsigned char a[32];
-    unsigned char b[32];
-    unsigned char big[MBEDTLS_CTR_DRBG_MAX_REQUEST + 1];
-    int ok;
-
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&drbg);
-    ok = mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, pers,
-            sizeof(pers)) == 0 &&
-        mbedtls_ctr_drbg_random(&drbg, a, sizeof(a)) == 0 &&
-        mbedtls_ctr_drbg_random(&drbg, b, sizeof(b)) == 0 &&
-        memcmp(a, b, sizeof(a)) != 0 &&
-        mbedtls_ctr_drbg_random(&drbg, big, sizeof(big) - 1) == 0 &&
-        mbedtls_ctr_drbg_random(&drbg, big, sizeof(big)) ==
-            MBEDTLS_ERR_CTR_DRBG_REQUEST_TOO_BIG;
-    mbedtls_ctr_drbg_free(&drbg);
-    mbedtls_entropy_free(&entropy);
-    return ok;
 }
 
 /* Entropy at seed, reseed, and each output with prediction resistance */
@@ -261,15 +247,16 @@ static int DrbgEntropyCalls(void)
 
     mbedtls_ctr_drbg_init(&drbg);
     ok = mbedtls_ctr_drbg_seed(&drbg, TestDrbgEntropy, &e, NULL, 0) == 0 &&
-        e.calls == 1 && e.len == MBEDTLS_CTR_DRBG_ENTROPY_LEN &&
+        e.calls == TEST_SEED_CALLS && e.len == TEST_SEED_LAST_LEN &&
         mbedtls_ctr_drbg_random(&drbg, out, sizeof(out)) == 0 &&
-        e.calls == 1 &&
+        e.calls == TEST_SEED_CALLS &&
         mbedtls_ctr_drbg_reseed(&drbg, add, sizeof(add)) == 0 &&
-        e.calls == 2;
+        e.calls == TEST_SEED_CALLS + 1 &&
+        e.len == MBEDTLS_CTR_DRBG_ENTROPY_LEN;
     mbedtls_ctr_drbg_set_prediction_resistance(&drbg, MBEDTLS_CTR_DRBG_PR_ON);
     ok = ok && mbedtls_ctr_drbg_random(&drbg, out, sizeof(out)) == 0 &&
         mbedtls_ctr_drbg_random(&drbg, out, sizeof(out)) == 0 &&
-        e.calls == 4;
+        e.calls == TEST_SEED_CALLS + 3;
     mbedtls_ctr_drbg_free(&drbg);
     return ok;
 }
@@ -287,9 +274,9 @@ static int DrbgReseedInterval(void)
     for (i = 0; ok && i < MBEDTLS_CTR_DRBG_RESEED_INTERVAL; i++) {
         ok = mbedtls_ctr_drbg_random(&drbg, out, sizeof(out)) == 0;
     }
-    ok = ok && e.calls == 1 &&
+    ok = ok && e.calls == TEST_SEED_CALLS &&
         mbedtls_ctr_drbg_random(&drbg, out, sizeof(out)) == 0 &&
-        e.calls == 2;
+        e.calls == TEST_SEED_CALLS + 1;
     mbedtls_ctr_drbg_free(&drbg);
     return ok;
 }
@@ -299,6 +286,9 @@ static int DrbgErrors(void)
 {
     static const unsigned char custom[MBEDTLS_CTR_DRBG_MAX_SEED_INPUT -
         MBEDTLS_CTR_DRBG_ENTROPY_LEN + 1] = { 0 };
+    /* The nonce counts against custom, not against additional */
+    const size_t seedMax = sizeof(custom) - 1 -
+        MBEDTLS_CTR_DRBG_ENTROPY_NONCE_LEN;
     TestEntropy e = { 0, 0, 0, TEST_ENTROPY_ERR };
     mbedtls_ctr_drbg_context drbg;
     unsigned char out[16];
@@ -313,11 +303,12 @@ static int DrbgErrors(void)
             MBEDTLS_ERR_CTR_DRBG_ENTROPY_SOURCE_FAILED;
     e.ret = 0;
     ok = ok && mbedtls_ctr_drbg_seed(&drbg, TestDrbgEntropy, &e, custom,
-            sizeof(custom)) == MBEDTLS_ERR_CTR_DRBG_INPUT_TOO_BIG &&
+            seedMax + 1) == MBEDTLS_ERR_CTR_DRBG_INPUT_TOO_BIG &&
         mbedtls_ctr_drbg_seed(&drbg, TestDrbgEntropy, &e, custom,
-            sizeof(custom) - 1) == 0 &&
+            seedMax) == 0 &&
         mbedtls_ctr_drbg_reseed(&drbg, custom, sizeof(custom)) ==
-            MBEDTLS_ERR_CTR_DRBG_INPUT_TOO_BIG;
+            MBEDTLS_ERR_CTR_DRBG_INPUT_TOO_BIG &&
+        mbedtls_ctr_drbg_reseed(&drbg, custom, sizeof(custom) - 1) == 0;
     e.ret = TEST_ENTROPY_ERR;
     mbedtls_ctr_drbg_set_prediction_resistance(&drbg, MBEDTLS_CTR_DRBG_PR_ON);
     ok = ok && mbedtls_ctr_drbg_reseed(&drbg, NULL, 0) ==
@@ -373,6 +364,33 @@ static int DrbgOwnSeed(void)
     return ok;
 }
 
+#ifdef MBEDTLS_ENTROPY_C
+/* Seeded from the default entropy source, as most applications do */
+static int DrbgRandom(void)
+{
+    static const unsigned char pers[] = "mbedtls3_test";
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context drbg;
+    unsigned char a[32];
+    unsigned char b[32];
+    unsigned char big[MBEDTLS_CTR_DRBG_MAX_REQUEST + 1];
+    int ok;
+
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&drbg);
+    ok = mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, pers,
+            sizeof(pers)) == 0 &&
+        mbedtls_ctr_drbg_random(&drbg, a, sizeof(a)) == 0 &&
+        mbedtls_ctr_drbg_random(&drbg, b, sizeof(b)) == 0 &&
+        memcmp(a, b, sizeof(a)) != 0 &&
+        mbedtls_ctr_drbg_random(&drbg, big, sizeof(big) - 1) == 0 &&
+        mbedtls_ctr_drbg_random(&drbg, big, sizeof(big)) ==
+            MBEDTLS_ERR_CTR_DRBG_REQUEST_TOO_BIG;
+    mbedtls_ctr_drbg_free(&drbg);
+    mbedtls_entropy_free(&entropy);
+    return ok;
+}
+
 /* An entropy source error fails the seed */
 static int DrbgSourceError(void)
 {
@@ -417,8 +435,8 @@ static int ConfRng(void)
     mbedtls_entropy_free(&entropy);
     return ok;
 }
-#endif /* MBEDTLS_CTR_DRBG_C */
 #endif /* MBEDTLS_ENTROPY_C */
+#endif /* MBEDTLS_CTR_DRBG_C */
 
 static const struct {
     const char* name;
@@ -434,17 +452,19 @@ static const struct {
     { "entropy source", EntropySource },
     { "entropy threshold not reached", EntropyThresholdNotReached },
     { "entropy max sources", EntropyMaxSources },
+#endif /* MBEDTLS_ENTROPY_C */
 #ifdef MBEDTLS_CTR_DRBG_C
-    { "ctr_drbg random", DrbgRandom },
     { "ctr_drbg entropy calls", DrbgEntropyCalls },
     { "ctr_drbg reseed interval", DrbgReseedInterval },
     { "ctr_drbg errors", DrbgErrors },
     { "ctr_drbg NULL input", DrbgNullInput },
     { "ctr_drbg own seed", DrbgOwnSeed },
+#ifdef MBEDTLS_ENTROPY_C
+    { "ctr_drbg random", DrbgRandom },
     { "ctr_drbg entropy source error", DrbgSourceError },
     { "ssl_conf_rng", ConfRng },
-#endif /* MBEDTLS_CTR_DRBG_C */
 #endif /* MBEDTLS_ENTROPY_C */
+#endif /* MBEDTLS_CTR_DRBG_C */
 };
 
 int main(void)

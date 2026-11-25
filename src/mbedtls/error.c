@@ -78,7 +78,7 @@ static const struct {
     MBED_ERR(ENTROPY, MAX_SOURCES, "No more sources can be added"),
     MBED_ERR(ENTROPY, NO_SOURCES_DEFINED,
         "No sources have been added to poll"),
-    MBED_ERR(MD,FEATURE_UNAVAILABLE, "The selected feature is not available"),
+    MBED_ERR(MD, FEATURE_UNAVAILABLE, "The selected feature is not available"),
     MBED_ERR(NET, SOCKET_FAILED, "Failed to open a socket"),
     MBED_ERR(NET, CONNECT_FAILED,
         "The connection to the given server / port failed"),

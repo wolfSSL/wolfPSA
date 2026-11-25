@@ -23,6 +23,11 @@
 #define MBEDTLS_CTR_DRBG_H
 
 #include "mbedtls/build_info.h"
+
+#ifndef WOLFPSA_MBEDTLS_3
+    #error "mbedtls/ctr_drbg.h is Mbed TLS 3.6 API: define WOLFPSA_MBEDTLS_3"
+#endif /* !WOLFPSA_MBEDTLS_3 */
+
 #include "mbedtls/entropy.h"
 
 #include <stddef.h>
@@ -35,10 +40,13 @@
 #define MBEDTLS_ERR_CTR_DRBG_REQUEST_TOO_BIG       -0x0036
 #define MBEDTLS_ERR_CTR_DRBG_INPUT_TOO_BIG         -0x0038
 
+/* As Mbed TLS: a second read at seed when the first is short of a nonce */
 #if defined(MBEDTLS_ENTROPY_SHA512_ACCUMULATOR)
-    #define MBEDTLS_CTR_DRBG_ENTROPY_LEN 48
+    #define MBEDTLS_CTR_DRBG_ENTROPY_LEN       48
+    #define MBEDTLS_CTR_DRBG_ENTROPY_NONCE_LEN 0
 #else
-    #define MBEDTLS_CTR_DRBG_ENTROPY_LEN 32
+    #define MBEDTLS_CTR_DRBG_ENTROPY_LEN       32
+    #define MBEDTLS_CTR_DRBG_ENTROPY_NONCE_LEN 16
 #endif /* MBEDTLS_ENTROPY_SHA512_ACCUMULATOR */
 #define MBEDTLS_CTR_DRBG_RESEED_INTERVAL 10000
 #define MBEDTLS_CTR_DRBG_MAX_REQUEST     1024

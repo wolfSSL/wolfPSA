@@ -98,15 +98,25 @@ void mbedtls_ssl_conf_rng(mbedtls_ssl_config* conf,
 static int MbedEntropyDefault(void* data, unsigned char* output, size_t len,
     size_t* olen)
 {
+#if defined(CUSTOM_RAND_GENERATE_BLOCK) || defined(WC_RNG_SEED_CB)
+    /* No wc_GenerateSeed, or not the seed source the RNG uses */
     WC_RNG rng;
+#else
+    OS_Seed os;
+#endif /* CUSTOM_RAND_GENERATE_BLOCK || WC_RNG_SEED_CB */
     int ret;
 
     (void)data;
+#if defined(CUSTOM_RAND_GENERATE_BLOCK) || defined(WC_RNG_SEED_CB)
     ret = wc_InitRng_ex(&rng, NULL, wolfPSA_GetDefaultDevID());
     if (ret == 0) {
         ret = wc_RNG_GenerateBlock(&rng, output, (word32)len);
         (void)wc_FreeRng(&rng);
     }
+#else
+    XMEMSET(&os, 0, sizeof(os));
+    ret = wc_GenerateSeed(&os, output, (word32)len);
+#endif /* CUSTOM_RAND_GENERATE_BLOCK || WC_RNG_SEED_CB */
     if (ret != 0) {
         return MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
     }
@@ -231,6 +241,9 @@ int mbedtls_entropy_func(void* data, unsigned char* output, size_t len)
     if (ctx == NULL || (output == NULL && len > 0) || len > sizeof(digest)) {
         return MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
     }
+    if (!wolfPSA_CryptoReady()) {
+        return PSA_ERROR_BAD_STATE;
+    }
     ret = MBED_LOCK(&ctx->mutex);
     if (ret != 0) {
         return ret;
@@ -269,19 +282,26 @@ int mbedtls_entropy_func(void* data, unsigned char* output, size_t len)
 #endif /* MBEDTLS_ENTROPY_C */
 
 #ifdef MBEDTLS_CTR_DRBG_C
-/* seed: MBEDTLS_CTR_DRBG_ENTROPY_LEN bytes from f_entropy, then add */
+/* seed: MBEDTLS_CTR_DRBG_ENTROPY_LEN bytes from f_entropy, nonceLen more in
+ * a second call, then add */
 static int MbedDrbgSeedInput(int (*f_entropy)(void*, unsigned char*, size_t),
-    void* p_entropy, const unsigned char* add, size_t addLen,
+    void* p_entropy, size_t nonceLen, const unsigned char* add, size_t addLen,
     byte seed[MBEDTLS_CTR_DRBG_MAX_SEED_INPUT], word32* seedLen)
 {
     if (addLen > MBEDTLS_CTR_DRBG_MAX_SEED_INPUT -
-            MBEDTLS_CTR_DRBG_ENTROPY_LEN) {
+            MBEDTLS_CTR_DRBG_ENTROPY_LEN - nonceLen) {
         return MBEDTLS_ERR_CTR_DRBG_INPUT_TOO_BIG;
     }
     if (f_entropy(p_entropy, seed, MBEDTLS_CTR_DRBG_ENTROPY_LEN) != 0) {
         return MBEDTLS_ERR_CTR_DRBG_ENTROPY_SOURCE_FAILED;
     }
     *seedLen = MBEDTLS_CTR_DRBG_ENTROPY_LEN;
+    if (nonceLen > 0) {
+        if (f_entropy(p_entropy, seed + *seedLen, nonceLen) != 0) {
+            return MBEDTLS_ERR_CTR_DRBG_ENTROPY_SOURCE_FAILED;
+        }
+        *seedLen += (word32)nonceLen;
+    }
     /* NULL add is empty, as in Mbed TLS */
     if (add != NULL && addLen > 0) {
         XMEMCPY(seed + *seedLen, add, addLen);
@@ -298,11 +318,18 @@ static int MbedDrbgReseed(mbedtls_ctr_drbg_context* ctx,
     word32 seedLen = 0;
     int ret;
 
-    ret = MbedDrbgSeedInput(ctx->f_entropy, ctx->p_entropy, additional, len,
-        seed, &seedLen);
+    ret = MbedDrbgSeedInput(ctx->f_entropy, ctx->p_entropy, 0, additional,
+        len, seed, &seedLen);
+#ifdef WC_RNG_HAVE_RESEED_NOW
+    /* From wolfCrypt's seed source, the input uncredited */
+    if (ret == 0 && wc_RNG_DRBG_Reseed_Now(ctx->rng, seed, seedLen) != 0) {
+        ret = MBEDTLS_ERR_CTR_DRBG_ENTROPY_SOURCE_FAILED;
+    }
+#else
     if (ret == 0 && wc_RNG_DRBG_Reseed(ctx->rng, seed, seedLen) != 0) {
         ret = MBEDTLS_ERR_CTR_DRBG_ENTROPY_SOURCE_FAILED;
     }
+#endif /* WC_RNG_HAVE_RESEED_NOW */
     if (ret == 0) {
         ctx->reseed_counter = 0;
     }
@@ -352,9 +379,12 @@ int mbedtls_ctr_drbg_seed(mbedtls_ctr_drbg_context* ctx,
     if (ctx == NULL || f_entropy == NULL) {
         return MBEDTLS_ERR_CTR_DRBG_ENTROPY_SOURCE_FAILED;
     }
+    if (!wolfPSA_CryptoReady()) {
+        return PSA_ERROR_BAD_STATE;
+    }
     MbedDrbgUnseed(ctx);
-    ret = MbedDrbgSeedInput(f_entropy, p_entropy, custom, len, seed,
-        &seedLen);
+    ret = MbedDrbgSeedInput(f_entropy, p_entropy,
+        MBEDTLS_CTR_DRBG_ENTROPY_NONCE_LEN, custom, len, seed, &seedLen);
     /* wolfCrypt seeds its DRBG itself, with the seed input as the nonce */
     if (ret == 0 && wc_rng_new_ex(&ctx->rng, seed, seedLen, NULL,
             wolfPSA_GetDefaultDevID()) != 0) {
