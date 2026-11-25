@@ -35,12 +35,18 @@
 
 #if defined(WOLFSSL_PSA_ENGINE) && defined(WOLFPSA_MBEDTLS_COMPAT)
 
+#include <wolfssl/wolfcrypt/asn_public.h>
+#include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/logging.h>
 #include <wolfssl/wolfcrypt/random.h>
+#include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfpsa/psa_engine.h>
 #include <mbedtls/ctr_drbg.h>
+#include <mbedtls/pk.h>
+#include <mbedtls/platform_util.h>
 #include <mbedtls/ssl.h>
+#include "psa_tf_psa_internal.h"
 
 #ifdef MBEDTLS_THREADING_C
 #define MBED_LOCK(m)   mbedtls_mutex_lock(m)
@@ -462,5 +468,262 @@ int mbedtls_ctr_drbg_random(void* p_rng, unsigned char* output,
     return ret;
 }
 #endif /* MBEDTLS_CTR_DRBG_C */
+
+struct mbedtls_pk_info_t {
+    mbedtls_pk_type_t type;
+    int ctxType;
+};
+
+/* The first entry of each pk type is its info */
+static const mbedtls_pk_info_t pkInfo[] = {
+    { MBEDTLS_PK_RSA, PK_TYPE_RSA },
+    { MBEDTLS_PK_RSA, PK_TYPE_RSA_PUBLIC },
+    { MBEDTLS_PK_ECKEY, PK_TYPE_ECC },
+    { MBEDTLS_PK_ECKEY, PK_TYPE_ECC_PUBLIC },
+    { MBEDTLS_PK_ECKEY, PK_TYPE_MONTGOMERY_PUBLIC }
+};
+
+const mbedtls_pk_info_t* mbedtls_pk_info_from_type(mbedtls_pk_type_t pk_type)
+{
+    size_t i;
+
+    for (i = 0; i < XELEM_CNT(pkInfo); i++) {
+        if (pkInfo[i].type == pk_type) {
+            return &pkInfo[i];
+        }
+    }
+    return NULL;
+}
+
+/* No key until mbedtls_ecp_gen_key() or mbedtls_rsa_gen_key() */
+int mbedtls_pk_setup(mbedtls_pk_context* ctx, const mbedtls_pk_info_t* info)
+{
+    WOLFSSL_ENTER("mbedtls_pk_setup");
+
+    if (ctx == NULL || info == NULL || ctx->type != PK_TYPE_NONE) {
+        return MBEDTLS_ERR_PK_BAD_INPUT_DATA;
+    }
+    ctx->type = info->ctxType;
+    return 0;
+}
+
+mbedtls_pk_type_t mbedtls_pk_get_type(const mbedtls_pk_context* ctx)
+{
+    size_t i;
+
+    for (i = 0; ctx != NULL && i < XELEM_CNT(pkInfo); i++) {
+        if (pkInfo[i].ctxType == ctx->type) {
+            return pkInfo[i].type;
+        }
+    }
+    return MBEDTLS_PK_NONE;
+}
+
+#if defined(HAVE_ECC) && defined(HAVE_ECC_KEY_EXPORT) && !defined(NO_ASN)
+    #define MBED_ECP_GEN
+#endif /* HAVE_ECC && HAVE_ECC_KEY_EXPORT && !NO_ASN */
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN) && \
+        !defined(WOLFSSL_RSA_PUBLIC_ONLY) && !defined(NO_ASN)
+    #define MBED_RSA_GEN
+#endif /* !NO_RSA && WOLFSSL_KEY_GEN && !WOLFSSL_RSA_PUBLIC_ONLY && !NO_ASN */
+
+#if defined(MBED_ECP_GEN) || defined(MBED_RSA_GEN)
+/* ctx takes der, of a new key, when ret is 0. Else der is freed. */
+static int MbedPkTakeKey(mbedtls_pk_context* ctx, int ret, unsigned char* der,
+    int len)
+{
+    if (ret == 0) {
+        return wolfPSA_MbedPkSetKey(ctx, der, (size_t)len);
+    }
+    if (der != NULL) {
+        mbedtls_platform_zeroize(der, (size_t)len);
+        XFREE(der, NULL, DYNAMIC_TYPE_PRIVATE_KEY);
+    }
+    return ret;
+}
+#endif /* MBED_ECP_GEN || MBED_RSA_GEN */
+
+#ifdef MBED_ECP_GEN
+extern int wc_psa_get_ecc_curve_id(psa_key_type_t type, size_t bits);
+
+/* The PSA curve of each group. pk has Montgomery public keys only. */
+static const struct {
+    mbedtls_ecp_group_id id;
+    psa_ecc_family_t family;
+    size_t bits;
+} ecpGroups[] = {
+    { MBEDTLS_ECP_DP_SECP192R1, PSA_ECC_FAMILY_SECP_R1, 192 },
+    { MBEDTLS_ECP_DP_SECP224R1, PSA_ECC_FAMILY_SECP_R1, 224 },
+    { MBEDTLS_ECP_DP_SECP256R1, PSA_ECC_FAMILY_SECP_R1, 256 },
+    { MBEDTLS_ECP_DP_SECP384R1, PSA_ECC_FAMILY_SECP_R1, 384 },
+    { MBEDTLS_ECP_DP_SECP521R1, PSA_ECC_FAMILY_SECP_R1, 521 },
+    { MBEDTLS_ECP_DP_BP256R1, PSA_ECC_FAMILY_BRAINPOOL_P_R1, 256 },
+    { MBEDTLS_ECP_DP_BP384R1, PSA_ECC_FAMILY_BRAINPOOL_P_R1, 384 },
+    { MBEDTLS_ECP_DP_BP512R1, PSA_ECC_FAMILY_BRAINPOOL_P_R1, 512 },
+    { MBEDTLS_ECP_DP_SECP192K1, PSA_ECC_FAMILY_SECP_K1, 192 },
+    { MBEDTLS_ECP_DP_SECP224K1, PSA_ECC_FAMILY_SECP_K1, 224 },
+    { MBEDTLS_ECP_DP_SECP256K1, PSA_ECC_FAMILY_SECP_K1, 256 }
+};
+
+/* wolfCrypt's curve for the group, if the PSA engine has it */
+static int MbedEcpCurveId(mbedtls_ecp_group_id id)
+{
+    size_t i;
+
+    for (i = 0; i < XELEM_CNT(ecpGroups); i++) {
+        if (ecpGroups[i].id == id) {
+            return wc_psa_get_ecc_curve_id(
+                PSA_KEY_TYPE_ECC_KEY_PAIR(ecpGroups[i].family),
+                ecpGroups[i].bits);
+        }
+    }
+    return ECC_CURVE_INVALID;
+}
+
+/* From wolfCrypt's RNG, as PSA keys: f_rng is not used */
+int mbedtls_ecp_gen_key(mbedtls_ecp_group_id grp_id, mbedtls_ecp_keypair* key,
+    int (*f_rng)(void*, unsigned char*, size_t), void* p_rng)
+{
+    mbedtls_pk_context* ctx = (mbedtls_pk_context*)key;
+    int curveId = MbedEcpCurveId(grp_id);
+    /* Fails for a curve the PSA engine lists but wolfCrypt left out */
+    int keySz = wc_ecc_get_curve_size_from_id(curveId);
+    unsigned char* der = NULL;
+    ecc_key* ecc = NULL;
+    WC_RNG rng;
+    int len = 0;
+    int ret;
+
+    WOLFSSL_ENTER("mbedtls_ecp_gen_key");
+    (void)f_rng;
+    (void)p_rng;
+
+    if (ctx == NULL) {
+        return MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
+    }
+    if (keySz <= 0) {
+        return MBEDTLS_ERR_ECP_FEATURE_UNAVAILABLE;
+    }
+    if (!wolfPSA_CryptoReady()) {
+        return PSA_ERROR_BAD_STATE;
+    }
+    ret = wc_InitRng_ex(&rng, NULL, wolfPSA_GetDefaultDevID());
+    if (ret == 0) {
+        ecc = wc_ecc_key_new_ex(NULL, wolfPSA_GetDefaultDevID());
+        if (ecc == NULL) {
+            ret = MEMORY_E;
+        }
+        if (ret == 0) {
+            ret = wc_ecc_make_key_ex(&rng, keySz, ecc, curveId);
+        }
+        if (ret == 0) {
+            ret = wc_EccKeyDerSize(ecc, 1);
+        }
+        if (ret > 0) {
+            len = ret;
+            der = (unsigned char*)XMALLOC((size_t)len, NULL,
+                DYNAMIC_TYPE_PRIVATE_KEY);
+            ret = (der == NULL) ? MEMORY_E :
+                wc_EccKeyToDer(ecc, der, (word32)len);
+        }
+        if (ret > 0) {
+            len = ret;
+            ret = 0;
+        }
+        wc_ecc_key_free(ecc);
+        (void)wc_FreeRng(&rng);
+    }
+    return MbedPkTakeKey(ctx, (int)wc_error_to_psa_status(ret), der, len);
+}
+#else
+int mbedtls_ecp_gen_key(mbedtls_ecp_group_id grp_id, mbedtls_ecp_keypair* key,
+    int (*f_rng)(void*, unsigned char*, size_t), void* p_rng)
+{
+    (void)grp_id;
+    (void)key;
+    (void)f_rng;
+    (void)p_rng;
+    return MBEDTLS_ERR_ECP_FEATURE_UNAVAILABLE;
+}
+#endif /* MBED_ECP_GEN */
+
+size_t mbedtls_rsa_get_len(const mbedtls_rsa_context* ctx)
+{
+    return (mbedtls_pk_get_bitlen((const mbedtls_pk_context*)ctx) + 7) / 8;
+}
+
+#ifdef MBED_RSA_GEN
+/* From wolfCrypt's RNG, as PSA keys: f_rng is not used */
+int mbedtls_rsa_gen_key(mbedtls_rsa_context* ctx,
+    int (*f_rng)(void*, unsigned char*, size_t), void* p_rng,
+    unsigned int nbits, int exponent)
+{
+    mbedtls_pk_context* pk = (mbedtls_pk_context*)ctx;
+    unsigned char* der = NULL;
+    RsaKey* rsa = NULL;
+    WC_RNG rng;
+    int len = 0;
+    int ret;
+
+    WOLFSSL_ENTER("mbedtls_rsa_gen_key");
+    (void)f_rng;
+    (void)p_rng;
+
+    if (pk == NULL || exponent < 3 || (exponent & 1) == 0 ||
+            (nbits & 1) != 0 || nbits < MBEDTLS_RSA_GEN_KEY_MIN_BITS ||
+            nbits < RSA_MIN_SIZE || nbits > RSA_MAX_SIZE) {
+        return MBEDTLS_ERR_RSA_BAD_INPUT_DATA;
+    }
+    if (!wolfPSA_CryptoReady()) {
+        return PSA_ERROR_BAD_STATE;
+    }
+    ret = wc_InitRng_ex(&rng, NULL, wolfPSA_GetDefaultDevID());
+    if (ret == 0) {
+        rsa = wc_NewRsaKey(NULL, wolfPSA_GetDefaultDevID(), NULL);
+        if (rsa == NULL) {
+            ret = MEMORY_E;
+        }
+        if (ret == 0) {
+            ret = wc_MakeRsaKey(rsa, (int)nbits, exponent, &rng);
+        }
+        /* wolfCrypt rounds the size down to a multiple of 16 bits */
+        if (ret == 0 && mp_count_bits(&rsa->n) != (int)nbits) {
+            ret = WC_KEY_SIZE_E;
+        }
+        if (ret == 0) {
+            ret = wc_RsaKeyToDer(rsa, NULL, 0);
+        }
+        if (ret > 0) {
+            len = ret;
+            der = (unsigned char*)XMALLOC((size_t)len, NULL,
+                DYNAMIC_TYPE_PRIVATE_KEY);
+            ret = (der == NULL) ? MEMORY_E :
+                wc_RsaKeyToDer(rsa, der, (word32)len);
+        }
+        if (ret > 0) {
+            len = ret;
+            ret = 0;
+        }
+        if (rsa != NULL) {
+            (void)wc_DeleteRsaKey(rsa, &rsa);
+        }
+        (void)wc_FreeRng(&rng);
+    }
+    return MbedPkTakeKey(pk,
+        wolfPSA_MbedRet(ret, MBEDTLS_ERR_RSA_KEY_GEN_FAILED), der, len);
+}
+#else
+int mbedtls_rsa_gen_key(mbedtls_rsa_context* ctx,
+    int (*f_rng)(void*, unsigned char*, size_t), void* p_rng,
+    unsigned int nbits, int exponent)
+{
+    (void)ctx;
+    (void)f_rng;
+    (void)p_rng;
+    (void)nbits;
+    (void)exponent;
+    return MBEDTLS_ERR_RSA_KEY_GEN_FAILED;
+}
+#endif /* MBED_RSA_GEN */
 
 #endif /* WOLFSSL_PSA_ENGINE && WOLFPSA_MBEDTLS_COMPAT */

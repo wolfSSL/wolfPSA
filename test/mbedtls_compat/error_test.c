@@ -28,6 +28,7 @@
 #include <mbedtls/error.h>
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pk.h>
+#include <mbedtls/rsa.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509.h>
 
@@ -44,6 +45,8 @@ static const struct {
     { "high-level code", MBEDTLS_ERR_X509_INVALID_FORMAT, 500,
         "X509 - The CRT/CRL/CSR format is invalid, e.g. different type "
         "expected" },
+    { "3.6 code", MBEDTLS_ERR_RSA_KEY_GEN_FAILED, 500,
+        "RSA - Something failed during generation of a key" },
     { "unknown high-level code", -0x8880, 500, "UNKNOWN ERROR CODE (8880)" },
     { "unknown low-level code", -0x007F, 500, "UNKNOWN ERROR CODE (007F)" },
     { "unknown high and low-level code", -0x88FF, 500, UNKNOWN_BOTH },

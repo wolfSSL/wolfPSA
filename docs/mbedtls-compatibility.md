@@ -121,6 +121,11 @@ Mbed TLS 3.6, with `WOLFPSA_MBEDTLS_3`:
 - `mbedtls_ctr_drbg_*`: init, free, seed, random, reseed,
   set_prediction_resistance, on wolfCrypt's RNG
 - `mbedtls_entropy_*`: init, free, add_source, func
+- `mbedtls_pk_ec` and `mbedtls_pk_rsa`, with `mbedtls_pk_get_type`, and
+  `mbedtls_pk_setup` and `mbedtls_pk_info_from_type` for `MBEDTLS_PK_RSA`
+  and `MBEDTLS_PK_ECKEY`
+- `mbedtls_ecp_gen_key` and `mbedtls_rsa_gen_key` on a context from
+  `mbedtls_pk_setup`, and `mbedtls_rsa_get_len`
 
 TF-PSA-Crypto, in every build:
 
@@ -188,8 +193,7 @@ Mbed TLS 3.6:
 
 - The `f_rng` and `p_rng` arguments of `mbedtls_pk_parse_key` and
   `mbedtls_pk_parse_keyfile`
-- `mbedtls_pk_ec`, `mbedtls_pk_rsa`, `mbedtls_ssl_conf_curves` and the
-  other names that 4.x removed
+- `mbedtls_ssl_conf_curves` and the other names that 4.x removed
 
 ## Known differences from Mbed TLS
 
@@ -397,6 +401,21 @@ Mbed TLS 3.6:
   Mbed TLS also keeps what they gave for earlier outputs. The hash is
   SHA-512, or SHA-256 without it, through wolfCrypt's hash wrapper, so
   `mbedtls_entropy_*` are not built with `NO_HASH_WRAPPER` or without both.
+- `mbedtls_pk_ec` and `mbedtls_pk_rsa` are macros that take the context's
+  address, so the argument must be a variable or field such as `pk` or
+  `*ctx`, not a function's return value. The keys they return are opaque:
+  they work with the functions above, but have no fields such as `grp` or
+  `N`, and an `mbedtls_ecp_keypair` or `mbedtls_rsa_context` cannot be
+  declared on its own.
+- `mbedtls_ecp_gen_key` and `mbedtls_rsa_gen_key` do not call `f_rng`: the
+  keys come from wolfCrypt's RNG, as for `psa_generate_key`. EC keys are on
+  the curves the PSA engine has, other than Curve25519 and Curve448. RSA
+  keys are a multiple of 16 bits; other sizes fail with
+  `MBEDTLS_ERR_RSA_KEY_GEN_FAILED`. The smallest is the larger of wolfCrypt's
+  `RSA_MIN_SIZE` and `MBEDTLS_RSA_GEN_KEY_MIN_BITS` as the library was built.
+- `mbedtls_pk_info_from_type` returns NULL for `MBEDTLS_PK_ECKEY_DH`,
+  `MBEDTLS_PK_ECDSA` and the other types. `mbedtls_pk_get_type` returns
+  `MBEDTLS_PK_ECKEY` for EC, X25519 and X448 keys.
 
 ## Tests
 

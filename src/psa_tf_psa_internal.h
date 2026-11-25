@@ -40,6 +40,12 @@ enum {
 /* MEMORY_E becomes PSA_ERROR_INSUFFICIENT_MEMORY, other errors become err */
 WOLFSSL_LOCAL int wolfPSA_MbedRet(int wcRet, int err);
 
+#ifndef NO_ASN
+/* Takes der, a private key, as ctx's key. ctx is kept on failure. */
+WOLFSSL_LOCAL int wolfPSA_MbedPkSetKey(mbedtls_pk_context* ctx,
+    unsigned char* der, size_t derLen);
+#endif /* !NO_ASN */
+
 #if defined(MBEDTLS_FS_IO)
 /* Loads path with the errors of Mbed TLS's mbedtls_pk_load_file(). Free *buf
  * with wolfPSA_MbedFreeFile() whatever the result. */
