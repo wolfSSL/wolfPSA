@@ -117,6 +117,10 @@ Mbed TLS 3.6, with `WOLFPSA_MBEDTLS_3`:
   `MBEDTLS_SSL_MAJOR_VERSION_3`, `MBEDTLS_SSL_MINOR_VERSION_3` and
   `MBEDTLS_SSL_MINOR_VERSION_4`. As in 3.6, `MBEDTLS_DEPRECATED_WARNING`
   warns on them and `MBEDTLS_DEPRECATED_REMOVED` removes them.
+- `mbedtls_ssl_conf_rng`
+- `mbedtls_ctr_drbg_*`: init, free, seed, random, reseed,
+  set_prediction_resistance, on wolfCrypt's RNG
+- `mbedtls_entropy_*`: init, free, add_source, func
 
 TF-PSA-Crypto, in every build:
 
@@ -182,7 +186,6 @@ Other:
 
 Mbed TLS 3.6:
 
-- `mbedtls_ssl_conf_rng`, `mbedtls/ctr_drbg.h` and `mbedtls/entropy.h`
 - The `f_rng` and `p_rng` arguments of `mbedtls_pk_parse_key` and
   `mbedtls_pk_parse_keyfile`
 - `mbedtls_pk_ec`, `mbedtls_pk_rsa`, `mbedtls_ssl_conf_curves` and the
@@ -370,6 +373,30 @@ Mbed TLS 3.6:
   such as `MBEDTLS_ERR_SSL_BAD_INPUT_DATA`, keep those values, so that one
   library serves both APIs. Code that compares with the names works, but the
   numbers differ from 3.6 and `mbedtls_strerror` reports them as unknown.
+- `mbedtls_ssl_conf_rng` is accepted and ignored: wolfSSL draws its own
+  random numbers.
+- `mbedtls_ctr_drbg_*` use wolfCrypt's RNG, a hash DRBG, not an AES
+  CTR_DRBG. wolfCrypt seeds and reseeds it from its own seed source and
+  adds the entropy function's output and the custom or additional data,
+  without crediting them as entropy. So the same entropy, for example a
+  fixed one in a test, gives other output each time, where Mbed TLS gives
+  the same. `mbedtls_ctr_drbg_random` and `mbedtls_ctr_drbg_reseed` on a
+  context that is not seeded return
+  `MBEDTLS_ERR_CTR_DRBG_ENTROPY_SOURCE_FAILED`. They need wolfCrypt's hash
+  DRBG, so they are not built with `WC_NO_HASHDRBG`, or with
+  `CUSTOM_RAND_GENERATE_BLOCK` or `HAVE_INTEL_RDRAND`, which bypass it.
+- When wolfPSA needs `psa_crypto_init` first, `mbedtls_ctr_drbg_seed` and
+  `mbedtls_entropy_func` return `PSA_ERROR_BAD_STATE` before it, as the
+  parsing and TLS setup functions do.
+- `mbedtls_entropy_init` adds one source, wolfCrypt's seed source
+  `wc_GenerateSeed`, in place of Mbed TLS's platform, hardware and NV seed
+  sources. With `CUSTOM_RAND_GENERATE_BLOCK` or `WC_RNG_SEED_CB` it is
+  wolfCrypt's RNG instead. Sources from
+  `mbedtls_entropy_add_source` are polled as in Mbed TLS. Each
+  `mbedtls_entropy_func` output is a hash of what the sources gave for it;
+  Mbed TLS also keeps what they gave for earlier outputs. The hash is
+  SHA-512, or SHA-256 without it, through wolfCrypt's hash wrapper, so
+  `mbedtls_entropy_*` are not built with `NO_HASH_WRAPPER` or without both.
 
 ## Tests
 

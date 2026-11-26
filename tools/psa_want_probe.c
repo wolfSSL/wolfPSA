@@ -272,8 +272,13 @@ __WPSA_EMIT__PSA_WANT_KEY_TYPE_ML_DSA
 __WPSA_EMIT__MBEDTLS_FS_IO
 #endif
 /* The PSA RNG, wolfCrypt's DRBG. No public API in TF-PSA-Crypto 1.x. */
-#if !defined(WC_NO_RNG)
+#if !defined(WC_NO_RNG) && !defined(NO_HASH_WRAPPER) && \
+    (!defined(NO_SHA256) || defined(WOLFSSL_SHA512))
 __WPSA_EMIT__MBEDTLS_ENTROPY_C
+#endif
+/* ctr_drbg needs the Hash DRBG: a custom generator or RDRAND bypasses it */
+#if !defined(WC_NO_RNG) && !defined(WC_NO_HASHDRBG) && \
+    !defined(CUSTOM_RAND_GENERATE_BLOCK) && !defined(HAVE_INTEL_RDRAND)
 __WPSA_EMIT__MBEDTLS_CTR_DRBG_C
 #endif
 /* wolfPSA's own Base64, off with wolfCrypt's NO_CODING */
