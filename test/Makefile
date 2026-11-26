@@ -245,14 +245,15 @@ CRYPTOCB_LIB := $(CRYPTOCB_BUILD_DIR)/libwolfpsa-cryptocb.a
 VARIANT_SETTINGS := $(abspath $(USER_SETTINGS_PATH))
 VARIANT_INC := -I$(abspath $(WOLFSSL_PATH)) -I$(VARIANT_SETTINGS) \
 	-I$(WOLFPSA_ABS) -I$(WOLFPSA_ABS)/wolfpsa -I$(WOLFPSA_ABS)/src
-CRYPTOCB_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLF_CRYPTO_CB $(VARIANT_INC) \
+CRYPTOCB_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLF_CRYPTO_CB \
+	-DWOLFPSA_GCM_ONESHOT_STREAM $(VARIANT_INC) \
 	-I$(CRYPTOCB_BUILD_DIR)/include
 
 # FORCE, because only the sub-make knows whether a library source changed.
 # Without it make treats the existing archive as permanently up to date and
 # the test relinks against a stale copy of the code it is meant to guard.
 $(CRYPTOCB_LIB): FORCE
-	$(call variant_lib,$(CRYPTOCB_BUILD_DIR),-DWOLF_CRYPTO_CB)
+	$(call variant_lib,$(CRYPTOCB_BUILD_DIR),-DWOLF_CRYPTO_CB -DWOLFPSA_GCM_ONESHOT_STREAM)
 
 # Build a library variant: $(1) is its build dir, $(2) its extra defines and
 # $(3) its extra make variables
@@ -301,12 +302,31 @@ $(WANTGATED_LIB): FORCE
 		BUILD_DIR=$(WANTGATED_BUILD_DIR) \
 		USER_SETTINGS_PATH=$(abspath secure-set) \
 		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
-		PSA_WANT_WITHOUT="PSA_WANT_ALG_GCM PSA_WANT_ALG_SP800_108_COUNTER_HMAC" \
+		PSA_WANT_WITHOUT="PSA_WANT_ALG_GCM PSA_WANT_ALG_SP800_108_COUNTER_HMAC PSA_WANT_ALG_CCM_STAR_NO_TAG" \
 		CFLAGS="$(CFLAGS)" \
 		LDFLAGS="$(SANITIZE_FLAGS)"
 
 psa_want_gated_test: psa_server/psa_want_gated_test.c $(WANTGATED_LIB) FORCE
 	$(CC) $(WANTGATED_CPPFLAGS) $(CFLAGS) -o $@ $< $(WANTGATED_LIB) \
+		$(SANITIZE_FLAGS) -lpthread -lm
+
+# The same set with CCM filtered out of PSA, for the CCM helpers' stubs
+CCMGATED_BUILD_DIR := $(abspath .)/build-ccm-gated$(if $(SANITIZE_FLAGS),-asan)
+CCMGATED_LIB := $(CCMGATED_BUILD_DIR)/libwolfpsa-ccm-gated.a
+CCMGATED_CPPFLAGS := $(subst $(SECURESET_BUILD_DIR),$(CCMGATED_BUILD_DIR),$(SECURESET_CPPFLAGS))
+
+$(CCMGATED_LIB): FORCE
+	$(MAKE) -C $(WOLFPSA_PATH) $@ \
+		LIBNAME=$@ \
+		BUILD_DIR=$(CCMGATED_BUILD_DIR) \
+		USER_SETTINGS_PATH=$(abspath secure-set) \
+		WOLFSSL_PATH=$(abspath $(WOLFSSL_PATH)) \
+		PSA_WANT_WITHOUT="PSA_WANT_ALG_CCM" \
+		CFLAGS="$(CFLAGS)" \
+		LDFLAGS="$(SANITIZE_FLAGS)"
+
+psa_ccm_gated_test: psa_server/psa_ccm_gated_test.c $(CCMGATED_LIB) FORCE
+	$(CC) $(CCMGATED_CPPFLAGS) $(CFLAGS) -o $@ $< $(CCMGATED_LIB) \
 		$(SANITIZE_FLAGS) -lpthread -lm
 
 # P-256 on the direct SP path, and the same test on the generic ecc.c build
@@ -479,7 +499,8 @@ clean:
 	rm -f psa_server/*.gcda psa_server/*.gcno
 	rm -rf $(abspath .)/build-secure-set $(abspath .)/build-secure-set-asan \
 		$(abspath .)/build-want-gated $(abspath .)/build-want-gated-asan \
+		$(abspath .)/build-ccm-gated $(abspath .)/build-ccm-gated-asan \
 		$(abspath .)/build-ecc-direct $(abspath .)/build-ecc-direct-asan
 	rm -f psa_secure_set_test
-	rm -f psa_want_gated_test
+	rm -f psa_want_gated_test psa_ccm_gated_test
 	rm -f psa_ecc_direct_test psa_ecc_generic_test

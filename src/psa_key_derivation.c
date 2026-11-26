@@ -38,6 +38,9 @@
 #if defined(WOLFPSA_PBKDF2_HMAC) || defined(WOLFPSA_PBKDF2_CMAC)
     #define WOLFPSA_PBKDF2
 #endif
+#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_HMAC)
+    #define WOLFPSA_TLS12_PRF
+#endif
 
 #if defined(WOLFSSL_PSA_ENGINE)
 
@@ -233,12 +236,14 @@ static int wolfpsa_hash_type_from_alg(psa_algorithm_t alg)
     if (PSA_ALG_IS_ANY_HKDF(alg)) {
         hash_alg = PSA_ALG_HKDF_GET_HASH(alg);
     }
+#ifdef WOLFPSA_TLS12_PRF
     else if (PSA_ALG_IS_TLS12_PRF(alg)) {
         hash_alg = PSA_ALG_TLS12_PRF_GET_HASH(alg);
     }
     else if (PSA_ALG_IS_TLS12_PSK_TO_MS(alg)) {
         hash_alg = PSA_ALG_TLS12_PSK_TO_MS_GET_HASH(alg);
     }
+#endif
     else if (PSA_ALG_IS_PBKDF2_HMAC(alg)) {
         hash_alg = PSA_ALG_PBKDF2_HMAC_GET_HASH(alg);
     }
@@ -266,7 +271,7 @@ static int wolfpsa_hash_type_from_alg(psa_algorithm_t alg)
     }
 }
 
-#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_HMAC)
+#ifdef WOLFPSA_TLS12_PRF
 /* wc_PRF_TLS wants a wc_MACAlgorithm id and promotes ids below sha256_mac to
  * SHA-256, so only map SHA-256/384/512; others return no_mac (caller rejects). */
 static int wolfpsa_prf_mac_from_alg(psa_algorithm_t alg)
@@ -428,6 +433,7 @@ static psa_status_t wolfpsa_kdf_validate_step(wolfpsa_kdf_ctx_t *ctx,
 
         return PSA_ERROR_INVALID_ARGUMENT;
     }
+#ifdef WOLFPSA_TLS12_PRF
     else if (PSA_ALG_IS_TLS12_PRF(ctx->alg)) {
         if (step != PSA_KEY_DERIVATION_INPUT_SECRET &&
             step != PSA_KEY_DERIVATION_INPUT_LABEL &&
@@ -460,6 +466,7 @@ static psa_status_t wolfpsa_kdf_validate_step(wolfpsa_kdf_ctx_t *ctx,
         }
         return PSA_SUCCESS;
     }
+#endif
 #ifdef WOLFPSA_PBKDF2
     else if (PSA_ALG_IS_PBKDF2(ctx->alg)) {
         if (step != PSA_KEY_DERIVATION_INPUT_PASSWORD &&
@@ -572,7 +579,7 @@ psa_status_t psa_key_derivation_setup(psa_key_derivation_operation_t *operation,
         return PSA_ERROR_NOT_SUPPORTED;
     }
 #endif
-#if !defined(WOLFSSL_HAVE_PRF) || defined(NO_HMAC)
+#ifndef WOLFPSA_TLS12_PRF
     if (PSA_ALG_IS_TLS12_PRF(kdf_alg) || PSA_ALG_IS_TLS12_PSK_TO_MS(kdf_alg)) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
@@ -1321,16 +1328,11 @@ static psa_status_t wolfpsa_kdf_hkdf_stream(wolfpsa_kdf_ctx_t *ctx,
 }
 #endif
 
+#ifdef WOLFPSA_TLS12_PRF
 static psa_status_t wolfpsa_kdf_tls12_prf(wolfpsa_kdf_ctx_t *ctx,
                                           uint8_t *output,
                                           size_t output_length)
 {
-#if !defined(WOLFSSL_HAVE_PRF) || defined(NO_HMAC)
-    (void)ctx;
-    (void)output;
-    (void)output_length;
-    return PSA_ERROR_NOT_SUPPORTED;
-#else
     int hash_type = wolfpsa_hash_type_from_alg(ctx->alg);
     int prf_mac = wolfpsa_prf_mac_from_alg(ctx->alg);
     int ret;
@@ -1354,19 +1356,12 @@ static psa_status_t wolfpsa_kdf_tls12_prf(wolfpsa_kdf_ctx_t *ctx,
         return wc_error_to_psa_status(ret);
     }
     return PSA_SUCCESS;
-#endif
 }
 
 static psa_status_t wolfpsa_kdf_tls12_psk_to_ms(wolfpsa_kdf_ctx_t *ctx,
                                                 uint8_t *output,
                                                 size_t output_length)
 {
-#if !defined(WOLFSSL_HAVE_PRF) || defined(NO_HMAC)
-    (void)ctx;
-    (void)output;
-    (void)output_length;
-    return PSA_ERROR_NOT_SUPPORTED;
-#else
     int hash_type = wolfpsa_hash_type_from_alg(ctx->alg);
     int prf_mac = wolfpsa_prf_mac_from_alg(ctx->alg);
     size_t other_secret_length;
@@ -1437,8 +1432,8 @@ static psa_status_t wolfpsa_kdf_tls12_psk_to_ms(wolfpsa_kdf_ctx_t *ctx,
     wc_ForceZero(premaster, premaster_len);
     XFREE(premaster, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     return status;
-#endif
 }
+#endif /* WOLFPSA_TLS12_PRF */
 
 #ifdef WOLFPSA_PBKDF2
 static psa_status_t wolfpsa_kdf_pbkdf2(wolfpsa_kdf_ctx_t *ctx,
@@ -1987,12 +1982,14 @@ static psa_status_t wolfpsa_kdf_compute_output(wolfpsa_kdf_ctx_t *ctx,
     if (PSA_ALG_IS_ANY_HKDF(ctx->alg)) {
         return wolfpsa_kdf_hkdf(ctx, output, output_length);
     }
+#ifdef WOLFPSA_TLS12_PRF
     if (PSA_ALG_IS_TLS12_PRF(ctx->alg)) {
         return wolfpsa_kdf_tls12_prf(ctx, output, output_length);
     }
     if (PSA_ALG_IS_TLS12_PSK_TO_MS(ctx->alg)) {
         return wolfpsa_kdf_tls12_psk_to_ms(ctx, output, output_length);
     }
+#endif
 #ifdef WOLFPSA_PBKDF2
     if (PSA_ALG_IS_PBKDF2(ctx->alg)) {
         return wolfpsa_kdf_pbkdf2(ctx, output, output_length);
@@ -2052,6 +2049,7 @@ static psa_status_t wolfpsa_kdf_output_bytes(psa_key_derivation_operation_t *
             }
         }
     }
+#ifdef WOLFPSA_TLS12_PRF
     else if (PSA_ALG_IS_TLS12_PRF(ctx->alg)) {
         if ((ctx->steps_set & WOLFPSA_KDF_STEP_SECRET) == 0 ||
             (ctx->steps_set & WOLFPSA_KDF_STEP_LABEL) == 0 ||
@@ -2065,6 +2063,7 @@ static psa_status_t wolfpsa_kdf_output_bytes(psa_key_derivation_operation_t *
             return PSA_ERROR_BAD_STATE;
         }
     }
+#endif
 #ifdef WOLFPSA_PBKDF2
     else if (PSA_ALG_IS_PBKDF2(ctx->alg)) {
         if ((ctx->steps_set & WOLFPSA_KDF_STEP_PASSWORD) == 0 ||

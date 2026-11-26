@@ -108,11 +108,14 @@ test/build-track-asan
 compile_commands.json
 test/psa_secure_set_test
 test/psa_want_gated_test
+test/psa_ccm_gated_test
 test/psa_ecc_direct_test
 test/psa_ecc_generic_test
 test/build-secure-set
 test/build-secure-set-asan
 test/build-want-gated
 test/build-want-gated-asan
+test/build-ccm-gated
+test/build-ccm-gated-asan
 test/build-ecc-direct
 test/build-ecc-direct-asan

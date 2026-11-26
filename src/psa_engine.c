@@ -106,67 +106,51 @@ int wolfPSA_UnRegisterCryptoCb(int devId)
 #endif
 }
 
-/* wolfCrypt error code to PSA status code conversion */
+/* wolfCrypt error code to PSA status code conversion. A table, not a switch:
+ * the codes are sparse, and GCC -Os builds a 336-byte jump table for them. */
+static const struct {
+    short wc;
+    short psa;
+} wolfpsa_wc_errors[] = {
+    { NOT_COMPILED_IN,    PSA_ERROR_NOT_SUPPORTED },
+    { BAD_FUNC_ARG,       PSA_ERROR_INVALID_ARGUMENT },
+    { ECC_BAD_ARG_E,      PSA_ERROR_INVALID_ARGUMENT },
+    { ECC_CURVE_OID_E,    PSA_ERROR_INVALID_ARGUMENT },
+    { ECC_PRIV_KEY_E,     PSA_ERROR_INVALID_ARGUMENT },
+    { ECC_OUT_OF_RANGE_E, PSA_ERROR_INVALID_ARGUMENT },
+    { ECC_PRIVATEONLY_E,  PSA_ERROR_INVALID_ARGUMENT },
+    { BUFFER_E,           PSA_ERROR_BUFFER_TOO_SMALL },
+    { RSA_BUFFER_E,       PSA_ERROR_BUFFER_TOO_SMALL },
+    { MEMORY_E,           PSA_ERROR_INSUFFICIENT_MEMORY },
+    { WC_HW_E,            PSA_ERROR_HARDWARE_FAILURE },
+    { SIG_VERIFY_E,       PSA_ERROR_INVALID_SIGNATURE },
+    { AES_GCM_AUTH_E,     PSA_ERROR_INVALID_SIGNATURE },
+    { AES_CCM_AUTH_E,     PSA_ERROR_INVALID_SIGNATURE },
+    { AES_EAX_AUTH_E,     PSA_ERROR_INVALID_SIGNATURE },
+    { AES_SIV_AUTH_E,     PSA_ERROR_INVALID_SIGNATURE },
+    { MAC_CMP_FAILED_E,   PSA_ERROR_INVALID_SIGNATURE },
+    { RNG_FAILURE_E,      PSA_ERROR_INSUFFICIENT_ENTROPY },
+    { BAD_PADDING_E,      PSA_ERROR_INVALID_PADDING },
+    /* wc_RsaPrivateDecrypt() reports a failed unpad this way; the
+     * verification paths translate it to INVALID_SIGNATURE themselves. */
+    { RSA_PAD_E,          PSA_ERROR_INVALID_PADDING },
+    { BAD_STATE_E,        PSA_ERROR_BAD_STATE }
+};
+
 psa_status_t wc_error_to_psa_status(int ret)
 {
-    psa_status_t status;
+    size_t i;
 
     if (ret == 0) {
         return PSA_SUCCESS;
     }
-
-    switch (ret) {
-        case NOT_COMPILED_IN:
-            status = PSA_ERROR_NOT_SUPPORTED;
-            break;
-        case BAD_FUNC_ARG:
-            status = PSA_ERROR_INVALID_ARGUMENT;
-            break;
-        case ECC_BAD_ARG_E:
-        case ECC_CURVE_OID_E:
-        case ECC_PRIV_KEY_E:
-        case ECC_OUT_OF_RANGE_E:
-        case ECC_PRIVATEONLY_E:
-            status = PSA_ERROR_INVALID_ARGUMENT;
-            break;
-        case BUFFER_E:
-        case RSA_BUFFER_E:
-            status = PSA_ERROR_BUFFER_TOO_SMALL;
-            break;
-        case MEMORY_E:
-            status = PSA_ERROR_INSUFFICIENT_MEMORY;
-            break;
-        case WC_HW_E:
-            status = PSA_ERROR_HARDWARE_FAILURE;
-            break;
-        case SIG_VERIFY_E:
-            status = PSA_ERROR_INVALID_SIGNATURE;
-            break;
-        case AES_GCM_AUTH_E:
-        case AES_CCM_AUTH_E:
-        case AES_EAX_AUTH_E:
-        case AES_SIV_AUTH_E:
-        case MAC_CMP_FAILED_E:
-            status = PSA_ERROR_INVALID_SIGNATURE;
-            break;
-        case RNG_FAILURE_E:
-            status = PSA_ERROR_INSUFFICIENT_ENTROPY;
-            break;
-        case BAD_PADDING_E:
-        /* wc_RsaPrivateDecrypt() reports a failed unpad this way; the
-         * verification paths translate it to INVALID_SIGNATURE themselves. */
-        case RSA_PAD_E:
-            status = PSA_ERROR_INVALID_PADDING;
-            break;
-        case BAD_STATE_E:
-            status = PSA_ERROR_BAD_STATE;
-            break;
-        default:
-            status = PSA_ERROR_GENERIC_ERROR;
-            break;
+    for (i = 0; i < sizeof(wolfpsa_wc_errors) / sizeof(wolfpsa_wc_errors[0]);
+         i++) {
+        if (wolfpsa_wc_errors[i].wc == ret) {
+            return (psa_status_t)wolfpsa_wc_errors[i].psa;
+        }
     }
-
-    return status;
+    return PSA_ERROR_GENERIC_ERROR;
 }
 
 #endif /* WOLFSSL_PSA_ENGINE */

@@ -57,7 +57,8 @@ WANT_RE = re.compile(r"PSA_WANT_[A-Z0-9_]+")
 # TF-PSA-Crypto options, defined without a value as in TF-PSA
 OPTION_RE = re.compile(r"MBEDTLS_[A-Z0-9_]+")
 # Algorithms whose wolfPSA code follows PSA_WANT under WOLFPSA_WANT_GATED
-GATED = ("PSA_WANT_ALG_CCM", "PSA_WANT_ALG_CHACHA20_POLY1305", "PSA_WANT_ALG_GCM",
+GATED = ("PSA_WANT_ALG_CCM", "PSA_WANT_ALG_CCM_STAR_NO_TAG",
+         "PSA_WANT_ALG_CHACHA20_POLY1305", "PSA_WANT_ALG_GCM",
          "PSA_WANT_ALG_SP800_108_COUNTER_CMAC",
          "PSA_WANT_ALG_SP800_108_COUNTER_HMAC")
 
