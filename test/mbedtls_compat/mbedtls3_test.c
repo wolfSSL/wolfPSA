@@ -633,42 +633,94 @@ static int EcpGenKeyAgain(void)
 
 static int allocs;
 static int failAt;
+static wolfSSL_Malloc_cb origMalloc;
+static wolfSSL_Free_cb origFree;
+static wolfSSL_Realloc_cb origRealloc;
 
 static void* FailAtMalloc(size_t size)
 {
     return (++allocs == failAt) ? NULL : malloc(size);
 }
 
+/* Counts wolfSSL's allocations, failing allocation number fail (0: none) */
+static void AllocsHook(int fail)
+{
+    (void)wolfSSL_GetAllocators(&origMalloc, &origFree, &origRealloc);
+    (void)wolfSSL_SetAllocators(FailAtMalloc, origFree, origRealloc);
+    allocs = 0;
+    failAt = fail;
+}
+
+static void AllocsUnhook(void)
+{
+    (void)wolfSSL_SetAllocators(origMalloc, origFree, origRealloc);
+}
+
+static int EcpGenP256(mbedtls_pk_context* pk)
+{
+    return mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(*pk),
+        TestRng, NULL);
+}
+
+static int RsaGen1024(mbedtls_pk_context* pk)
+{
+    return mbedtls_rsa_gen_key(mbedtls_pk_rsa(*pk), TestRng, NULL, 1024,
+        65537);
+}
+
+static const struct {
+    mbedtls_pk_type_t type;
+    int (*gen)(mbedtls_pk_context* pk);
+} gens[] = {
+    { MBEDTLS_PK_ECKEY, EcpGenP256 },
+    { MBEDTLS_PK_RSA, RsaGen1024 }
+};
+
+/* Before psa_crypto_init(): a key, or no key in builds that need init */
+static int GenKeyNotReady(void)
+{
+    mbedtls_pk_context pk;
+    size_t i;
+    int ret;
+    int ok = 1;
+
+    for (i = 0; ok && i < ARRAY_LEN(gens); i++) {
+        ok = PkSetupEmpty(&pk, gens[i].type);
+        ret = ok ? gens[i].gen(&pk) : -1;
+        ok = (ret == 0 && mbedtls_pk_get_bitlen(&pk) > 0) ||
+            (ret == PSA_ERROR_BAD_STATE && mbedtls_pk_get_bitlen(&pk) == 0);
+        mbedtls_pk_free(&pk);
+    }
+    return ok;
+}
+
 /* Each allocation in turn fails, keeping the key before */
-static int EcpGenKeyFailEachAlloc(void)
+static int GenKeyFailEachAlloc(void)
 {
     mbedtls_pk_context pk;
     const unsigned char* der;
-    wolfSSL_Malloc_cb mf;
-    wolfSSL_Free_cb ff;
-    wolfSSL_Realloc_cb rf;
-    int ret = -1;
-    int ok;
+    size_t i;
+    int fail;
+    int ret;
+    int ok = 1;
 
-    ok = PkSetupEmpty(&pk, MBEDTLS_PK_ECKEY) &&
-        mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(pk),
-            TestRng, NULL) == 0;
-    der = pk.der;
-    (void)wolfSSL_GetAllocators(&mf, &ff, &rf);
-    (void)wolfSSL_SetAllocators(FailAtMalloc, ff, rf);
-    for (failAt = 1; ok && ret != 0 && failAt < 200; failAt++) {
-        allocs = 0;
-        ret = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP384R1, mbedtls_pk_ec(pk),
-            TestRng, NULL);
-        ok = ret == 0 || (ret == MBEDTLS_ERR_ECP_ALLOC_FAILED &&
-            pk.der == der && mbedtls_pk_get_bitlen(&pk) == 256);
-        if (!ok) {
-            printf("allocation %d failed: returned %d\n", failAt, ret);
+    for (i = 0; ok && i < ARRAY_LEN(gens); i++) {
+        ok = PkSetupEmpty(&pk, gens[i].type) && gens[i].gen(&pk) == 0;
+        der = pk.der;
+        for (fail = 1, ret = -1; ok && ret != 0 && fail < 200; fail++) {
+            AllocsHook(fail);
+            ret = gens[i].gen(&pk);
+            AllocsUnhook();
+            ok = ret == 0 ||
+                (ret == PSA_ERROR_INSUFFICIENT_MEMORY && pk.der == der);
+            if (!ok) {
+                printf("type %d, allocation %d failed: returned %d\n",
+                    (int)gens[i].type, fail, ret);
+            }
         }
+        ok = ok && ret == 0 && pk.der != der;
+        mbedtls_pk_free(&pk);
     }
-    (void)wolfSSL_SetAllocators(mf, ff, rf);
-    ok = ok && ret == 0 && mbedtls_pk_get_bitlen(&pk) == 384;
-    mbedtls_pk_free(&pk);
     return ok;
 }
 
@@ -688,6 +740,7 @@ static int RsaGenKey(void)
     mbedtls_pk_context pk;
     const unsigned char* der;
     size_t i;
+    int ret;
     int ok;
 
     ok = PkSetupEmpty(&pk, MBEDTLS_PK_RSA) && !PkCanSign(&pk);
@@ -703,10 +756,12 @@ static int RsaGenKey(void)
         mbedtls_pk_get_type(&pk) == MBEDTLS_PK_RSA &&
         mbedtls_pk_get_bitlen(&pk) == 2048 &&
         mbedtls_rsa_get_len(mbedtls_pk_rsa(pk)) == 256 && PkCanSign(&pk);
-    /* Not a multiple of 16 bits */
+    /* Not a multiple of 16 bits, refused before generating */
     der = pk.der;
-    ok = ok && mbedtls_rsa_gen_key(mbedtls_pk_rsa(pk), TestRng, NULL, 2050,
-            65537) == MBEDTLS_ERR_RSA_KEY_GEN_FAILED &&
+    AllocsHook(0);
+    ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(pk), TestRng, NULL, 2050, 65537);
+    AllocsUnhook();
+    ok = ok && ret == MBEDTLS_ERR_RSA_KEY_GEN_FAILED && allocs == 0 &&
         pk.der == der && mbedtls_pk_get_bitlen(&pk) == 2048;
     mbedtls_pk_free(&pk);
     return ok;
@@ -744,27 +799,33 @@ static const struct {
     { "pk_ec and pk_rsa of parsed keys", PkParsedKeys },
     { "ecp_gen_key", EcpGenKey },
     { "ecp_gen_key again and errors", EcpGenKeyAgain },
-    { "ecp_gen_key with each allocation failing", EcpGenKeyFailEachAlloc },
+    { "ecp_gen_key and rsa_gen_key with each allocation failing",
+        GenKeyFailEachAlloc },
     { "rsa_gen_key", RsaGenKey }
 };
+
+/* 1 for a failure */
+static int Run(const char* name, int (*test)(void))
+{
+    int ok = test();
+
+    printf("%s: %s\n", ok ? "PASS" : "FAIL", name);
+    return !ok;
+}
 
 int main(void)
 {
     size_t i;
-    int fails = 0;
+    int fails;
 
+    fails = Run("ecp_gen_key and rsa_gen_key before psa_crypto_init",
+        GenKeyNotReady);
     if (psa_crypto_init() != PSA_SUCCESS) {
         printf("FAIL: psa_crypto_init\n");
         return 1;
     }
     for (i = 0; i < ARRAY_LEN(cases); i++) {
-        if (cases[i].test()) {
-            printf("PASS: %s\n", cases[i].name);
-        }
-        else {
-            printf("FAIL: %s\n", cases[i].name);
-            fails++;
-        }
+        fails += Run(cases[i].name, cases[i].test);
     }
     mbedtls_psa_crypto_free();
     return (fails == 0) ? 0 : 1;

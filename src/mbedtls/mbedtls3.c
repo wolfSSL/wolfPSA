@@ -476,11 +476,17 @@ struct mbedtls_pk_info_t {
 
 /* The first entry of each pk type is its info */
 static const mbedtls_pk_info_t pkInfo[] = {
+#ifndef NO_RSA
     { MBEDTLS_PK_RSA, PK_TYPE_RSA },
     { MBEDTLS_PK_RSA, PK_TYPE_RSA_PUBLIC },
+#endif /* !NO_RSA */
+#ifdef HAVE_ECC
     { MBEDTLS_PK_ECKEY, PK_TYPE_ECC },
     { MBEDTLS_PK_ECKEY, PK_TYPE_ECC_PUBLIC },
+#endif /* HAVE_ECC */
+#if defined(HAVE_CURVE25519) || defined(HAVE_CURVE448)
     { MBEDTLS_PK_ECKEY, PK_TYPE_MONTGOMERY_PUBLIC }
+#endif /* HAVE_CURVE25519 || HAVE_CURVE448 */
 };
 
 const mbedtls_pk_info_t* mbedtls_pk_info_from_type(mbedtls_pk_type_t pk_type)
@@ -674,6 +680,10 @@ int mbedtls_rsa_gen_key(mbedtls_rsa_context* ctx,
             nbits < RSA_MIN_SIZE || nbits > RSA_MAX_SIZE) {
         return MBEDTLS_ERR_RSA_BAD_INPUT_DATA;
     }
+    /* wolfCrypt rounds other sizes down to a multiple of 16 bits */
+    if (nbits % 16 != 0) {
+        return MBEDTLS_ERR_RSA_KEY_GEN_FAILED;
+    }
     if (!wolfPSA_CryptoReady()) {
         return PSA_ERROR_BAD_STATE;
     }
@@ -685,10 +695,6 @@ int mbedtls_rsa_gen_key(mbedtls_rsa_context* ctx,
         }
         if (ret == 0) {
             ret = wc_MakeRsaKey(rsa, (int)nbits, exponent, &rng);
-        }
-        /* wolfCrypt rounds the size down to a multiple of 16 bits */
-        if (ret == 0 && mp_count_bits(&rsa->n) != (int)nbits) {
-            ret = WC_KEY_SIZE_E;
         }
         if (ret == 0) {
             ret = wc_RsaKeyToDer(rsa, NULL, 0);

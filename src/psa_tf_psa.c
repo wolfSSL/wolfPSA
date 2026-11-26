@@ -185,6 +185,7 @@ static int PkCheckKey(mbedtls_pk_context* ctx)
     return ret;
 }
 
+#ifdef WOLFPSA_MBEDTLS_COMPAT
 int wolfPSA_MbedPkSetKey(mbedtls_pk_context* ctx, unsigned char* der,
     size_t derLen)
 {
@@ -204,6 +205,7 @@ int wolfPSA_MbedPkSetKey(mbedtls_pk_context* ctx, unsigned char* der,
     }
     return ret;
 }
+#endif /* WOLFPSA_MBEDTLS_COMPAT */
 
 #ifndef NO_RSA
 /* A SubjectPublicKeyInfo of id-RSASSA-PSS, which Mbed TLS does not parse */

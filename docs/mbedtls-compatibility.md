@@ -408,11 +408,15 @@ Mbed TLS 3.6:
   `N`, and an `mbedtls_ecp_keypair` or `mbedtls_rsa_context` cannot be
   declared on its own.
 - `mbedtls_ecp_gen_key` and `mbedtls_rsa_gen_key` do not call `f_rng`: the
-  keys come from wolfCrypt's RNG, as for `psa_generate_key`. EC keys are on
-  the curves the PSA engine has, other than Curve25519 and Curve448. RSA
-  keys are a multiple of 16 bits; other sizes fail with
-  `MBEDTLS_ERR_RSA_KEY_GEN_FAILED`. The smallest is the larger of wolfCrypt's
-  `RSA_MIN_SIZE` and `MBEDTLS_RSA_GEN_KEY_MIN_BITS` as the library was built.
+  keys come from wolfCrypt's RNG, as for `psa_generate_key`. In builds that
+  need `psa_crypto_init`, with memory tracking, crypto callbacks or hardware
+  crypto, they return `PSA_ERROR_BAD_STATE` before it. EC keys are on the
+  curves the PSA engine has, other than Curve25519 and Curve448.
+- RSA keys are from the larger of wolfCrypt's `RSA_MIN_SIZE` and
+  `MBEDTLS_RSA_GEN_KEY_MIN_BITS`, as the library was built, to wolfCrypt's
+  `RSA_MAX_SIZE`. Odd sizes and sizes outside that range fail with
+  `MBEDTLS_ERR_RSA_BAD_INPUT_DATA`. Even sizes that are not a multiple of 16
+  bits fail with `MBEDTLS_ERR_RSA_KEY_GEN_FAILED`.
 - `mbedtls_pk_info_from_type` returns NULL for `MBEDTLS_PK_ECKEY_DH`,
   `MBEDTLS_PK_ECDSA` and the other types. `mbedtls_pk_get_type` returns
   `MBEDTLS_PK_ECKEY` for EC, X25519 and X448 keys.
