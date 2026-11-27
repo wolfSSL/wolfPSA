@@ -185,6 +185,28 @@ static int PkCheckKey(mbedtls_pk_context* ctx)
     return ret;
 }
 
+#ifdef WOLFPSA_MBEDTLS_COMPAT
+int wolfPSA_MbedPkSetKey(mbedtls_pk_context* ctx, unsigned char* der,
+    size_t derLen)
+{
+    mbedtls_pk_context key;
+    int ret;
+
+    mbedtls_pk_init(&key);
+    key.der = der;
+    key.der_len = derLen;
+    ret = PkCheckKey(&key);
+    if (ret == 0) {
+        mbedtls_pk_free(ctx);
+        *ctx = key;
+    }
+    else {
+        mbedtls_pk_free(&key);
+    }
+    return ret;
+}
+#endif /* WOLFPSA_MBEDTLS_COMPAT */
+
 #ifndef NO_RSA
 /* A SubjectPublicKeyInfo of id-RSASSA-PSS, which Mbed TLS does not parse */
 static int PkRsaIsPss(const byte* der, word32 len)
@@ -522,7 +544,8 @@ int mbedtls_pk_can_do_psa(const mbedtls_pk_context* pk, psa_algorithm_t alg,
 {
     size_t i;
 
-    if (pk == NULL) {
+    /* A context from mbedtls_pk_setup() has a type but no key yet */
+    if (pk == NULL || (pk->der == NULL && pk->pub == NULL)) {
         return 0;
     }
     /* A public key can also do ECDH with a KDF */

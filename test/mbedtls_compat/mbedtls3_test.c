@@ -22,13 +22,44 @@
 /* The Mbed TLS 3.6 API, built with WOLFPSA_MBEDTLS_3 */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <mbedtls/ctr_drbg.h>
+#include <mbedtls/ecp.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/error.h>
+#include <mbedtls/pk.h>
+#include <mbedtls/rsa.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/version.h>
+#include <mbedtls/x509_crt.h>
+#include <wolfssl/wolfcrypt/settings.h>
+#include <wolfssl/wolfcrypt/memory.h>
+
+#define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+
+/* An application's RNG. Key generation does not use it. */
+static int TestRng(void* p_rng, unsigned char* output, size_t len)
+{
+    (void)p_rng;
+    return (psa_generate_random(output, len) == PSA_SUCCESS) ? 0 : -1;
+}
+
+static int PkSetupEmpty(mbedtls_pk_context* pk, mbedtls_pk_type_t type)
+{
+    mbedtls_pk_init(pk);
+    return mbedtls_pk_setup(pk, mbedtls_pk_info_from_type(type)) == 0;
+}
+
+static int PkCanSign(const mbedtls_pk_context* pk)
+{
+    psa_algorithm_t alg = (mbedtls_pk_get_type(pk) == MBEDTLS_PK_RSA) ?
+        PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256) :
+        MBEDTLS_PK_ALG_ECDSA(PSA_ALG_SHA_256);
+
+    return mbedtls_pk_can_do_psa(pk, alg, PSA_KEY_USAGE_SIGN_HASH);
+}
 
 static int Version(void)
 {
@@ -438,6 +469,304 @@ static int ConfRng(void)
 #endif /* MBEDTLS_ENTROPY_C */
 #endif /* MBEDTLS_CTR_DRBG_C */
 
+/* The types that set up a context, as their keys' type */
+static int PkInfo(void)
+{
+    static const struct {
+        mbedtls_pk_type_t type;
+        int has;
+    } types[] = {
+        { MBEDTLS_PK_NONE, 0 },
+        { MBEDTLS_PK_RSA, 1 },
+        { MBEDTLS_PK_ECKEY, 1 },
+        { MBEDTLS_PK_ECKEY_DH, 0 },
+        { MBEDTLS_PK_ECDSA, 0 },
+        { MBEDTLS_PK_RSA_ALT, 0 },
+        { MBEDTLS_PK_RSASSA_PSS, 0 },
+        { MBEDTLS_PK_OPAQUE, 0 }
+    };
+    mbedtls_pk_context pk;
+    size_t i;
+    int ok = 1;
+
+    for (i = 0; ok && i < ARRAY_LEN(types); i++) {
+        if (types[i].has) {
+            ok = PkSetupEmpty(&pk, types[i].type) &&
+                mbedtls_pk_get_type(&pk) == types[i].type;
+            mbedtls_pk_free(&pk);
+        }
+        else {
+            ok = mbedtls_pk_info_from_type(types[i].type) == NULL;
+        }
+    }
+    return ok;
+}
+
+/* Set up once, and without a key until one is generated */
+static int PkSetup(void)
+{
+    mbedtls_pk_context pk;
+    int ok;
+
+    mbedtls_pk_init(&pk);
+    ok = mbedtls_pk_get_type(&pk) == MBEDTLS_PK_NONE &&
+        mbedtls_pk_ec(pk) == NULL && mbedtls_pk_rsa(pk) == NULL &&
+        mbedtls_pk_setup(&pk, NULL) == MBEDTLS_ERR_PK_BAD_INPUT_DATA &&
+        mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY)) ==
+            0 &&
+        mbedtls_pk_ec(pk) != NULL && mbedtls_pk_rsa(pk) == NULL &&
+        mbedtls_pk_get_bitlen(&pk) == 0 && !PkCanSign(&pk) &&
+        mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA)) ==
+            MBEDTLS_ERR_PK_BAD_INPUT_DATA &&
+        mbedtls_pk_parse_public_keyfile(&pk, "ec_256_pub.der") ==
+            MBEDTLS_ERR_PK_BAD_INPUT_DATA &&
+        mbedtls_pk_get_type(&pk) == MBEDTLS_PK_ECKEY;
+    mbedtls_pk_free(&pk);
+    return ok && mbedtls_pk_get_type(&pk) == MBEDTLS_PK_NONE &&
+        mbedtls_pk_get_type(NULL) == MBEDTLS_PK_NONE;
+}
+
+/* The key of a peer certificate or a public key, through a const context */
+static int PkParsedKeys(void)
+{
+    static const struct {
+        const char* file;
+        int cert;
+        mbedtls_pk_type_t type;
+        size_t rsaLen;
+    } keys[] = {
+        { "server2.crt", 1, MBEDTLS_PK_RSA, 256 },
+        { "server5.crt", 1, MBEDTLS_PK_ECKEY, 0 },
+        { "rsa_pkcs8_2048_public.der", 0, MBEDTLS_PK_RSA, 256 },
+        { "ec_256_pub.der", 0, MBEDTLS_PK_ECKEY, 0 },
+        { "ec_x25519_pub.der", 0, MBEDTLS_PK_ECKEY, 0 }
+    };
+    mbedtls_x509_crt crt;
+    mbedtls_pk_context key;
+    const mbedtls_pk_context* pk;
+    size_t i;
+    int ok = 1;
+
+    for (i = 0; ok && i < ARRAY_LEN(keys); i++) {
+        mbedtls_x509_crt_init(&crt);
+        mbedtls_pk_init(&key);
+        if (keys[i].cert) {
+            ok = mbedtls_x509_crt_parse_file(&crt, keys[i].file) == 0;
+            pk = &crt.pk;
+        }
+        else {
+            ok = mbedtls_pk_parse_public_keyfile(&key, keys[i].file) == 0;
+            pk = &key;
+        }
+        ok = ok && mbedtls_pk_get_type(pk) == keys[i].type &&
+            (mbedtls_pk_ec(*pk) != NULL) ==
+                (keys[i].type == MBEDTLS_PK_ECKEY) &&
+            (mbedtls_pk_rsa(*pk) != NULL) == (keys[i].type == MBEDTLS_PK_RSA) &&
+            mbedtls_rsa_get_len(mbedtls_pk_rsa(*pk)) == keys[i].rsaLen;
+        mbedtls_pk_free(&key);
+        mbedtls_x509_crt_free(&crt);
+    }
+    return ok;
+}
+
+/* As for a self-signed certificate */
+static int EcpGenKey(void)
+{
+    static const struct {
+        mbedtls_ecp_group_id id;
+        size_t bits;
+    } groups[] = {
+        { MBEDTLS_ECP_DP_SECP256R1, 256 },
+        { MBEDTLS_ECP_DP_SECP384R1, 384 },
+        { MBEDTLS_ECP_DP_SECP521R1, 521 }
+    };
+    mbedtls_pk_context pk;
+    size_t i;
+    int ok = 1;
+
+    for (i = 0; ok && i < ARRAY_LEN(groups); i++) {
+        ok = PkSetupEmpty(&pk, MBEDTLS_PK_ECKEY) &&
+            mbedtls_ecp_gen_key(groups[i].id, mbedtls_pk_ec(pk), TestRng,
+                NULL) == 0 &&
+            mbedtls_pk_get_type(&pk) == MBEDTLS_PK_ECKEY &&
+            mbedtls_pk_get_bitlen(&pk) == groups[i].bits && PkCanSign(&pk);
+        mbedtls_pk_free(&pk);
+    }
+    return ok;
+}
+
+/* A new key replaces the one before. A failure keeps it. */
+static int EcpGenKeyAgain(void)
+{
+    static const mbedtls_ecp_group_id unavailable[] = {
+        MBEDTLS_ECP_DP_NONE, MBEDTLS_ECP_DP_CURVE25519, MBEDTLS_ECP_DP_CURVE448
+    };
+    mbedtls_pk_context pk;
+    unsigned char first[256];
+    size_t firstLen = 0;
+    const unsigned char* der = NULL;
+    size_t i;
+    int ok;
+
+    ok = PkSetupEmpty(&pk, MBEDTLS_PK_ECKEY) &&
+        mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(pk),
+            TestRng, NULL) == 0 &&
+        pk.der_len <= sizeof(first);
+    if (ok) {
+        firstLen = pk.der_len;
+        memcpy(first, pk.der, firstLen);
+    }
+    ok = ok && mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1,
+            mbedtls_pk_ec(pk), TestRng, NULL) == 0 &&
+        (pk.der_len != firstLen || memcmp(pk.der, first, firstLen) != 0);
+    der = pk.der;
+    for (i = 0; ok && i < ARRAY_LEN(unavailable); i++) {
+        ok = mbedtls_ecp_gen_key(unavailable[i], mbedtls_pk_ec(pk), TestRng,
+            NULL) == MBEDTLS_ERR_ECP_FEATURE_UNAVAILABLE;
+    }
+    ok = ok && mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, NULL, TestRng,
+            NULL) == MBEDTLS_ERR_ECP_BAD_INPUT_DATA &&
+        pk.der == der && mbedtls_pk_get_bitlen(&pk) == 256;
+    mbedtls_pk_free(&pk);
+    return ok;
+}
+
+static int allocs;
+static int failAt;
+static wolfSSL_Malloc_cb origMalloc;
+static wolfSSL_Free_cb origFree;
+static wolfSSL_Realloc_cb origRealloc;
+
+static void* FailAtMalloc(size_t size)
+{
+    return (++allocs == failAt) ? NULL : malloc(size);
+}
+
+/* Counts wolfSSL's allocations, failing allocation number fail (0: none) */
+static void AllocsHook(int fail)
+{
+    (void)wolfSSL_GetAllocators(&origMalloc, &origFree, &origRealloc);
+    (void)wolfSSL_SetAllocators(FailAtMalloc, origFree, origRealloc);
+    allocs = 0;
+    failAt = fail;
+}
+
+static void AllocsUnhook(void)
+{
+    (void)wolfSSL_SetAllocators(origMalloc, origFree, origRealloc);
+}
+
+static int EcpGenP256(mbedtls_pk_context* pk)
+{
+    return mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(*pk),
+        TestRng, NULL);
+}
+
+static int RsaGen1024(mbedtls_pk_context* pk)
+{
+    return mbedtls_rsa_gen_key(mbedtls_pk_rsa(*pk), TestRng, NULL, 1024,
+        65537);
+}
+
+static const struct {
+    mbedtls_pk_type_t type;
+    int (*gen)(mbedtls_pk_context* pk);
+} gens[] = {
+    { MBEDTLS_PK_ECKEY, EcpGenP256 },
+    { MBEDTLS_PK_RSA, RsaGen1024 }
+};
+
+/* Before psa_crypto_init(): a key, or no key in builds that need init */
+static int GenKeyNotReady(void)
+{
+    mbedtls_pk_context pk;
+    size_t i;
+    int ret;
+    int ok = 1;
+
+    for (i = 0; ok && i < ARRAY_LEN(gens); i++) {
+        ok = PkSetupEmpty(&pk, gens[i].type);
+        ret = ok ? gens[i].gen(&pk) : -1;
+        ok = (ret == 0 && mbedtls_pk_get_bitlen(&pk) > 0) ||
+            (ret == PSA_ERROR_BAD_STATE && mbedtls_pk_get_bitlen(&pk) == 0);
+        mbedtls_pk_free(&pk);
+    }
+    return ok;
+}
+
+/* Each allocation in turn fails, keeping the key before */
+static int GenKeyFailEachAlloc(void)
+{
+    mbedtls_pk_context pk;
+    const unsigned char* der;
+    size_t i;
+    int fail;
+    int ret;
+    int ok = 1;
+
+    for (i = 0; ok && i < ARRAY_LEN(gens); i++) {
+        ok = PkSetupEmpty(&pk, gens[i].type) && gens[i].gen(&pk) == 0;
+        der = pk.der;
+        for (fail = 1, ret = -1; ok && ret != 0 && fail < 200; fail++) {
+            AllocsHook(fail);
+            ret = gens[i].gen(&pk);
+            AllocsUnhook();
+            ok = ret == 0 ||
+                (ret == PSA_ERROR_INSUFFICIENT_MEMORY && pk.der == der);
+            if (!ok) {
+                printf("type %d, allocation %d failed: returned %d\n",
+                    (int)gens[i].type, fail, ret);
+            }
+        }
+        ok = ok && ret == 0 && pk.der != der;
+        mbedtls_pk_free(&pk);
+    }
+    return ok;
+}
+
+static int RsaGenKey(void)
+{
+    static const struct {
+        unsigned int nbits;
+        int exponent;
+    } bad[] = {
+        { 2048, 1 },
+        { 2048, 2 },
+        { 2048, 4 },
+        { 2047, 65537 },
+        { MBEDTLS_RSA_GEN_KEY_MIN_BITS - 2, 65537 },
+        { 1U << 20, 65537 }
+    };
+    mbedtls_pk_context pk;
+    const unsigned char* der;
+    size_t i;
+    int ret;
+    int ok;
+
+    ok = PkSetupEmpty(&pk, MBEDTLS_PK_RSA) && !PkCanSign(&pk);
+    for (i = 0; ok && i < ARRAY_LEN(bad); i++) {
+        ok = mbedtls_rsa_gen_key(mbedtls_pk_rsa(pk), TestRng, NULL,
+            bad[i].nbits, bad[i].exponent) == MBEDTLS_ERR_RSA_BAD_INPUT_DATA;
+    }
+    ok = ok && mbedtls_pk_get_bitlen(&pk) == 0 &&
+        mbedtls_rsa_gen_key(NULL, TestRng, NULL, 2048, 65537) ==
+            MBEDTLS_ERR_RSA_BAD_INPUT_DATA &&
+        mbedtls_rsa_gen_key(mbedtls_pk_rsa(pk), TestRng, NULL, 2048, 65537) ==
+            0 &&
+        mbedtls_pk_get_type(&pk) == MBEDTLS_PK_RSA &&
+        mbedtls_pk_get_bitlen(&pk) == 2048 &&
+        mbedtls_rsa_get_len(mbedtls_pk_rsa(pk)) == 256 && PkCanSign(&pk);
+    /* Not a multiple of 16 bits, refused before generating */
+    der = pk.der;
+    AllocsHook(0);
+    ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(pk), TestRng, NULL, 2050, 65537);
+    AllocsUnhook();
+    ok = ok && ret == MBEDTLS_ERR_RSA_KEY_GEN_FAILED && allocs == 0 &&
+        pk.der == der && mbedtls_pk_get_bitlen(&pk) == 2048;
+    mbedtls_pk_free(&pk);
+    return ok;
+}
+
 static const struct {
     const char* name;
     int (*test)(void);
@@ -465,21 +794,39 @@ static const struct {
     { "ssl_conf_rng", ConfRng },
 #endif /* MBEDTLS_ENTROPY_C */
 #endif /* MBEDTLS_CTR_DRBG_C */
+    { "pk_info_from_type", PkInfo },
+    { "pk_setup", PkSetup },
+    { "pk_ec and pk_rsa of parsed keys", PkParsedKeys },
+    { "ecp_gen_key", EcpGenKey },
+    { "ecp_gen_key again and errors", EcpGenKeyAgain },
+    { "ecp_gen_key and rsa_gen_key with each allocation failing",
+        GenKeyFailEachAlloc },
+    { "rsa_gen_key", RsaGenKey }
 };
+
+/* 1 for a failure */
+static int Run(const char* name, int (*test)(void))
+{
+    int ok = test();
+
+    printf("%s: %s\n", ok ? "PASS" : "FAIL", name);
+    return !ok;
+}
 
 int main(void)
 {
     size_t i;
-    int fails = 0;
+    int fails;
 
-    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
-        if (cases[i].test()) {
-            printf("PASS: %s\n", cases[i].name);
-        }
-        else {
-            printf("FAIL: %s\n", cases[i].name);
-            fails++;
-        }
+    fails = Run("ecp_gen_key and rsa_gen_key before psa_crypto_init",
+        GenKeyNotReady);
+    if (psa_crypto_init() != PSA_SUCCESS) {
+        printf("FAIL: psa_crypto_init\n");
+        return 1;
     }
+    for (i = 0; i < ARRAY_LEN(cases); i++) {
+        fails += Run(cases[i].name, cases[i].test);
+    }
+    mbedtls_psa_crypto_free();
     return (fails == 0) ? 0 : 1;
 }

@@ -175,9 +175,8 @@ data-check:
 		exit 1; \
 	fi
 
-# x509_crt_test and ssl_test set wolfSSL's allocators. WOLFSSL_FLAGS
-# configures the wolfSSL headers as for libwolfpsa.a.
-$(addprefix $(BUILD_DIR)/,x509_crt_test ssl_test): \
+# Tests that set wolfSSL's allocators, with its headers as for libwolfpsa.a
+$(addprefix $(BUILD_DIR)/,x509_crt_test ssl_test mbedtls3_test): \
 	LAYER_FLAGS += $(WOLFSSL_FLAGS) -I$(WOLFPSA_PATH) \
 	-DWOLFSSL_CERTS_DIR='"$(WOLFSSL_PATH)/certs"'
 

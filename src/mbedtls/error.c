@@ -44,6 +44,7 @@
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pem.h>
 #include <mbedtls/pk.h>
+#include <mbedtls/rsa.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/threading.h>
 #include <mbedtls/x509.h>
@@ -121,6 +122,8 @@ static const struct {
         "Elliptic curve is unsupported (only NIST curves are supported)"),
     MBED_ERR(PK, FEATURE_UNAVAILABLE,
         "Unavailable feature, e.g. RSA disabled for RSA key"),
+    MBED_ERR(RSA, KEY_GEN_FAILED,
+        "Something failed during generation of a key"),
     MBED_ERR(SSL, CERTIFICATE_VERIFICATION_WITHOUT_HOSTNAME,
         "Attempt to verify a certificate without an expected hostname. "
         "This is usually insecure"),

@@ -144,11 +144,13 @@ WOLFPSA_1.0 {
         /* Mbed TLS compatibility layer, MBEDTLS_COMPAT=1 */
         mbedtls_ctr_drbg_*;
         mbedtls_debug_*;
+        mbedtls_ecp_*;
         mbedtls_entropy_*;
         mbedtls_ms_time*;
         mbedtls_net_*;
         mbedtls_oid_*;
         mbedtls_pem_*;
+        mbedtls_rsa_*;
         mbedtls_ssl_*;
         mbedtls_strerror*;
         mbedtls_timing_*;

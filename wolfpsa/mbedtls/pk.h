@@ -24,6 +24,10 @@
 
 #include "tf-psa-crypto/build_info.h"
 #include "psa/crypto.h"
+#if defined(WOLFPSA_MBEDTLS_3)
+#include "mbedtls/ecp.h"
+#include "mbedtls/rsa.h"
+#endif /* WOLFPSA_MBEDTLS_3 */
 
 #include <stddef.h>
 
@@ -77,6 +81,48 @@ int mbedtls_pk_parse_keyfile(mbedtls_pk_context* ctx, const char* path,
 int mbedtls_pk_parse_public_keyfile(mbedtls_pk_context* ctx,
     const char* path);
 #endif /* MBEDTLS_FS_IO */
+
+#if defined(WOLFPSA_MBEDTLS_3)
+#define MBEDTLS_ERR_PK_ALLOC_FAILED   PSA_ERROR_INSUFFICIENT_MEMORY
+#define MBEDTLS_ERR_PK_BAD_INPUT_DATA PSA_ERROR_INVALID_ARGUMENT
+
+typedef enum {
+    MBEDTLS_PK_NONE = 0,
+    MBEDTLS_PK_RSA,
+    MBEDTLS_PK_ECKEY,
+    MBEDTLS_PK_ECKEY_DH,
+    MBEDTLS_PK_ECDSA,
+    MBEDTLS_PK_RSA_ALT,
+    MBEDTLS_PK_RSASSA_PSS,
+    MBEDTLS_PK_OPAQUE
+} mbedtls_pk_type_t;
+
+typedef struct mbedtls_pk_info_t mbedtls_pk_info_t;
+
+/* Has MBEDTLS_PK_RSA and MBEDTLS_PK_ECKEY */
+const mbedtls_pk_info_t* mbedtls_pk_info_from_type(mbedtls_pk_type_t pk_type);
+int mbedtls_pk_setup(mbedtls_pk_context* ctx, const mbedtls_pk_info_t* info);
+mbedtls_pk_type_t mbedtls_pk_get_type(const mbedtls_pk_context* ctx);
+
+/* The key is the context. As in 3.6, a const context's key can change. */
+static inline mbedtls_ecp_keypair* wolfPSA_MbedPkEc(
+    const mbedtls_pk_context* pk)
+{
+    return (mbedtls_pk_get_type(pk) == MBEDTLS_PK_ECKEY) ?
+        (mbedtls_ecp_keypair*)(uintptr_t)pk : NULL;
+}
+
+static inline mbedtls_rsa_context* wolfPSA_MbedPkRsa(
+    const mbedtls_pk_context* pk)
+{
+    return (mbedtls_pk_get_type(pk) == MBEDTLS_PK_RSA) ?
+        (mbedtls_rsa_context*)(uintptr_t)pk : NULL;
+}
+
+/* 3.6 takes the context by value: here pk must be an lvalue */
+#define mbedtls_pk_ec(pk)  wolfPSA_MbedPkEc(&(pk))
+#define mbedtls_pk_rsa(pk) wolfPSA_MbedPkRsa(&(pk))
+#endif /* WOLFPSA_MBEDTLS_3 */
 
 #ifdef __cplusplus
     } /* extern "C" */
